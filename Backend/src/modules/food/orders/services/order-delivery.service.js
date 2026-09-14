@@ -29,6 +29,9 @@ import {
   notifyOwnerSafely,
   notifyOwnersSafely,
   partnerHasActiveDelivery,
+  getActiveDeliveriesForPartner,
+  canPartnerTakeOrder,
+  MAX_ACTIVE_ORDERS_PER_RIDER,
   pushStatusHistory,
   sanitizeOrderForDeliveryPartner,
   TERMINAL_ORDER_STATUSES,
@@ -239,14 +242,49 @@ export async function getCurrentTripDelivery(deliveryPartnerId) {
 export async function listOrdersAvailableDelivery(deliveryPartnerId, query) {
   const { page, limit, skip } = buildPaginationOptions(query);
   const partnerId = new mongoose.Types.ObjectId(deliveryPartnerId);
-  const hasActiveDelivery = await partnerHasActiveDelivery(deliveryPartnerId);
+  const activeOrders = await getActiveDeliveriesForPartner(deliveryPartnerId);
+  const hasActiveDelivery = activeOrders.length > 0;
+
+  // A rider carrying work used to see nothing but that work, which made a
+  // second order impossible to find even when it was riding the same way.
+  // They now also see offers they could add — same store, not yet collected,
+  // drop nearby — and canPartnerTakeOrder() below is what decides that.
+  const batchable =
+    hasActiveDelivery &&
+    activeOrders.length < MAX_ACTIVE_ORDERS_PER_RIDER &&
+    !activeOrders.some(
+      (o) => Boolean(o?.deliveryState?.pickedUpAt) || ['picked_up', 'reached_drop'].includes(String(o?.orderStatus)),
+    );
+
+  const activeStoreIds = [...new Set(activeOrders.map((o) => String(o.restaurantId || '')).filter(Boolean))]
+    .map((id) => new mongoose.Types.ObjectId(id));
+
+  const mineFilter = {
+    'dispatch.deliveryPartnerId': partnerId,
+    'dispatch.status': 'accepted',
+    orderStatus: { $nin: TERMINAL_ORDER_STATUSES },
+  };
 
   const filter = hasActiveDelivery
-    ? {
-        'dispatch.deliveryPartnerId': partnerId,
-        'dispatch.status': 'accepted',
-        orderStatus: { $nin: TERMINAL_ORDER_STATUSES },
+    ? (batchable
+      ? {
+        $or: [
+          mineFilter,
+          {
+            restaurantId: { $in: activeStoreIds },
+            'dispatch.status': 'unassigned',
+            'dispatch.offeredTo': {
+              $not: { $elemMatch: { partnerId, action: 'deassigned' } },
+            },
+            orderStatus: { $in: ['created', 'confirmed', 'preparing', 'ready_for_pickup'] },
+            $or: [
+              { scheduledAt: null },
+              { scheduledAt: { $lte: new Date(Date.now() + DISPATCH_LEAD_MS) } },
+            ],
+          },
+        ],
       }
+      : mineFilter)
     : {
         $or: [
           {
@@ -284,7 +322,7 @@ export async function listOrdersAvailableDelivery(deliveryPartnerId, query) {
 
   // For idle partners, pull a wider candidate set then proximity-filter in memory.
   // Avoids returning another city's orders that the poll hydrate could lock into the modal.
-  const queryLimit = hasActiveDelivery ? limit : Math.max(limit * 5, 50);
+  const queryLimit = hasActiveDelivery && !batchable ? limit : Math.max(limit * 5, 50);
 
   const docs = await FoodOrder.find(filter)
     .select(DELIVERY_ORDER_BASE_SELECT)
@@ -307,6 +345,16 @@ export async function listOrdersAvailableDelivery(deliveryPartnerId, query) {
       mergeTransactionIntoOrder(doc, txByOrderId.get(String(doc._id)) || null),
     ),
   );
+
+  if (batchable) {
+    // The store and the not-yet-collected checks are already in the query; this
+    // is the drop-radius one, which needs each candidate's coordinates and so
+    // cannot be expressed in the filter. Orders already in hand always stay.
+    const mine = new Set(activeOrders.map((o) => String(o._id)));
+    enriched = enriched.filter(
+      (order) => mine.has(String(order._id)) || canPartnerTakeOrder(activeOrders, order).allowed,
+    );
+  }
 
   if (!hasActiveDelivery) {
     const partner = await FoodDeliveryPartner.findById(partnerId)
@@ -442,28 +490,24 @@ export async function acceptOrderDelivery(orderId, deliveryPartnerId) {
     'cancelled_by_admin',
   ];
 
-  const alreadyOnTrip = await partnerHasActiveDelivery(deliveryPartnerId);
-  if (alreadyOnTrip) {
-    const existingActive = await FoodOrder.findOne({
-      'dispatch.deliveryPartnerId': partnerId,
-      'dispatch.status': 'accepted',
-      orderStatus: { $nin: TERMINAL_ORDER_STATUSES },
-    })
-      .select('_id order_id orderId')
+  const activeOrders = await getActiveDeliveriesForPartner(deliveryPartnerId);
+  if (activeOrders.length > 0) {
+    const requestedOrder = await FoodOrder.findOne(identity)
+      .select('_id restaurantId deliveryAddress')
       .lean();
-
-    const activeOrderKey = String(existingActive?._id || '');
-    const requestedOrder = await FoodOrder.findOne(identity).select('_id').lean();
     const requestedOrderKey = String(requestedOrder?._id || '');
 
-    if (activeOrderKey && requestedOrderKey && activeOrderKey === requestedOrderKey) {
+    // Re-accepting something already in hand is idempotent, not a second order.
+    if (requestedOrderKey && activeOrders.some((o) => String(o._id) === requestedOrderKey)) {
       const acceptedOrder = await FoodOrder.findOne(identity).populate('restaurantId userId');
       return acceptedOrder ? sanitizeOrderForDeliveryPartner(acceptedOrder) : null;
     }
 
-    throw new ValidationError(
-      'You already have an active delivery. Complete it before accepting another order.',
-    );
+    // A second order is allowed only when it genuinely rides along: same store,
+    // not yet collected, and a drop near the one already on board. The refusal
+    // says which of those failed, because the rider can act on that.
+    const verdict = canPartnerTakeOrder(activeOrders, requestedOrder);
+    if (!verdict.allowed) throw new ValidationError(verdict.reason);
   }
 
   const statusHistoryEntry = {
