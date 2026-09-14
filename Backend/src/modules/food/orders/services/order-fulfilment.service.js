@@ -7,6 +7,8 @@ import { logger } from '../../../../utils/logger.js';
 import { returnStockUnits, reserveStockForItems } from './inventory.service.js';
 import { pushStatusHistory } from './order.helpers.js';
 import { getIO, rooms } from '../../../../config/socket.js';
+import { initiateRazorpayRefund } from '../helpers/razorpay.helper.js';
+import { refundWalletBalance } from '../../user/services/userWallet.service.js';
 import { computeItemsTax } from './order-pricing.service.js';
 import { getRestaurantCommissionSnapshot, repriceTransactionForOrder } from './foodTransaction.service.js';
 
@@ -95,6 +97,49 @@ export function repriceForFulfilment(order) {
 }
 
 /**
+ * Gives back the difference on an order that was already paid for.
+ *
+ * Deliberately NOT the cancellation refund path: that one sets
+ * payment.status to 'refunded', which would claim the whole order had been
+ * given back when only part of it was. The payment stays 'paid' — because it
+ * is — and the refund sub-document carries what went back.
+ *
+ * Never throws. A gateway that is down must not undo a short pick the picker
+ * has already acted on; the shortfall is recorded either way and a failed
+ * refund is visible as 'failed' rather than silently dropped.
+ */
+async function refundShortfall(order, amount) {
+  const method = String(order.payment?.method || '').toLowerCase();
+
+  try {
+    if (method === 'wallet') {
+      await refundWalletBalance(
+        order.userId,
+        amount,
+        `Short pick refund for order #${order.order_id || order._id}`,
+        { orderId: order._id },
+      );
+      return { status: 'processed', method: 'wallet', refundId: '' };
+    }
+
+    if (method === 'razorpay' || method === 'razorpay_qr') {
+      const paymentId = order.payment?.razorpay?.paymentId;
+      if (!paymentId) return { status: 'pending', method, refundId: '' };
+      const result = await initiateRazorpayRefund(paymentId, amount);
+      return result?.success
+        ? { status: 'processed', method, refundId: result.refundId || '' }
+        : { status: 'failed', method, refundId: '' };
+    }
+
+    // Anything else — a counter tender, say — has no automated way back.
+    return { status: 'pending', method, refundId: '' };
+  } catch (err) {
+    logger.error(`Short-pick refund failed for order ${order._id}: ${err?.message || err}`);
+    return { status: 'failed', method, refundId: '' };
+  }
+}
+
+/**
  * Applies what the picker found.
  *
  * `lines` is a list of `{ itemId, variantId?, fulfilledQuantity }` and/or
@@ -132,6 +177,15 @@ export async function adjustOrderFulfilment(orderId, { lines = [], byRole = 'RES
     const current = deliveredQty(line);
 
     if (change.substituteItemId) {
+      // Silence is not consent. Swapping without it spends the customer's
+      // money on something they did not choose — and the lactose-free shopper
+      // handed ordinary milk has been sold the one thing they were avoiding.
+      if (String(order.substitutionPreference || 'refund') !== 'allow') {
+        throw new ValidationError(
+          `${line.name} cannot be replaced — this customer asked for a refund instead of substitutions.`,
+        );
+      }
+
       const replacement = await FoodItem.findById(change.substituteItemId)
         .select('_id name price gstRate restaurantId stockQty substituteItemIds isAvailable')
         .lean();
@@ -234,15 +288,8 @@ export async function adjustOrderFulfilment(orderId, { lines = [], byRole = 'RES
     note: String(note || ''),
   };
 
-  // Cash on delivery: the rider simply collects less, and amountDue below is
-  // what they will actually take.
-  //
-  // Prepaid is only RECORDED here, not refunded. fulfillment.shortfallAmount
-  // is the figure owed and it is persisted on the order, but no gateway call
-  // is made — a partial refund cannot reuse the cancellation path, which marks
-  // payment.status 'refunded' and would claim the whole order had been given
-  // back. Wiring a genuine partial refund is the remaining piece; until then
-  // the amount is visible rather than silently dropped.
+  // Cash on delivery: the rider simply collects less, and amountDue is what
+  // they will actually take. Prepaid is genuinely refunded below.
   const paymentStatus = String(order.payment?.status || '').toLowerCase();
   const alreadyPaid = ['paid', 'authorized'].includes(paymentStatus);
   if (!alreadyPaid) {
@@ -255,6 +302,21 @@ export async function adjustOrderFulfilment(orderId, { lines = [], byRole = 'RES
     to: order.orderStatus,
     note: `Short pick: bill reduced by ₹${shortfall}${note ? ` — ${note}` : ''}`,
   });
+
+  // Give the money back before saving the refund record, so a gateway that
+  // refuses is never written down as processed.
+  let refund = null;
+  if (alreadyPaid && shortfall > 0) {
+    refund = await refundShortfall(order, shortfall);
+    order.payment.refund = {
+      status: refund.status,
+      // Cumulative, like the shortfall it mirrors: a second short pick on the
+      // same order must not report only its own delta.
+      amount: round2(shortfall),
+      refundId: refund.refundId || order.payment?.refund?.refundId || '',
+      processedAt: refund.status === 'processed' ? new Date() : order.payment?.refund?.processedAt,
+    };
+  }
 
   await order.save();
 
@@ -315,6 +377,7 @@ export async function adjustOrderFulfilment(orderId, { lines = [], byRole = 'RES
     order_id: order.order_id,
     fulfillment: order.fulfillment,
     pricing: repriced,
+    refund: refund ? { status: refund.status, amount: round2(shortfall), method: refund.method } : null,
     refundDue: alreadyPaid ? shortfall : 0,
     amountDue: alreadyPaid ? 0 : Math.max(0, round2(repriced.total)),
     substitutions: takes.length,
