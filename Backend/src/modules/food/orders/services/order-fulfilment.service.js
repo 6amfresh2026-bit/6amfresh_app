@@ -6,7 +6,9 @@ import { ValidationError, NotFoundError } from '../../../../core/auth/errors.js'
 import { logger } from '../../../../utils/logger.js';
 import { returnStockUnits, reserveStockForItems } from './inventory.service.js';
 import { pushStatusHistory } from './order.helpers.js';
+import { getIO, rooms } from '../../../../config/socket.js';
 import { computeItemsTax } from './order-pricing.service.js';
+import { getRestaurantCommissionSnapshot, repriceTransactionForOrder } from './foodTransaction.service.js';
 
 /**
  * Short picks and substitutions.
@@ -198,15 +200,36 @@ export async function adjustOrderFulfilment(orderId, { lines = [], byRole = 'RES
     throw new ValidationError('Nothing would be left to deliver — cancel the order instead.');
   }
 
-  const before = Number(order.pricing?.total) || 0;
+  // Measured against the bill as it was BEFORE anything went short, not
+  // against the last adjustment. An order short-picked and then substituted
+  // would otherwise report only the second delta, and a refund paid against
+  // that figure would underpay the customer by the first one.
+  const originalTotal =
+    Number(order.fulfillment?.originalTotal) || Number(order.pricing?.total) || 0;
   const repriced = repriceForFulfilment(order);
-  const shortfall = Math.max(0, round2(before - repriced.total));
+  const shortfall = Math.max(0, round2(originalTotal - repriced.total));
+
+  // The seller's commission is charged on the goods. Left alone it would keep
+  // describing the basket that was ordered, so a store short by one item would
+  // still pay commission on the item it never sold. Recomputed rather than
+  // scaled, because a commission rule can be a flat fee as well as a
+  // percentage and only the rule itself knows which.
+  try {
+    const snapshot = await getRestaurantCommissionSnapshot({
+      pricing: repriced,
+      restaurantId: order.restaurantId,
+    });
+    repriced.restaurantCommission = Number(snapshot?.commissionAmount) || 0;
+  } catch (err) {
+    logger.warn(`Commission recalculation after short pick failed: ${err?.message || err}`);
+  }
 
   order.pricing = repriced;
   order.fulfillment = {
     status: substituted ? 'substituted' : 'partial',
     adjustedAt: new Date(),
     adjustedByRole: byRole,
+    originalTotal,
     shortfallAmount: shortfall,
     note: String(note || ''),
   };
@@ -235,6 +258,15 @@ export async function adjustOrderFulfilment(orderId, { lines = [], byRole = 'RES
 
   await order.save();
 
+  // The settlement side reads `amounts` on the transaction in preference to
+  // `pricing` on the order, so repricing the order alone would leave the
+  // seller's payout describing a basket that was never delivered.
+  try {
+    await repriceTransactionForOrder(order);
+  } catch (err) {
+    logger.error(`[CRITICAL] transaction reprice failed for order ${order._id}: ${err?.message || err}`);
+  }
+
   // After the save, so a failed write cannot hand stock back for an
   // adjustment that never happened.
   for (const entry of returns) {
@@ -247,6 +279,35 @@ export async function adjustOrderFulfilment(orderId, { lines = [], byRole = 'RES
     } catch (err) {
       logger.error(`[CRITICAL] short-pick restock failed for ${entry.itemId} (+${entry.qty}): ${err?.message || err}`);
     }
+  }
+
+  // The customer's bill just changed under them. Telling them is not optional:
+  // a basket that silently arrives smaller and cheaper reads as a mistake, or
+  // as theft, depending on which way they notice first.
+  try {
+    const io = getIO();
+    if (io && order.userId) {
+      io.to(rooms.user(order.userId)).emit('order_fulfilment_changed', {
+        orderMongoId: String(order._id),
+        orderId: order.order_id || String(order._id),
+        status: order.fulfillment.status,
+        shortfallAmount: shortfall,
+        total: repriced.total,
+        refundDue: alreadyPaid ? shortfall : 0,
+        amountDue: alreadyPaid ? 0 : Math.max(0, round2(repriced.total)),
+        items: order.items
+          .filter((l) => Number(l.quantity) !== deliveredQty(l) || l.substitutedForItemId)
+          .map((l) => ({
+            name: l.name,
+            ordered: Number(l.quantity) || 0,
+            arriving: deliveredQty(l),
+            substitutedFor: l.substitutedForName || '',
+          })),
+        note: order.fulfillment.note,
+      });
+    }
+  } catch (err) {
+    logger.warn(`Could not tell the customer about the short pick: ${err?.message || err}`);
   }
 
   return {
