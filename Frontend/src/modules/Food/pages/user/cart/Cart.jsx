@@ -350,6 +350,7 @@ export default function Cart() {
    * something they did not choose — and only they can say that is fine.
    */
   const [allowSubstitution, setAllowSubstitution] = useState(false)
+
   const [isPlacingOrder, setIsPlacingOrder] = useState(false)
   const [showBillDetails, setShowBillDetails] = useState(true)
   const [showPlacingOrder, setShowPlacingOrder] = useState(false)
@@ -394,6 +395,15 @@ export default function Cart() {
 
   // Restaurant and pricing state
   const [restaurantData, setRestaurantData] = useState(null)
+  /**
+   * A shop, or a kitchen.
+   *
+   * Everything here was modelled as a restaurant, so a grocery basket asked
+   * whether to send cutlery and offered to pass on cooking requests — neither
+   * of which means anything when the order is milk and soap. Defaults to a
+   * shop, because that is what this platform is.
+   */
+  const isKitchen = (restaurantData?.storeType || "grocery") === "restaurant"
   const [loadingRestaurant, setLoadingRestaurant] = useState(false)
   const [pricing, setPricing] = useState(null)
   const [loadingPricing, setLoadingPricing] = useState(false)
@@ -1542,6 +1552,11 @@ export default function Cart() {
    * Instant option two inches below said "about 6 mins", on the same screen.
    */
   const advertisedDeliveryBand = deliveryMode === "quick" ? "20-25 mins" : (restaurantData?.estimatedDeliveryTime || "35-40 mins")
+  const smallCartFee = Number(pricing?.smallCartFee) || 0
+  const smallCartThreshold = Number(pricing?.smallCartThreshold) || 0
+  /** What one more rupee of shopping would save. Worth saying out loud. */
+  const spendMoreForFreeDelivery = Number(pricing?.spendMoreForFreeDelivery) || 0
+  const deliveryIsFree = Boolean(pricing?.deliveryIsFree)
   const promisedMinutes = Number(pricing?.deliveryPromiseMinutes)
   // Quoted per mode by the engine. Falls back to the selected-mode figure so
   // an older response still labels the choice with something real.
@@ -2747,10 +2762,14 @@ export default function Cart() {
                     }`}
                   >
                     <Pencil className="h-3.5 w-3.5" />
-                    {note.trim() ? "Edit cooking requests" : "Cooking requests"}
+                    {isKitchen
+                      ? (note.trim() ? "Edit cooking requests" : "Cooking requests")
+                      : (note.trim() ? "Edit delivery note" : "Delivery note")}
                   </button>
+                  {/* A bag of groceries has no cutlery to send with it. */}
                   <button
                     type="button"
+                    hidden={!isKitchen}
                     onClick={() => setSendCutlery(!sendCutlery)}
                     className={`flex items-center gap-1.5 shrink-0 rounded-full border px-3 py-2 text-[12px] font-semibold ${
                       sendCutlery
@@ -2778,7 +2797,7 @@ export default function Cart() {
                 </div>
                 {note.trim() ? (
                   <p className="mt-3 text-xs text-gray-500 dark:text-gray-400 leading-relaxed">
-                    <span className="font-semibold text-gray-700 dark:text-gray-300">Cooking note:</span> {note.trim()}
+                    <span className="font-semibold text-gray-700 dark:text-gray-300">{isKitchen ? "Cooking note:" : "Delivery note:"}</span> {note.trim()}
                   </p>
                 ) : null}
               </div>
@@ -3205,6 +3224,18 @@ export default function Cart() {
                             {formatDeliveryFeeBreakdownSubtext(deliveryFee, deliveryFeeGst, RUPEE_SYMBOL)}
                           </p>
                         )}
+                        {/* The one line that turns a fee into a reason to add
+                            something, rather than a reason to abandon. */}
+                        {spendMoreForFreeDelivery > 0 && deliveryFee > 0 && (
+                          <p className="mt-0.5 text-[11px] font-semibold leading-snug text-emerald-600" data-testid="free-delivery-nudge">
+                            Add {RUPEE_SYMBOL}{spendMoreForFreeDelivery} more for free delivery
+                          </p>
+                        )}
+                        {deliveryIsFree && (
+                          <p className="mt-0.5 text-[11px] font-semibold leading-snug text-emerald-600">
+                            Free on orders over {RUPEE_SYMBOL}{Number(pricing?.freeDeliveryAbove) || 0}
+                          </p>
+                        )}
                       </div>
                       <span
                         className={`shrink-0 whitespace-nowrap text-right font-medium ${
@@ -3228,6 +3259,19 @@ export default function Cart() {
                       <span className="text-gray-600 dark:text-gray-400 border-b border-dotted border-gray-300">Platform Fee</span>
                       <span className="text-gray-800 dark:text-gray-200 font-medium">{RUPEE_SYMBOL}{Math.max(0, platformFee - quickDeliveryFee).toFixed(2)}</span>
                     </div>
+                    {smallCartFee > 0 && (
+                      <div className="flex justify-between text-sm">
+                        <span className="text-gray-600 dark:text-gray-400 border-b border-dotted border-gray-300">
+                          Small cart fee
+                          {smallCartThreshold > 0 ? (
+                            <span className="block text-[10px] text-gray-400 border-0">
+                              On orders under {RUPEE_SYMBOL}{smallCartThreshold}
+                            </span>
+                          ) : null}
+                        </span>
+                        <span className="text-gray-800 dark:text-gray-200 font-medium">{RUPEE_SYMBOL}{smallCartFee.toFixed(2)}</span>
+                      </div>
+                    )}
                     <div className="flex justify-between text-sm">
                       <span className="text-gray-600 dark:text-gray-400 border-b border-dotted border-gray-300">Government Taxes</span>
                       <span className="text-gray-800 dark:text-gray-200 font-medium">{RUPEE_SYMBOL}{gstCharges.toFixed(2)}</span>
