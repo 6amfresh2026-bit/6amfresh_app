@@ -58,7 +58,43 @@ export function sanitizeOrderForExternal(orderDoc) {
   o.orderMongoId = (o._id || orderDoc?._id || "").toString();
   // Ensure orderId field for UI always contains the pretty ID
   o.orderId = o.order_id || o.orderMongoId; 
+  o.items = describeDeliveredItems(o.items);
   return o;
+}
+
+/**
+ * Restates order lines in terms of what is actually being delivered.
+ *
+ * Every screen — the rider's pickup list, the customer's order, the invoice —
+ * renders `item.quantity`, and after a short pick that is the figure the
+ * customer ASKED for, not the one going in the bag. Left alone, a rider
+ * collects four of something when two are being sent, and an invoice shows
+ * 4 × ₹149 against a bill charging for two, which simply does not add up.
+ *
+ * Done here, at the one boundary every read path already crosses, rather than
+ * in each screen. Changing the model and then hunting the surfaces one by one
+ * is how `scheduledAt` and `deliverySlot` went missing from half this system.
+ *
+ * `orderedQuantity` keeps what was asked for, so a screen that wants to show
+ * "2 of 4 — the rest refunded" still can.
+ */
+function describeDeliveredItems(items) {
+  if (!Array.isArray(items)) return items;
+  return items
+    .map((line) => {
+      const adjusted = line?.fulfilledQuantity;
+      if (adjusted === null || adjusted === undefined) return line;
+      return {
+        ...line,
+        quantity: Math.max(0, Number(adjusted) || 0),
+        orderedQuantity: Number(line.quantity) || 0,
+        wasShortPicked: (Number(adjusted) || 0) < (Number(line.quantity) || 0),
+      };
+    })
+    // A line the shelf could not supply at all is not part of the delivery.
+    // It stays on the order itself for the record; it does not belong on a
+    // picking list or a bill.
+    .filter((line) => Number(line.quantity) > 0);
 }
 
 export function sanitizeOrderForDeliveryPartner(orderDoc) {
@@ -368,6 +404,12 @@ export function normalizeOrderForClient(orderDoc) {
 
   return {
     ...order,
+    // The other client-facing serializer does this too. Both, because both are
+    // real read paths — sanitizeOrderForExternal feeds the rider and the order
+    // lists, this one feeds the customer's order screen and its invoice, and
+    // fixing one of the two is how a line total of 4 x 149 ended up printed on
+    // a bill charging for two.
+    items: describeDeliveredItems(order.items),
     orderMongoId: mongoId,
     orderId: displayId,
     status: order?.orderStatus || order?.status || "",
