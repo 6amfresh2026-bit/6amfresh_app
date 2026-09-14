@@ -14,6 +14,7 @@ import {
     listExpiringBatches
 } from '../src/modules/food/orders/services/stockBatch.service.js';
 import { reserveStockForItems, restoreOrderStock } from '../src/modules/food/orders/services/inventory.service.js';
+import { adjustOrderFulfilment } from '../src/modules/food/orders/services/order-fulfilment.service.js';
 
 /**
  * Batches and FEFO.
@@ -249,5 +250,77 @@ describe('what a shop can act on', () => {
         const res = await listExpiringBatches({ restaurantId: STORE, withinDays: 7 });
         assert.deepEqual(res.batches.map((b) => b.batchNo), ['B', 'M'], 'and nothing that is fine');
         assert.equal(res.batches[0].name, 'Bread');
+    });
+});
+
+describe('a substitution keeps the batches and the count together', () => {
+    const makeOrder = (milk, allocations) =>
+        FoodOrder.create({
+            userId: someId(),
+            restaurantId: STORE,
+            items: [{ itemId: String(milk._id), name: 'Amul Milk 1L', price: 100, quantity: 2, batchAllocations: allocations }],
+            deliveryAddress: {
+                street: '1 Road', city: 'Bengaluru', state: 'Karnataka',
+                location: { type: 'Point', coordinates: [77.59, 12.97] }
+            },
+            pricing: { subtotal: 200, total: 200 },
+            payment: { method: 'cash' },
+            orderStatus: 'confirmed',
+            stockReservedAt: new Date(),
+            substitutionPreference: 'allow'
+        });
+
+    it('gives the replacement back to its own batch when the order is cancelled', async () => {
+        // The swap takes units from the replacement's batch. Returning only the
+        // count would leave those units gone from the batch and present in
+        // stockQty, and the gap widens with every substitution until FEFO can
+        // no longer allocate stock the count insists exists.
+        const lacto = await product({ name: 'Lactose Free Milk' });
+        const milk = await product();
+        await FoodItem.updateOne({ _id: milk._id }, { $set: { substituteItemIds: [lacto._id] } });
+        await receiveBatch({ itemId: milk._id, batchNo: 'M1', expiryDate: inDays(5), quantity: 5 });
+        await receiveBatch({ itemId: lacto._id, batchNo: 'L1', expiryDate: inDays(5), quantity: 5 });
+
+        const reservation = await reserveStockForItems([{ itemId: String(milk._id), quantity: 2 }], {});
+        const order = await makeOrder(milk, reservation[0].allocations);
+
+        await adjustOrderFulfilment(order._id, {
+            lines: [{ itemId: String(milk._id), substituteItemId: String(lacto._id), quantity: 2 }]
+        });
+        await new Promise((r) => setTimeout(r, 300));
+        await restoreOrderStock(await FoodOrder.findById(order._id));
+        await new Promise((r) => setTimeout(r, 300));
+
+        const count = (await FoodItem.findById(lacto._id).lean()).stockQty;
+        const batch = (await FoodStockBatch.findOne({ batchNo: 'L1' }).lean()).remainingQty;
+        assert.equal(count, 5, 'the replacement count is whole again');
+        assert.equal(batch, 5, 'and so is its batch');
+        assert.equal(count - batch, 0, 'no drift between the two');
+    });
+
+    it('gives it back when the substitution is abandoned part way', async () => {
+        const lacto = await product({ name: 'Lactose Free Milk' });
+        const milk = await product();
+        await FoodItem.updateOne({ _id: milk._id }, { $set: { substituteItemIds: [lacto._id] } });
+        await receiveBatch({ itemId: milk._id, batchNo: 'M1', expiryDate: inDays(5), quantity: 5 });
+        await receiveBatch({ itemId: lacto._id, batchNo: 'L1', expiryDate: inDays(5), quantity: 5 });
+
+        const reservation = await reserveStockForItems([{ itemId: String(milk._id), quantity: 2 }], {});
+        const order = await makeOrder(milk, reservation[0].allocations);
+
+        // Swaps the only line, then empties it — nothing left to deliver, so
+        // the whole adjustment is refused after the replacement was claimed.
+        await assert.rejects(adjustOrderFulfilment(order._id, {
+            lines: [
+                { itemId: String(milk._id), substituteItemId: String(lacto._id), quantity: 2 },
+                { itemId: String(lacto._id), fulfilledQuantity: 0 }
+            ]
+        }));
+        await new Promise((r) => setTimeout(r, 300));
+
+        const count = (await FoodItem.findById(lacto._id).lean()).stockQty;
+        const batch = (await FoodStockBatch.findOne({ batchNo: 'L1' }).lean()).remainingQty;
+        assert.equal(count, 5);
+        assert.equal(batch, 5, 'claimed and released, on both sides');
     });
 });

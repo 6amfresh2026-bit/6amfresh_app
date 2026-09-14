@@ -52,9 +52,11 @@ describe('reserveStockForItems', () => {
             orderLabel: 'ORD-1'
         });
 
-        // A reservation also reports which batches the units came from. This
-        // product is not batch-tracked, so there are none — but the field is
-        // there, and the shape is what callers now hand to the restore path.
+        // The exact shape matters, not just the numbers: every caller has to
+        // hand `allocations` back to the restore path, and one that reads only
+        // itemId and qty silently leaks units out of their batches. This
+        // assertion is deliberately strict so that adding a field to a
+        // reservation fails here and makes somebody check the consumers.
         assert.deepEqual(taken, [{ itemId: String(item._id), qty: 2, allocations: [] }]);
         assert.equal((await FoodItem.findById(item._id)).stockQty, 3);
 
