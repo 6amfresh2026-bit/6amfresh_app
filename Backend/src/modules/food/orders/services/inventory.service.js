@@ -4,6 +4,7 @@ import { FoodOrder } from '../models/order.model.js';
 import { ValidationError } from '../../../../core/auth/errors.js';
 import { logger } from '../../../../utils/logger.js';
 import { recordMovement } from './stockLedger.service.js';
+import { allocateFefo, returnAllocations } from './stockBatch.service.js';
 
 /** Ledger reference for an order, when the caller can name one. */
 const orderRef = (ctx) =>
@@ -38,6 +39,36 @@ const orderRef = (ctx) =>
  * placed before short-picking existed, so reservation at order time is
  * unchanged.
  */
+/** What a line is still holding: what the picker found, else what was ordered. */
+const deliverableQty = (line) => {
+  const adjusted = line?.fulfilledQuantity;
+  return adjusted === null || adjusted === undefined
+    ? Math.max(0, Number(line?.quantity) || 0)
+    : Math.max(0, Number(adjusted) || 0);
+};
+
+/**
+ * The slice of a line's allocations covering `qty` units.
+ *
+ * A short pick has already given some units back, so the line may hold fewer
+ * than it was allocated. Taken from the end — the last batch picked is the
+ * first returned, which keeps the soonest-expiring units out on the shelf
+ * where they need to sell.
+ */
+export function allocationsFor(line, qty) {
+  let outstanding = Math.max(0, Number(qty) || 0);
+  const out = [];
+  const all = Array.isArray(line?.batchAllocations) ? [...line.batchAllocations].reverse() : [];
+  for (const a of all) {
+    if (outstanding <= 0) break;
+    const take = Math.min(outstanding, Number(a?.quantity) || 0);
+    if (take <= 0) continue;
+    out.push({ batchId: a.batchId, quantity: take });
+    outstanding -= take;
+  }
+  return out;
+}
+
 export function totalQuantityByItem(items = []) {
   const totals = new Map();
   for (const item of items) {
@@ -88,7 +119,12 @@ export async function reserveStockForItems(items = [], ctx = {}) {
     ).lean();
 
     if (updated) {
-      taken.push({ itemId, qty });
+      // Which units, now that we know how many. Deliberately after the
+      // conditional decrement above, never instead of it: that single atomic
+      // update is what stops two customers buying the last one, and batches
+      // must not take that job over.
+      const allocations = await allocateFefo(itemId, qty, ctx);
+      taken.push({ itemId, qty, allocations });
       // Hide it once empty so the existing listing/search filters, which all key
       // off isAvailable, keep working without knowing inventory exists.
       await FoodItem.updateOne(
@@ -130,6 +166,7 @@ export async function reserveStockForItems(items = [], ctx = {}) {
 export async function releaseReservations(taken = [], ctx = {}) {
   for (const entry of taken) {
     try {
+      await returnAllocations(entry.allocations || []);
       await incrementStock(entry.itemId, entry.qty, { ...ctx, reason: 'Order rejected before it was placed' });
     } catch (err) {
       logger.error(
@@ -204,6 +241,15 @@ export async function restoreOrderStock(orderLike) {
   if (!claimed) return false; // already restored, or nothing to restore
 
   const orderLabel = orderLike?.order_id || orderLike?.orderId || '';
+
+  // Back to the intakes these units actually left. Returning them to whatever
+  // expires soonest instead would quietly extend their shelf life, which is
+  // the one mistake this whole feature exists to prevent.
+  for (const line of claimed.items || []) {
+    const owed = deliverableQty(line);
+    if (owed > 0) await returnAllocations(allocationsFor(line, owed));
+  }
+
   for (const [itemId, qty] of totalQuantityByItem(claimed.items)) {
     try {
       await incrementStock(itemId, qty, { orderId, orderLabel, reason: 'Order cancelled / expired' });

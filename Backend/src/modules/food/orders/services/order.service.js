@@ -971,6 +971,29 @@ export async function createOrder(userId, dto) {
     });
     if (reservation.length > 0) order.stockReservedAt = new Date();
 
+    // Record which intakes these units came from. Several lines can share a
+    // product (different variants), so the allocations are spread across them
+    // in order rather than copied onto each — copying would claim the same
+    // carton twice when the order is cancelled.
+    for (const entry of reservation) {
+      const remaining = [...(entry.allocations || [])];
+      if (remaining.length === 0) continue;
+      for (const line of order.items) {
+        if (String(line.itemId) !== String(entry.itemId)) continue;
+        let want = Math.max(0, Number(line.quantity) || 0);
+        const mine = [];
+        while (want > 0 && remaining.length > 0) {
+          const head = remaining[0];
+          const take = Math.min(want, Number(head.quantity) || 0);
+          mine.push({ ...head, quantity: take });
+          head.quantity -= take;
+          want -= take;
+          if (head.quantity <= 0) remaining.shift();
+        }
+        if (mine.length > 0) line.batchAllocations = mine;
+      }
+    }
+
     // A place in the window, taken the same way and for the same reason as the
     // stock above: two customers paying at the same moment for the last slot of
     // the evening round must not both get it. The count read when the list was

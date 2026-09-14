@@ -23,6 +23,28 @@ const orderItemSchema = new mongoose.Schema(
          * would erase the evidence that anything went short.
          */
         fulfilledQuantity: { type: Number, default: null, min: 0 },
+        /**
+         * Which intakes these units came from, chosen by expiry at order time.
+         *
+         * Kept on the line so a cancellation returns units to the batches they
+         * actually left — putting them back on the soonest-expiring batch
+         * instead would quietly extend their life — and so a recall or a
+         * complaint can be traced to a carton.
+         */
+        batchAllocations: {
+            type: [
+                new mongoose.Schema(
+                    {
+                        batchId: { type: String, trim: true, default: '' },
+                        batchNo: { type: String, trim: true, default: '' },
+                        expiryDate: { type: Date, default: null },
+                        quantity: { type: Number, min: 0, default: 0 }
+                    },
+                    { _id: false }
+                )
+            ],
+            default: []
+        },
         /** Set on a line swapped in for one the shelf could not supply. */
         substitutedForItemId: { type: String, trim: true, default: '' },
         substitutedForName: { type: String, trim: true, default: '' },
