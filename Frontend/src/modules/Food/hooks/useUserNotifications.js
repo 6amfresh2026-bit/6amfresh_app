@@ -5,6 +5,8 @@ import { API_BASE_URL } from '@food/api/config';
 import { userAPI } from '@food/api';
 import { dispatchNotificationInboxRefresh } from '@food/hooks/useNotificationInbox';
 
+const RUPEE_SYMBOL = "₹";
+
 const debugLog = (...args) => {
   if (import.meta.env.DEV) {
     console.log('📬 [UserSocket]', ...args);
@@ -77,6 +79,41 @@ export const useUserNotifications = () => {
       setIsConnected(true);
       if (typeof window !== 'undefined') window.orderSocketConnected = true;
       // Backend auto-joins 'user:userId' room based on role/token in config/socket.js
+    });
+
+    /**
+     * The shelf could not fill the basket as ordered.
+     *
+     * Its own event rather than a status update, because the order's status
+     * has not changed — the bill has. A customer whose basket silently arrives
+     * smaller and cheaper reads that as a mistake, or as theft, depending on
+     * which way they notice first, so this is deliberately a toast they cannot
+     * miss rather than a quiet refresh.
+     */
+    socketRef.current.on('order_fulfilment_changed', (data) => {
+      debugLog('🛒 Order fulfilment changed:', data);
+
+      const changed = Array.isArray(data?.items) ? data.items : [];
+      const swapped = changed.filter((i) => i.substitutedFor);
+      const short = changed.filter((i) => !i.substitutedFor);
+
+      const lines = [
+        ...short.map((i) => `${i.name}: ${i.arriving} of ${i.ordered}`),
+        ...swapped.map((i) => `${i.substitutedFor} → ${i.name}`),
+      ];
+
+      const money = data?.refundDue > 0
+        ? `${RUPEE_SYMBOL}${data.refundDue} refunded`
+        : data?.amountDue > 0
+          ? `You now pay ${RUPEE_SYMBOL}${data.amountDue}`
+          : '';
+
+      toast.message('Your order changed at the store', {
+        description: [lines.join(', '), money].filter(Boolean).join(' · '),
+        duration: 15000,
+      });
+
+      window.dispatchEvent(new CustomEvent('orderFulfilmentChanged', { detail: data }));
     });
 
     socketRef.current.on('order_status_update', (data) => {
