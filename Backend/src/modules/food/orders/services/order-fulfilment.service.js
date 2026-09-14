@@ -4,7 +4,22 @@ import { FoodOrder } from '../models/order.model.js';
 import { FoodItem } from '../../admin/models/food.model.js';
 import { ValidationError, NotFoundError } from '../../../../core/auth/errors.js';
 import { logger } from '../../../../utils/logger.js';
-import { returnStockUnits, reserveStockForItems } from './inventory.service.js';
+import { returnStockUnits, reserveStockForItems, allocationsFor } from './inventory.service.js';
+import { returnAllocations } from './stockBatch.service.js';
+
+/** What a line keeps after `kept` units of its allocations are retained. */
+const shrinkAllocations = (allocations, kept) => {
+  let left = Math.max(0, Number(kept) || 0);
+  const out = [];
+  for (const a of Array.isArray(allocations) ? allocations : []) {
+    if (left <= 0) break;
+    const take = Math.min(left, Number(a?.quantity) || 0);
+    if (take <= 0) continue;
+    out.push({ ...(a.toObject?.() || a), quantity: take });
+    left -= take;
+  }
+  return out;
+};
 import { pushStatusHistory } from './order.helpers.js';
 import { getIO, rooms } from '../../../../config/socket.js';
 import { initiateRazorpayRefund } from '../helpers/razorpay.helper.js';
@@ -242,7 +257,14 @@ export async function adjustOrderFulfilment(orderId, { lines = [], byRole = 'RES
       // The original line goes to zero and its units go back; the replacement
       // is a new line that remembers what it stood in for, so the invoice can
       // say so rather than silently showing a product nobody ordered.
-      if (current > 0) returns.push({ itemId: String(line.itemId), qty: current });
+      if (current > 0) {
+        returns.push({
+          itemId: String(line.itemId),
+          qty: current,
+          allocations: allocationsFor(line, current),
+        });
+      }
+      line.batchAllocations = [];
       line.fulfilledQuantity = 0;
 
       order.items.push({
@@ -268,7 +290,18 @@ export async function adjustOrderFulfilment(orderId, { lines = [], byRole = 'RES
     }
     if (found === current) continue;
 
-    if (found < current) returns.push({ itemId: String(line.itemId), qty: current - found });
+    if (found < current) {
+      const giveBack = current - found;
+      // Taken from the end of the line's allocations: the last batch picked is
+      // the first put back, leaving the soonest-expiring units out on the
+      // shelf where they still have to sell.
+      returns.push({
+        itemId: String(line.itemId),
+        qty: giveBack,
+        allocations: allocationsFor(line, giveBack),
+      });
+      line.batchAllocations = shrinkAllocations(line.batchAllocations, found);
+    }
     line.fulfilledQuantity = found;
   }
 
@@ -387,6 +420,8 @@ export async function adjustOrderFulfilment(orderId, { lines = [], byRole = 'RES
   // adjustment that never happened.
   for (const entry of returns) {
     try {
+      // The batches first, then the count, so the two move together.
+      if (entry.allocations?.length) await returnAllocations(entry.allocations);
       await returnStockUnits(entry.itemId, entry.qty, {
         orderId: order._id,
         orderLabel: order.order_id || '',
