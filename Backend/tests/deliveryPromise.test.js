@@ -9,6 +9,8 @@ import {
     resolveOrderPromise
 } from '../src/modules/food/orders/helpers/promise.util.js';
 import { estimateDeliveryPromiseMinutes } from '../src/modules/food/orders/services/order-pricing.service.js';
+import { getStoreDispatchPressure } from '../src/modules/food/orders/services/dispatch-pressure.service.js';
+import { FoodDeliveryPartner } from '../src/modules/food/delivery/models/deliveryPartner.model.js';
 import { PACKING_MINUTES, PER_DROP_MINUTES, AVG_SPEED_KMPH } from '../src/modules/food/orders/services/order.helpers.js';
 
 /**
@@ -112,6 +114,76 @@ describe('what the quote is made of', () => {
         for (const bad of [null, undefined, '', -1, NaN]) {
             assert.equal(estimateDeliveryPromiseMinutes(bad, { riderLegKm: 1, dropsAhead: 3 }), null);
         }
+    });
+});
+
+describe('how busy the store is', () => {
+    const STORE_LNG = 77.59;
+    const STORE_LAT = 12.97;
+    const store = () => ({ _id: someId(), location: { type: 'Point', coordinates: [STORE_LNG, STORE_LAT] } });
+
+    const waiting = (restaurantId, over = {}) =>
+        FoodOrder.create({
+            userId: someId(),
+            restaurantId,
+            items: [{ itemId: String(someId()), name: 'Milk', price: 100, quantity: 1 }],
+            deliveryAddress: {
+                street: '1 Road', city: 'Bengaluru', state: 'Karnataka',
+                location: { type: 'Point', coordinates: [STORE_LNG, STORE_LAT] }
+            },
+            pricing: { subtotal: 100, total: 100 },
+            payment: { method: 'cash' },
+            orderStatus: 'confirmed',
+            ...over
+        });
+
+    it('counts the doorsteps the store still owes', async () => {
+        const s = store();
+        await waiting(s._id);
+        await waiting(s._id);
+        const p = await getStoreDispatchPressure(s);
+        assert.equal(p.dropsAhead, 2);
+    });
+
+    it('does not queue an unpaid cart in front of people who paid', async () => {
+        const s = store();
+        await waiting(s._id, { orderStatus: 'pending_payment' });
+        // pending_payment is never dispatched at all.
+        assert.equal((await getStoreDispatchPressure(s)).dropsAhead, 0);
+    });
+
+    it('does not count a booking for later as ahead of anybody now', async () => {
+        const s = store();
+        const tomorrow = new Date(Date.now() + 24 * 60 * 60 * 1000);
+        await waiting(s._id, { scheduledAt: tomorrow });
+        assert.equal((await getStoreDispatchPressure(s)).dropsAhead, 0);
+    });
+
+    it('stops counting once an order is delivered or cancelled', async () => {
+        const s = store();
+        await waiting(s._id, { orderStatus: 'delivered', deliveryState: { deliveredAt: new Date() } });
+        await waiting(s._id, { orderStatus: 'cancelled_by_user' });
+        assert.equal((await getStoreDispatchPressure(s)).dropsAhead, 0);
+    });
+
+    it('caps what it will admit to, rather than quoting an hour', async () => {
+        const s = store();
+        for (let i = 0; i < 40; i += 1) await waiting(s._id);
+        assert.ok((await getStoreDispatchPressure(s)).dropsAhead <= 5);
+    });
+
+    it('measures the nearest usable rider, and reports none as null', async () => {
+        const s = store();
+        assert.equal((await getStoreDispatchPressure(s)).riderLegKm, null, 'no rider means no invented distance');
+
+        await FoodDeliveryPartner.create({
+            name: 'Near', phone: '9700000011', status: 'approved',
+            availabilityStatus: 'online', lastLat: STORE_LAT, lastLng: STORE_LNG + 0.01,
+            lastLocationAt: new Date()
+        });
+        const other = store();
+        const p = await getStoreDispatchPressure(other);
+        assert.ok(p.riderLegKm !== null && p.riderLegKm < 2);
     });
 });
 

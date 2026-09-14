@@ -235,6 +235,36 @@ describe('a short pick', () => {
         assert.equal(fresh.payment.status, 'paid', 'only part came back; the payment is not "refunded"');
     });
 
+    it('refunds only the difference when an order goes short twice', async () => {
+        // shortfallAmount is cumulative against the original bill, so paying it
+        // out again on the second adjustment refunds the first shortfall twice.
+        const milk = await product({ stockQty: 20 });
+        const order = await orderOf([line(milk, 4)], {
+            pricing: { subtotal: 400, deliveryFee: 0, platformFee: 0, tax: 0, discount: 0, total: 400 },
+            payment: { method: 'wallet', status: 'paid' }
+        });
+
+        const first = await adjustOrderFulfilment(order._id, { lines: [{ itemId: String(milk._id), fulfilledQuantity: 3 }] });
+        assert.equal(first.refund.amount, 100, 'bill 400 -> 300');
+
+        const second = await adjustOrderFulfilment(order._id, { lines: [{ itemId: String(milk._id), fulfilledQuantity: 2 }] });
+        assert.equal(second.refund.amount, 100, 'bill 300 -> 200: another 100, not the cumulative 200');
+
+        const fresh = await FoodOrder.findById(order._id).lean();
+        assert.equal(fresh.fulfillment.shortfallAmount, 200, 'owed in total');
+        assert.equal(fresh.payment.refund.amount, 200, 'returned in total — and no more');
+    });
+
+    it('retries the whole outstanding amount after a refund failed', async () => {
+        const milk = await product({ stockQty: 20 });
+        const order = await orderOf([line(milk, 4)], {
+            pricing: { subtotal: 400, deliveryFee: 0, platformFee: 0, tax: 0, discount: 0, total: 400 },
+            payment: { method: 'wallet', status: 'paid', refund: { status: 'failed', amount: 0 } }
+        });
+        const res = await adjustOrderFulfilment(order._id, { lines: [{ itemId: String(milk._id), fulfilledQuantity: 3 }] });
+        assert.equal(res.refund.amount, 100, 'a failed refund is not money given back');
+    });
+
     it('refuses to empty the order, because that is a cancellation', async () => {
         const milk = await product();
         const order = await orderOf([line(milk, 2)]);
