@@ -1543,6 +1543,10 @@ export default function Cart() {
    */
   const advertisedDeliveryBand = deliveryMode === "quick" ? "20-25 mins" : (restaurantData?.estimatedDeliveryTime || "35-40 mins")
   const promisedMinutes = Number(pricing?.deliveryPromiseMinutes)
+  // Quoted per mode by the engine. Falls back to the selected-mode figure so
+  // an older response still labels the choice with something real.
+  const basicPromisedMinutes = Number(pricing?.deliveryPromiseMinutesBasic ?? promisedMinutes)
+  const quickPromisedMinutes = Number(pricing?.deliveryPromiseMinutesQuick ?? promisedMinutes)
   const headerDeliveryTime =
     Number.isFinite(promisedMinutes) && promisedMinutes > 0
       ? `${Math.round(promisedMinutes)} mins`
@@ -1559,8 +1563,23 @@ export default function Cart() {
     Number.isFinite(promisedMinutes) && promisedMinutes > 0
       ? `arriving in about ${Math.round(promisedMinutes)} mins`
       : `arriving in ${advertisedDeliveryBand}`
-  const basicDeliveryTime = restaurantData?.estimatedDeliveryTime || "35-40 mins"
-  const quickDeliveryTime = "20-25 mins"
+  /**
+   * What each mode actually promises, from the quote rather than a label.
+   *
+   * These were "35-40 mins" and "20-25 mins", hardcoded — restaurant-era bands
+   * sitting directly under a header quoting six. On this product the numbers
+   * are minutes, they move with the store's queue, and the difference between
+   * the two modes is the queue itself: Priority is dispatched unbatched, so
+   * nothing is in front of it.
+   */
+  const basicDeliveryTime =
+    Number.isFinite(basicPromisedMinutes) && basicPromisedMinutes > 0
+      ? `${Math.round(basicPromisedMinutes)} mins`
+      : (restaurantData?.estimatedDeliveryTime || "35-40 mins")
+  const quickDeliveryTime =
+    Number.isFinite(quickPromisedMinutes) && quickPromisedMinutes > 0
+      ? `${Math.round(quickPromisedMinutes)} mins`
+      : "20-25 mins"
   const headerAddressLabel = defaultAddress ? getDisplayAddressLabel(defaultAddress.label) : "Select address"
   const headerAddressText = defaultAddress
     ? (formatFullAddress(defaultAddress) || defaultAddress?.formattedAddress || defaultAddress?.address || "Add delivery address")
