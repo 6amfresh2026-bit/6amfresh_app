@@ -269,27 +269,64 @@ export function computeItemsTax(items = [], { subtotal = 0, discount = 0, fallba
   return Math.round(tax);
 }
 
+/**
+ * What a small basket is surcharged, and whether delivery is on the house.
+ *
+ * A rider rides the same distance for a ₹30 order as a ₹400 one, and until
+ * these existed the system had no floor of any kind — the small one was simply
+ * delivered at a loss. A surcharge rather than a hard minimum on purpose:
+ * refusing the order loses the customer, charging for the trip prices it.
+ *
+ * Both are off unless an admin sets them, so nothing changes for an existing
+ * installation until somebody decides it should.
+ */
+export function resolveCartAdjustments(feeSettings = {}, subtotal = 0) {
+  const goods = Math.max(0, Number(subtotal) || 0);
+
+  const threshold = Math.max(0, Number(feeSettings.smallCartThreshold) || 0);
+  const fee = Math.max(0, Number(feeSettings.smallCartFee) || 0);
+  // A zero basket is an empty cart, not a small one — it is priced at nothing
+  // and the surcharge would be the entire bill.
+  const smallCartFee = threshold > 0 && fee > 0 && goods > 0 && goods < threshold ? fee : 0;
+
+  const freeAbove = Math.max(0, Number(feeSettings.freeDeliveryAbove) || 0);
+  const deliveryIsFree = freeAbove > 0 && goods >= freeAbove;
+
+  return {
+    smallCartFee,
+    smallCartThreshold: threshold,
+    deliveryIsFree,
+    freeDeliveryAbove: freeAbove,
+    // What one more rupee of shopping would save, so the cart can say so.
+    spendMoreForFreeDelivery: freeAbove > 0 && goods < freeAbove ? Math.ceil(freeAbove - goods) : 0,
+  };
+}
+
 export function resolveUserDeliveryFee(feeSettings = {}, { subtotal = 0, distanceKm = null } = {}) {
   const ranges = Array.isArray(feeSettings.deliveryFeeRanges)
     ? feeSettings.deliveryFeeRanges
     : [];
 
+  const { deliveryIsFree } = resolveCartAdjustments(feeSettings, subtotal);
+
   if (ranges.length > 0 && Number.isFinite(distanceKm)) {
     const matchedFee = matchFeeRange(ranges, distanceKm, (range) => Number(range.fee));
     if (Number.isFinite(matchedFee)) {
       return {
-        deliveryFee: matchedFee,
+        deliveryFee: deliveryIsFree ? 0 : matchedFee,
         distanceKm: Number(distanceKm.toFixed(2)),
-        source: 'distance',
+        source: deliveryIsFree ? 'free_over_threshold' : 'distance',
       };
     }
   }
 
   const fallbackFee = resolveBaseDeliveryFee(feeSettings);
   return {
-    deliveryFee: fallbackFee,
+    deliveryFee: deliveryIsFree ? 0 : fallbackFee,
     distanceKm: Number.isFinite(distanceKm) ? Number(distanceKm.toFixed(2)) : null,
-    source: Number.isFinite(distanceKm) ? 'default_unmatched_range' : 'default',
+    source: deliveryIsFree
+      ? 'free_over_threshold'
+      : (Number.isFinite(distanceKm) ? 'default_unmatched_range' : 'default'),
   };
 }
 
@@ -498,10 +535,16 @@ export async function calculateOrderPricing(userId, dto, options = {}) {
 
   const additionalCharges = round2(Math.max(0, Number(dto.additionalCharges) || 0));
 
+  // Priced on the goods, so a coupon that shrinks the basket can push it under
+  // the threshold — which is correct: what the rider carries is what was paid
+  // for, and the trip costs the same either way.
+  const cartAdjustments = resolveCartAdjustments(feeSettings, subtotal);
+  const smallCartFee = round2(cartAdjustments.smallCartFee);
+
   const exactTotal = round2(
     Math.max(
       0,
-      subtotal + packagingFee + deliveryFee + deliveryFeeGst + platformFee + tax + additionalCharges - discount,
+      subtotal + packagingFee + deliveryFee + deliveryFeeGst + platformFee + smallCartFee + tax + additionalCharges - discount,
     ),
   );
 
@@ -527,6 +570,12 @@ export async function calculateOrderPricing(userId, dto, options = {}) {
     couponNextSlab,
     manualDiscount,
     additionalCharges,
+    smallCartFee,
+    smallCartThreshold: cartAdjustments.smallCartThreshold,
+    deliveryIsFree: cartAdjustments.deliveryIsFree,
+    freeDeliveryAbove: cartAdjustments.freeDeliveryAbove,
+    /** What one more rupee of shopping would save — the cart says this out loud. */
+    spendMoreForFreeDelivery: cartAdjustments.spendMoreForFreeDelivery,
     roundOff,
     distanceKm: Number.isFinite(distanceKm) ? Number(distanceKm.toFixed(2)) : null,
     roadDistanceKm: Number.isFinite(distanceKm) ? Number(distanceKm.toFixed(2)) : null,
