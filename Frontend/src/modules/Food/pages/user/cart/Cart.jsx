@@ -1120,6 +1120,16 @@ export default function Cart() {
       debugLog(`[CART-COUPONS] Fetching coupons for ${cart.length} items in cart`)
       setLoadingCoupons(true)
 
+      // Worked out from the cart itself rather than read off the priced
+      // subtotal: that one settles a render later, so it still describes the
+      // previous basket while this list is being built. A spend-slab coupon
+      // makes the lag obvious — cross ₹300 and the coupon that just became
+      // usable is missing until something else forces a refetch.
+      const cartGoodsTotal = cart.reduce(
+        (sum, line) => sum + (Number(line.price) || 0) * (Number(line.quantity) || 1),
+        0,
+      )
+
       const allCoupons = []
       const uniqueCouponCodes = new Set()
 
@@ -1133,7 +1143,7 @@ export default function Cart() {
 
         try {
           debugLog(`[CART-COUPONS] Fetching coupons for itemId: ${couponItemId}, name: ${cartItem.name}`)
-          const response = await restaurantAPI.getCouponsByItemIdPublic(restaurantId, couponItemId, subtotal)
+          const response = await restaurantAPI.getCouponsByItemIdPublic(restaurantId, couponItemId, cartGoodsTotal)
 
           if (response?.data?.success && response?.data?.data?.coupons) {
             const coupons = response.data.data.coupons
@@ -1497,6 +1507,21 @@ export default function Cart() {
   const savings = effectivePricing.savings
   const itemDiscountAmount = appliedCoupon && discount > 0 ? discount : 0
   const otherSavings = Math.max(0, savings - itemDiscountAmount)
+
+  /**
+   * A coupon the customer chose that the bill did not honour, and why.
+   *
+   * The cart keeps the chosen coupon in its own state, so it goes on saying
+   * "applied" after the basket changes underneath it — reading "'SPEND300'
+   * applied · You saved ₹0" when the answer the customer needs is "₹2 more".
+   * The server already worked that out; this just stops the cart from talking
+   * over it.
+   */
+  const couponBlockedReason =
+    appliedCoupon && discount <= 0 ? (pricing?.couponRejectedReason || "") : ""
+
+  /** "Add ₹180 more to save ₹120" — the rung above, on a spend-slab coupon. */
+  const couponNextSlab = appliedCoupon && discount > 0 ? (pricing?.couponNextSlab || null) : null
   const compareItemTotal = getCartCompareItemTotal(cart)
   const selectedPaymentLabel =
     selectedPaymentMethod === "wallet" ? "Wallet" : "Online Payment"
@@ -1868,7 +1893,11 @@ export default function Cart() {
       }
 
       if (!pricingData.appliedCoupon) {
-        toast.error("Invalid or unavailable coupon code")
+        // The bill knows exactly why it refused — "Needs ₹300 minimum — ₹2
+        // more", "Expired", "First-time customers only". Calling a real code
+        // "invalid" sends the customer away from a coupon they could have used
+        // by adding one more item.
+        toast.error(pricingData.couponRejectedReason || "Invalid or unavailable coupon code")
         setCouponCode("")
         return
       }
@@ -2819,14 +2848,19 @@ export default function Cart() {
                   <Tag className={`h-4 w-4 ${appliedCoupon ? "text-[#FA0272]" : "text-emerald-600"}`} />
                 </div>
                 <div className="flex-1 min-w-0">
-                  <p className={`text-sm font-semibold ${appliedCoupon ? "text-[#FA0272]" : "text-gray-900 dark:text-white"}`}>
+                  <p className={`text-sm font-semibold ${couponBlockedReason ? "text-amber-600" : appliedCoupon ? "text-[#FA0272]" : "text-gray-900 dark:text-white"}`}>
                     {appliedCoupon
-                      ? `'${appliedCoupon.code}' applied`
+                      ? couponBlockedReason
+                        ? `'${appliedCoupon.code}' not applied yet`
+                        : `'${appliedCoupon.code}' applied`
                       : "Payment offers & more"}
                   </p>
-                  <p className={`text-xs mt-0.5 truncate ${appliedCoupon ? "text-[#FA0272]/80 font-medium" : "text-gray-500 dark:text-gray-400"}`}>
+                  <p className={`text-xs mt-0.5 truncate ${couponBlockedReason ? "text-amber-600/90 font-medium" : appliedCoupon ? "text-[#FA0272]/80 font-medium" : "text-gray-500 dark:text-gray-400"}`}>
                     {appliedCoupon
-                      ? `You saved ${RUPEE_SYMBOL}${discount.toFixed(0)} on this order`
+                      ? couponBlockedReason
+                        || (couponNextSlab
+                          ? `You saved ${RUPEE_SYMBOL}${discount.toFixed(0)} · add ${RUPEE_SYMBOL}${couponNextSlab.spendMore} more to save ${RUPEE_SYMBOL}${couponNextSlab.discount}`
+                          : `You saved ${RUPEE_SYMBOL}${discount.toFixed(0)} on this order`)
                       : loadingCoupons
                         ? "Loading offers..."
                         : availableCoupons.length > 0
@@ -3643,9 +3677,11 @@ export default function Cart() {
                           <CheckCircle2 className="h-5 w-5 text-emerald-600" />
                         </div>
                         <div className="min-w-0">
-                          <p className="text-sm font-bold text-gray-900 dark:text-white">'{appliedCoupon.code}' applied</p>
-                          <p className="text-xs text-emerald-600 mt-0.5">
-                            You saved {RUPEE_SYMBOL}{discount.toFixed(0)} on this order
+                          <p className="text-sm font-bold text-gray-900 dark:text-white">
+                            '{appliedCoupon.code}' {couponBlockedReason ? "not applied yet" : "applied"}
+                          </p>
+                          <p className={`text-xs mt-0.5 ${couponBlockedReason ? "text-amber-600" : "text-emerald-600"}`}>
+                            {couponBlockedReason || `You saved ${RUPEE_SYMBOL}${discount.toFixed(0)} on this order`}
                           </p>
                         </div>
                       </div>
