@@ -305,16 +305,29 @@ export async function adjustOrderFulfilment(orderId, { lines = [], byRole = 'RES
 
   // Give the money back before saving the refund record, so a gateway that
   // refuses is never written down as processed.
+  // `shortfall` is cumulative against the original bill, so a second short
+  // pick on the same order must only move the DIFFERENCE. Refunding the
+  // cumulative figure again pays the first shortfall twice — on a ₹400 order
+  // short-picked to ₹300 and then to ₹200, the customer is owed ₹200 and was
+  // being given ₹300.
+  //
+  // A refund that previously FAILED counts as nothing given back, so the whole
+  // outstanding amount is attempted again rather than written off.
+  const previous = order.payment?.refund || {};
+  const alreadyRefunded = String(previous.status) === 'processed' ? Number(previous.amount) || 0 : 0;
+  const owedNow = round2(shortfall - alreadyRefunded);
+
   let refund = null;
-  if (alreadyPaid && shortfall > 0) {
-    refund = await refundShortfall(order, shortfall);
+  if (alreadyPaid && owedNow > 0) {
+    refund = await refundShortfall(order, owedNow);
+    const settled = refund.status === 'processed';
     order.payment.refund = {
       status: refund.status,
-      // Cumulative, like the shortfall it mirrors: a second short pick on the
-      // same order must not report only its own delta.
-      amount: round2(shortfall),
-      refundId: refund.refundId || order.payment?.refund?.refundId || '',
-      processedAt: refund.status === 'processed' ? new Date() : order.payment?.refund?.processedAt,
+      // Cumulative total returned, not this instalment: the order has to say
+      // how much of the bill came back altogether.
+      amount: settled ? round2(alreadyRefunded + owedNow) : round2(alreadyRefunded),
+      refundId: refund.refundId || previous.refundId || '',
+      processedAt: settled ? new Date() : previous.processedAt,
     };
   }
 
@@ -377,7 +390,7 @@ export async function adjustOrderFulfilment(orderId, { lines = [], byRole = 'RES
     order_id: order.order_id,
     fulfillment: order.fulfillment,
     pricing: repriced,
-    refund: refund ? { status: refund.status, amount: round2(shortfall), method: refund.method } : null,
+    refund: refund ? { status: refund.status, amount: owedNow, method: refund.method } : null,
     refundDue: alreadyPaid ? shortfall : 0,
     amountDue: alreadyPaid ? 0 : Math.max(0, round2(repriced.total)),
     substitutions: takes.length,
