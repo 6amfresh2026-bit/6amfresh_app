@@ -134,29 +134,174 @@ export function settleOrderPromise(order, { at = new Date(), status } = {}) {
   return next;
 }
 
-export async function partnerHasActiveDelivery(deliveryPartnerId) {
-  if (!deliveryPartnerId) return false;
+/**
+ * How many live orders one rider may carry at once.
+ *
+ * One was the old answer, and it is what makes the rider the most expensive
+ * line in a quick-commerce order: two customers half a street apart, served by
+ * two separate trips from the same store. Batching is the lever, but only
+ * under the conditions in canPartnerTakeOrder() — a "batch" of two unrelated
+ * pickups across town is just one late order plus another.
+ */
+export const MAX_ACTIVE_ORDERS_PER_RIDER = Math.max(
+  1,
+  Number(process.env.MAX_ORDERS_PER_RIDER) || 3,
+);
 
+/**
+ * How far apart two drops may be and still ride together.
+ *
+ * The second customer pays for the first one's doorstep in minutes, and this
+ * is the cap on that. Deliberately small: past roughly a kilometre and a half
+ * the detour costs more promise than the trip saves.
+ */
+export const BATCH_DROP_RADIUS_KM = Math.max(
+  0.1,
+  Number(process.env.BATCH_DROP_RADIUS_KM) || 1.5,
+);
+
+const ACTIVE_DELIVERY_SELECT = '_id order_id restaurantId deliveryAddress deliveryState orderStatus promise';
+
+/** Every order a rider is currently carrying. */
+export async function getActiveDeliveriesForPartner(deliveryPartnerId) {
+  if (!deliveryPartnerId) return [];
   const partnerId = new mongoose.Types.ObjectId(deliveryPartnerId);
-  const active = await FoodOrder.exists({
+  return FoodOrder.find({
     'dispatch.deliveryPartnerId': partnerId,
     'dispatch.status': 'accepted',
     orderStatus: { $nin: TERMINAL_ORDER_STATUSES },
-  });
-
-  return Boolean(active);
+  })
+    .select(ACTIVE_DELIVERY_SELECT)
+    .lean();
 }
 
-export async function getBusyDeliveryPartnerIds() {
+export async function partnerHasActiveDelivery(deliveryPartnerId) {
+  return (await getActiveDeliveriesForPartner(deliveryPartnerId)).length > 0;
+}
+
+const dropPointOf = (order) => {
+  const coords = order?.deliveryAddress?.location?.coordinates;
+  if (!Array.isArray(coords) || coords.length < 2) return null;
+  const [lng, lat] = coords;
+  return Number.isFinite(Number(lat)) && Number.isFinite(Number(lng))
+    ? { lat: Number(lat), lng: Number(lng) }
+    : null;
+};
+
+/**
+ * Whether a rider already carrying work may also take this order.
+ *
+ * Three conditions, and all of them are about protecting the promise rather
+ * than about counting:
+ *
+ *  - **Same store.** A second pickup somewhere else is not a batch; it is two
+ *    trips wearing one rider.
+ *  - **Not yet collected.** Added while the rider is still heading to the
+ *    store or standing in it, so one pickup serves the whole batch. Once they
+ *    have ridden away, a new order means riding back.
+ *  - **Drops close together.** The customer already on board pays for the new
+ *    one's doorstep in minutes, and BATCH_DROP_RADIUS_KM is the cap on that.
+ *
+ * Returns a reason on refusal because the rider app shows it, and "you already
+ * have an active delivery" was the single most useless sentence in that app.
+ */
+export function canPartnerTakeOrder(activeOrders, candidate) {
+  const active = Array.isArray(activeOrders) ? activeOrders : [];
+  if (active.length === 0) return { allowed: true, reason: '', activeCount: 0 };
+
+  if (active.length >= MAX_ACTIVE_ORDERS_PER_RIDER) {
+    return {
+      allowed: false,
+      activeCount: active.length,
+      reason: `You are already carrying ${active.length} orders. Deliver one before taking another.`,
+    };
+  }
+
+  const candidateStore = String(candidate?.restaurantId?._id || candidate?.restaurantId || '');
+  const sameStore = active.every(
+    (o) => String(o?.restaurantId?._id || o?.restaurantId || '') === candidateStore,
+  );
+  if (!candidateStore || !sameStore) {
+    return {
+      allowed: false,
+      activeCount: active.length,
+      reason: 'This order is from a different store. Finish your current pickup first.',
+    };
+  }
+
+  const collected = active.some(
+    (o) => Boolean(o?.deliveryState?.pickedUpAt) || ['picked_up', 'reached_drop'].includes(String(o?.orderStatus)),
+  );
+  if (collected) {
+    return {
+      allowed: false,
+      activeCount: active.length,
+      reason: 'You have already collected your current order. Deliver it before taking another.',
+    };
+  }
+
+  const candidateDrop = dropPointOf(candidate);
+  if (candidateDrop) {
+    for (const existing of active) {
+      const drop = dropPointOf(existing);
+      // An address with no coordinates cannot be checked; letting it through
+      // beats refusing every order in a shop whose customers have no pin.
+      if (!drop) continue;
+      const apart = geoHaversineKm(drop.lat, drop.lng, candidateDrop.lat, candidateDrop.lng);
+      if (Number.isFinite(apart) && apart > BATCH_DROP_RADIUS_KM) {
+        return {
+          allowed: false,
+          activeCount: active.length,
+          reason: 'That drop is too far from the one you are already carrying.',
+        };
+      }
+    }
+  }
+
+  return { allowed: true, reason: '', activeCount: active.length };
+}
+
+/**
+ * Riders who cannot take another order at all, and what the rest are carrying.
+ *
+ * `busy` used to be every rider holding anything. It is now only those at
+ * capacity — the rest are still candidates, and `loadByPartner` lets the
+ * dispatcher prefer a rider already heading to this very store, which is the
+ * cheapest rider there is.
+ */
+export async function getDeliveryPartnerLoads() {
   const rows = await FoodOrder.find({
     'dispatch.status': 'accepted',
     'dispatch.deliveryPartnerId': { $exists: true, $ne: null },
     orderStatus: { $nin: TERMINAL_ORDER_STATUSES },
   })
-    .select('dispatch.deliveryPartnerId')
+    .select('dispatch.deliveryPartnerId restaurantId deliveryState orderStatus')
     .lean();
 
-  return new Set(rows.map((row) => String(row.dispatch.deliveryPartnerId)));
+  const loadByPartner = new Map();
+  for (const row of rows) {
+    const key = String(row.dispatch.deliveryPartnerId);
+    const entry = loadByPartner.get(key) || { count: 0, restaurantIds: new Set(), collected: false };
+    entry.count += 1;
+    entry.restaurantIds.add(String(row.restaurantId || ''));
+    if (row?.deliveryState?.pickedUpAt || ['picked_up', 'reached_drop'].includes(String(row.orderStatus))) {
+      entry.collected = true;
+    }
+    loadByPartner.set(key, entry);
+  }
+
+  const atCapacity = new Set(
+    [...loadByPartner.entries()]
+      .filter(([, e]) => e.count >= MAX_ACTIVE_ORDERS_PER_RIDER || e.collected)
+      .map(([key]) => key),
+  );
+
+  return { loadByPartner, atCapacity };
+}
+
+/** Kept for callers that only ever wanted "cannot take anything more". */
+export async function getBusyDeliveryPartnerIds() {
+  return (await getDeliveryPartnerLoads()).atCapacity;
 }
 
 export function buildOrderIdentityFilter(orderIdOrMongoId) {
