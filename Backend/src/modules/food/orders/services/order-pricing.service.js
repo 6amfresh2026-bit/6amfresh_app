@@ -538,7 +538,22 @@ export async function calculateOrderPricing(userId, dto, options = {}) {
     // quick-commerce promise: it is a reason to order, not a status to check
     // afterwards. Packing plus the ride, from the same numbers the live
     // countdown uses, so the quote and the tracking screen agree.
-    deliveryPromiseMinutes: estimateDeliveryPromiseMinutes(distanceKm, dispatchPressure),
+    // A quick order is dispatched unbatched (see canPartnerTakeOrder), so
+    // nothing is queued in front of it and its quote says so. That mechanical
+    // difference is what the surcharge buys — before it, the fee bought a
+    // different label on an identical delivery.
+    deliveryPromiseMinutes: estimateDeliveryPromiseMinutes(
+      distanceKm,
+      dto.deliveryMode === 'quick' ? { ...dispatchPressure, dropsAhead: 0 } : dispatchPressure,
+    ),
+    // Both modes quoted, so the cart can label the choice with real minutes
+    // instead of the fixed bands it used to print. Free: the pressure behind
+    // them was already measured for the line above.
+    deliveryPromiseMinutesBasic: estimateDeliveryPromiseMinutes(distanceKm, dispatchPressure),
+    deliveryPromiseMinutesQuick: estimateDeliveryPromiseMinutes(distanceKm, {
+      ...dispatchPressure,
+      dropsAhead: 0,
+    }),
   };
 
   const pricing = applyDeliveryModePricing(
