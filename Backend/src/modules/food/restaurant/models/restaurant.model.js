@@ -104,6 +104,24 @@ const restaurantSchema = new mongoose.Schema(
     landmark: {
       type: String,
     },
+    /**
+     * What kind of place this is, and therefore what the apps should say.
+     *
+     * Everything here was modelled as a restaurant, so a grocery basket asked
+     * whether to send cutlery and offered to pass on cooking requests. There
+     * was no field to branch on — `cuisines` was the only hint, and a dark
+     * store has none.
+     *
+     * Defaults to 'grocery' because that is what this platform is: a shop is
+     * the ordinary case now and a kitchen is the exception, which is the
+     * opposite of the assumption the schema was built on.
+     */
+    storeType: {
+      type: String,
+      enum: ['grocery', 'restaurant'],
+      default: 'grocery',
+      index: true,
+    },
     cuisines: {
       type: [String],
       default: [],

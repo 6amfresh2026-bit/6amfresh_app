@@ -350,6 +350,9 @@ const toRestaurantProfile = (doc) => {
         name: doc.restaurantName || '',
         restaurantName: doc.restaurantName || '',
         zoneId: doc.zoneId ? String(doc.zoneId) : '',
+        // What the apps branch on: a grocery basket has no cutlery to send
+        // and no kitchen to pass a request to.
+        storeType: doc.storeType || 'grocery',
         cuisines: Array.isArray(doc.cuisines) ? doc.cuisines : [],
         location,
         ownerName: doc.ownerName || '',
