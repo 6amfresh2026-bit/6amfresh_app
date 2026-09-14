@@ -875,6 +875,9 @@ export async function createOrder(userId, dto) {
       note: String(dto.note || ""),
       deliveryInstructions: String(dto.deliveryInstructions || ""),
       sendCutlery: dto.sendCutlery !== false,
+      // Defaults to 'refund' when the cart says nothing, which is every order
+      // placed before the choice existed.
+      substitutionPreference: dto.substitutionPreference === 'allow' ? 'allow' : 'refund',
       deliveryFleet: String(dto.deliveryFleet || "standard"),
       scheduledAt: scheduledFor ? new Date(scheduledFor) : null,
       // The number the customer saw on the way in, frozen onto the order they

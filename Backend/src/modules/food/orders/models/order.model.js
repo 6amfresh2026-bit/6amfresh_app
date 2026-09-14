@@ -571,6 +571,20 @@ const orderSchema = new mongoose.Schema(
          */
         stockRestoredAt: { type: Date, default: null },
         sendCutlery: { type: Boolean, default: true },
+        /**
+         * What to do when the shelf cannot supply a line.
+         *
+         * 'refund' is the default because a substitution spends the customer's
+         * money on something they did not choose, and silence is not consent —
+         * the lactose-free shopper handed ordinary milk has been sold the one
+         * thing they were avoiding. A customer who does not mind says so at
+         * checkout, and only then may the picker swap.
+         */
+        substitutionPreference: {
+            type: String,
+            enum: ['refund', 'allow'],
+            default: 'refund'
+        },
         deliveryFleet: { type: String, default: 'standard', trim: true },
         scheduledAt: { type: Date, default: null },
         /**

@@ -131,6 +131,8 @@ export function validateCreateOrderDto(body) {
         deliveryInstructions: z.string().optional(),
         deliveryMode: z.enum(['basic', 'quick']).optional(),
         sendCutlery: z.boolean().optional(),
+        /** What to do when a line cannot be supplied: refund it, or swap it. */
+        substitutionPreference: z.enum(['refund', 'allow']).optional(),
         // 'cash' is true COD, collected as notes at the door.
         // 'razorpay_qr' is the same pay-at-delivery flow, collected by QR instead.
         // 'cash' is accepted here regardless so the service can return the friendly
