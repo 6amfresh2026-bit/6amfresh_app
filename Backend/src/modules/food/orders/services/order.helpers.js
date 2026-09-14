@@ -407,6 +407,15 @@ export const AVG_SPEED_KMPH = 22;
 export const PACKING_MINUTES = Number(process.env.PACKING_MINUTES) || 3;
 
 /**
+ * What one extra drop costs the customers behind it.
+ *
+ * Handing an order over is not instant — finding the door, the flat, the OTP.
+ * Batching only pays if this is small, and it is the number that decides
+ * whether a batched customer is quoted honestly or optimistically.
+ */
+export const PER_DROP_MINUTES = Number(process.env.PER_DROP_MINUTES) || 4;
+
+/**
  * How long before a booked window the order becomes work: when the dispatcher
  * starts hunting a rider, and the earliest the rider's own offer list shows it.
  *

@@ -15,7 +15,8 @@ import { fetchDrivingRoute } from '../utils/googleMaps.js';
 import { attachOutletTimingsToRestaurants } from '../../restaurant/services/outletTimings.service.js';
 import { getRestaurantAvailabilityStatus } from '../../restaurant/helpers/restaurantAvailability.helper.js';
 import { resolveOrderCartItems } from '../helpers/order-cart-items.helper.js';
-import { AVG_SPEED_KMPH, PACKING_MINUTES } from './order.helpers.js';
+import { AVG_SPEED_KMPH, PACKING_MINUTES, PER_DROP_MINUTES } from './order.helpers.js';
+import { getStoreDispatchPressure } from './dispatch-pressure.service.js';
 
 const round2 = (value) => Math.round((Number(value) || 0) * 100) / 100;
 
@@ -198,18 +199,40 @@ export async function loadActiveFeeSettings() {
 }
 
 /**
- * The delivery promise quoted at checkout: packing, then the ride.
+ * The delivery promise quoted at checkout.
+ *
+ * Three things stand between the tap and the doorstep, and the quote used to
+ * count only one of them:
+ *
+ *  - **Packing**, which runs while the rider is still on their way.
+ *  - **The rider's ride to the store.** Omitted entirely before this, which
+ *    made the promise systematically optimistic exactly when it mattered — a
+ *    busy evening, when the nearest free rider is furthest away.
+ *  - **Drops already ahead of this one.** Batching means the customer behind
+ *    waits for the doorstep in front. Quoting as though they were alone is how
+ *    a batching change quietly turns into a wall of late orders.
+ *
+ * Packing and the ride to the store overlap, so they are a max rather than a
+ * sum. Everything else is sequential.
  *
  * Same speed and packing constants the live countdown uses, so a customer is
  * not quoted one number before ordering and shown a different one after.
  */
-export function estimateDeliveryPromiseMinutes(distanceKm) {
+export function estimateDeliveryPromiseMinutes(distanceKm, { riderLegKm = null, dropsAhead = 0 } = {}) {
   // Number(null) is 0, so an unknown distance would otherwise quote the packing
   // time alone -- a confident promise built on a distance nobody measured.
   if (distanceKm === null || distanceKm === undefined || distanceKm === '') return null;
   const km = Number(distanceKm);
   if (!Number.isFinite(km) || km < 0) return null;
-  return Math.ceil(PACKING_MINUTES + (km / AVG_SPEED_KMPH) * 60);
+
+  const minutesFor = (d) => (Number(d) / AVG_SPEED_KMPH) * 60;
+
+  // An unknown rider leg falls back to packing alone, which is the old
+  // behaviour: better to keep the previous quote than to invent a distance.
+  const toStore = Number.isFinite(Number(riderLegKm)) && Number(riderLegKm) >= 0 ? minutesFor(riderLegKm) : 0;
+  const ahead = Math.max(0, Number(dropsAhead) || 0) * PER_DROP_MINUTES;
+
+  return Math.ceil(Math.max(PACKING_MINUTES, toStore) + minutesFor(km) + ahead);
 }
 
 /**
@@ -404,6 +427,11 @@ export async function calculateOrderPricing(userId, dto, options = {}) {
   const deliveryFee = round2(deliveryFeeResult.deliveryFee);
   distanceKm = deliveryFeeResult.distanceKm ?? distanceKm;
 
+  // What the store owes the road right now: how far the nearest usable rider
+  // is, and how many doorsteps are already ahead of this one. Cached per store
+  // for a few seconds, and falls back to nulls rather than failing a checkout.
+  const dispatchPressure = await getStoreDispatchPressure(restaurant);
+
   let discount = 0;
   let appliedCoupon = null;
   // Why a code that was sent did not come off the bill, in the customer's
@@ -510,7 +538,7 @@ export async function calculateOrderPricing(userId, dto, options = {}) {
     // quick-commerce promise: it is a reason to order, not a status to check
     // afterwards. Packing plus the ride, from the same numbers the live
     // countdown uses, so the quote and the tracking screen agree.
-    deliveryPromiseMinutes: estimateDeliveryPromiseMinutes(distanceKm),
+    deliveryPromiseMinutes: estimateDeliveryPromiseMinutes(distanceKm, dispatchPressure),
   };
 
   const pricing = applyDeliveryModePricing(
