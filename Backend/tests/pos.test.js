@@ -1,5 +1,6 @@
 import { after, before, beforeEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import mongoose from 'mongoose';
 
 import { connectTestDb, disconnectTestDb, expectError, resetDb, someId } from './helpers/db.js';
 import { FoodItem } from '../src/modules/food/admin/models/food.model.js';
@@ -671,20 +672,51 @@ describe('adding a customer at the counter', () => {
         await expectError(() => pos.lookupPosCustomer('12345'), '10-digit', assert);
     });
 
-    it('cannot surface the synthetic walk-in as a real customer', async () => {
-        const shop = await makeShop();
+    /**
+     * The stand-in's "phone" is pos-walkin-<restaurant id>, and how that reads
+     * to the lookup depends entirely on how the id's hex falls.
+     *
+     * Both shops below are pinned rather than generated, because this test used
+     * to take whatever ObjectId it was given and assert that stripping it never
+     * left ten digits. That is untrue for a couple of percent of ids, and the
+     * suite failed on exactly those — the assertion was about the shape of a
+     * random number, not about the behaviour being tested.
+     */
+    const ID_WITH_TEN_DIGITS = '1234567890abcdefabcdefab';
+    const ID_WITH_NO_DIGITS = 'abcdefabcdefabcdefabcdef';
+
+    it('cannot surface the synthetic walk-in, whatever its id strips down to', async () => {
+        const shop = await makeShop({ _id: new mongoose.Types.ObjectId(ID_WITH_TEN_DIGITS) });
         const milk = await makeProduct(shop._id);
         await pos.createPosOrder(shop._id, { items: [line(milk)] }); // creates the walk-in stand-in
 
         const walkIn = await FoodUser.findOne({ phone: /^pos-walkin-/ }).lean();
         assert.ok(walkIn, 'the stand-in exists');
-        // Its "phone" is pos-walkin-<id>, so it can never equal a ten-digit
-        // number however the id's hex falls — the stand-in is unreachable by
-        // number by construction, and the isWalkInPhone guard in the lookup is
-        // the belt to that pair of braces.
         assert.ok(walkIn.phone.startsWith('pos-walkin-'));
+
+        // This id strips to exactly ten digits, so the lookup accepts the
+        // number and has to answer honestly instead of being saved by the
+        // length check. The stand-in is stored under its pos-walkin- phone,
+        // never under the bare digits, so nothing comes back.
+        const digits = digitsOnly(walkIn.phone);
+        assert.equal(digits.length, 10, 'this id is chosen to reach the lookup, not bounce off it');
+        assert.equal((await pos.lookupPosCustomer(digits)).exists, false);
+
+        // And a real customer on that very number is still found — the two are
+        // separate records, not one filtered by luck.
+        await pos.savePosCustomer({ name: 'Real Person', phone: digits });
+        const found = await pos.lookupPosCustomer(digits);
+        assert.equal(found.exists, true);
+        assert.equal(found.customer.name, 'Real Person');
+    });
+
+    it('refuses the stand-in identifier itself as a number', async () => {
+        const shop = await makeShop({ _id: new mongoose.Types.ObjectId(ID_WITH_NO_DIGITS) });
+        const milk = await makeProduct(shop._id);
+        await pos.createPosOrder(shop._id, { items: [line(milk)] });
+
+        const walkIn = await FoodUser.findOne({ phone: /^pos-walkin-/ }).lean();
         await expectError(() => pos.lookupPosCustomer(walkIn.phone), '10-digit', assert);
-        assert.equal((await pos.lookupPosCustomer(digitsOnly(walkIn.phone).padEnd(10, '0').slice(0, 10))).exists, false);
     });
 });
 
