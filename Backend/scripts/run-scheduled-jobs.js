@@ -5,6 +5,7 @@ import { config } from '../src/config/env.js';
 import { expireExpiredOffers, renewMonthlyOffers, notifyUpcomingMonthlyOffers } from '../src/modules/food/admin/services/admin.service.js';
 import { syncExpiredFssaiNotifications } from '../src/modules/food/restaurant/services/fssaiExpiry.service.js';
 import { runBillingCatchUp } from '../src/modules/food/restaurant/services/subscriptionBilling.service.js';
+import { writeOffExpiredBatches } from '../src/modules/food/orders/services/stockBatch.service.js';
 import { logger } from '../src/utils/logger.js';
 
 let expireOffersInterval = null;
@@ -13,6 +14,7 @@ let productSubscriptionSweepInterval = null;
 let fssaiExpiryInterval = null;
 let subscriptionBillingInterval = null;
 let autoDeliverInterval = null;
+let expiredBatchInterval = null;
 let stuckOrderInterval = null;
 
 const shutdown = async (signal) => {
@@ -23,6 +25,7 @@ const shutdown = async (signal) => {
     if (fssaiExpiryInterval) clearInterval(fssaiExpiryInterval);
     if (subscriptionBillingInterval) clearInterval(subscriptionBillingInterval);
     if (autoDeliverInterval) clearInterval(autoDeliverInterval);
+    if (expiredBatchInterval) clearInterval(expiredBatchInterval);
     if (stuckOrderInterval) clearInterval(stuckOrderInterval);
 
     try {
@@ -77,6 +80,26 @@ const start = async () => {
             }
         };
 
+        /**
+         * Takes expired stock out of the count.
+         *
+         * Not the thing that stops expired stock being sold — allocateFefo
+         * refuses to pick an expired batch whether or not this has run, and
+         * that is the actual guard. This is the bookkeeping half: until a batch
+         * is written off its units still sit in stockQty, so the shop believes
+         * it has cover it does not have and can sell stock nothing can fulfil.
+         *
+         * Hourly. Expiry is a date, so finer granularity buys nothing.
+         */
+        const runExpiredBatchWriteOff = async () => {
+            try {
+                const written = await writeOffExpiredBatches({});
+                if (written > 0) logger.warn(`Wrote off ${written} expired stock batch(es)`);
+            } catch (err) {
+                logger.error(`Expired batch sweep error: ${err.message}`);
+            }
+        };
+
         const runExpire = async () => {
             try {
                 await expireExpiredOffers();
@@ -128,6 +151,7 @@ const start = async () => {
         await runFssaiExpirySync();
         await runSubscriptionBilling();
         await runAutoDeliver();
+        await runExpiredBatchWriteOff();
 
         expireOffersInterval = setInterval(runExpire, 5 * 60 * 1000);
         monthlyOfferSweepInterval = setInterval(runMonthlyOfferSweep, 60 * 60 * 1000);
@@ -135,6 +159,7 @@ const start = async () => {
         fssaiExpiryInterval = setInterval(runFssaiExpirySync, 60 * 60 * 1000);
         subscriptionBillingInterval = setInterval(runSubscriptionBilling, 6 * 60 * 60 * 1000);
         autoDeliverInterval = setInterval(runAutoDeliver, 15 * 60 * 1000);
+        expiredBatchInterval = setInterval(runExpiredBatchWriteOff, 60 * 60 * 1000);
         // Ran once at startup only, so a dispatch that wedged an hour later
         // stayed wedged until someone restarted the process.
         stuckOrderInterval = setInterval(runStuckOrderWatchdog, 2 * 60 * 1000);
