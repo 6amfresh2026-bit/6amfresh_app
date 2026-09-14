@@ -12,7 +12,7 @@ import { addOrderJob } from '../../../../queues/producers/order.producer.js';
 import {
   buildDeliverySocketPayload,
   buildOrderIdentityFilter,
-  getBusyDeliveryPartnerIds,
+  getDeliveryPartnerLoads,
   haversineKm,
   notifyOwnerSafely,
   notifyOwnersActionableAlert,
@@ -446,7 +446,12 @@ export async function tryAutoAssign(orderId, options = {}) {
 
     const searchOptions = { maxKm, limit: 15 };
     const { partners } = await listNearbyOnlineDeliveryPartners(order.restaurantId, searchOptions);
-    const busyPartnerIds = await getBusyDeliveryPartnerIds();
+    // `atCapacity` is now only riders who genuinely cannot take more — at the
+    // per-rider cap, or already away from the store with goods aboard. The rest
+    // stay in the running, and `loadByPartner` lets a rider already heading to
+    // THIS store be preferred below: they are the cheapest rider available,
+    // because their trip to the counter is already being paid for.
+    const { loadByPartner, atCapacity: busyPartnerIds } = await getDeliveryPartnerLoads();
 
     // TIERED ALERT LOGIC
     // Phase 2: Broadcast to all (Attempt 3+)
@@ -475,12 +480,34 @@ export async function tryAutoAssign(orderId, options = {}) {
       ? await getCashBlockedPartnerIds(partners.map((p) => p.partnerId))
       : new Set();
 
+    const orderStoreKey = String(order.restaurantId?._id || order.restaurantId || '');
+
+    /**
+     * Already carrying for this same store, and still before pickup — one trip
+     * to the counter serves both orders. `partners` arrives sorted by distance;
+     * this promotes those riders ahead of a marginally closer idle one, because
+     * a shared pickup beats a few hundred metres every time.
+     */
+    const ridesAlong = (partnerKey) => {
+      const load = loadByPartner.get(partnerKey);
+      if (!load || load.collected) return false;
+      return load.restaurantIds.size === 1 && load.restaurantIds.has(orderStoreKey);
+    };
+
     const eligible = partners.filter((partner) => {
       const partnerKey = partner.partnerId.toString();
       if (offeredIds.includes(partnerKey)) return false;
       if (busyPartnerIds.has(partnerKey)) return false;
       if (cashBlockedIds.has(partnerKey)) return false;
+      // Carrying for a different store: a second pickup across town is not a
+      // batch, and offering it would only produce two late orders.
+      const load = loadByPartner.get(partnerKey);
+      if (load && !ridesAlong(partnerKey)) return false;
       return true;
+    }).sort((a, b) => {
+      const aRides = ridesAlong(a.partnerId.toString()) ? 0 : 1;
+      const bRides = ridesAlong(b.partnerId.toString()) ? 0 : 1;
+      return aRides - bRides;
     });
 
     // Without this, a cash order finding nobody looks identical to no riders being
@@ -502,6 +529,8 @@ export async function tryAutoAssign(orderId, options = {}) {
         const partnerKey = partner.partnerId.toString();
         if (permanentlyExcludedIds.has(partnerKey)) return false;
         if (busyPartnerIds.has(partnerKey)) return false;
+        const load = loadByPartner.get(partnerKey);
+        if (load && !ridesAlong(partnerKey)) return false;
         return true;
       });
       if (reofferEligible.length > 0) {
