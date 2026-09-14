@@ -3,7 +3,7 @@ import { FoodDeliveryPartner } from '../../delivery/models/deliveryPartner.model
 import { haversineKm, parseGeoPoint } from '../../shared/geo.utils.js';
 import { getRedisClient } from '../../../../config/redis.js';
 import { logger } from '../../../../utils/logger.js';
-import { maxOfferKm, MAX_ACTIVE_ORDERS_PER_RIDER, TERMINAL_ORDER_STATUSES } from './order.helpers.js';
+import { maxOfferKm, MAX_ACTIVE_ORDERS_PER_RIDER, TERMINAL_ORDER_STATUSES, DISPATCH_LEAD_MS } from './order.helpers.js';
 
 /**
  * How busy a store is right now, in the two terms the promise needs.
@@ -61,6 +61,15 @@ const writeCache = async (key, value) => {
       // Fall through to the in-process cache.
     }
   }
+  // Bounded: one entry per store, and without Redis this map is the only
+  // thing holding them. A platform with thousands of stores should not grow a
+  // permanent object per store because Redis happened to be down.
+  if (memoryCache.size > 500) {
+    for (const [k, v] of memoryCache) {
+      if (v.expires <= Date.now()) memoryCache.delete(k);
+    }
+    if (memoryCache.size > 500) memoryCache.clear();
+  }
   memoryCache.set(key, { value, expires: Date.now() + CACHE_TTL_SECONDS * 1000 });
 };
 
@@ -85,12 +94,24 @@ export async function getStoreDispatchPressure(restaurant) {
       FoodDeliveryPartner.find({ availabilityStatus: 'online', status: 'approved' })
         .select('_id lastLat lastLng lastLocationAt')
         .lean(),
-      // Everything this store still owes a doorstep: unassigned and waiting for
-      // a rider, or accepted and not yet handed over.
+      // Everything this store still owes a doorstep *now*: unassigned and
+      // waiting for a rider, or accepted and not yet handed over.
+      //
+      // Two exclusions, both of which would otherwise make every other
+      // customer's quote worse for no reason:
+      //  - pending_payment is never dispatched at all, so an abandoned cart
+      //    would queue in front of people who have actually paid;
+      //  - a booking for tomorrow's round is not ahead of anybody today. Same
+      //    lead-time rule the rider offer list uses, so the two agree about
+      //    what counts as imminent.
       FoodOrder.find({
         restaurantId,
-        orderStatus: { $nin: TERMINAL_ORDER_STATUSES },
+        orderStatus: { $nin: [...TERMINAL_ORDER_STATUSES, 'pending_payment'] },
         'deliveryState.deliveredAt': null,
+        $or: [
+          { scheduledAt: null },
+          { scheduledAt: { $lte: new Date(Date.now() + DISPATCH_LEAD_MS) } },
+        ],
       })
         .select('dispatch.deliveryPartnerId dispatch.status')
         .lean(),
