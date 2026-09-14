@@ -32,6 +32,7 @@ import RestaurantNavbar from "@food/components/restaurant/RestaurantNavbar";
 import SellerGettingStarted from "@food/components/restaurant/SellerGettingStarted";
 import NewOrderAcceptCard from "@food/components/restaurant/NewOrderAcceptCard";
 import AssignRiderPanel from "@food/components/restaurant/AssignRiderPanel";
+import ShortPickPanel from "@food/components/restaurant/ShortPickPanel";
 import { restaurantAPI, diningAPI } from "@food/api";
 import { useRestaurantNotifications } from "@food/hooks/useRestaurantNotifications";
 import ResendNotificationButton from "@food/components/restaurant/ResendNotificationButton";
@@ -136,6 +137,11 @@ const transformOrderForList = (order) => ({
   itemsSummary:
     order.items?.map((item) => `${item.quantity}x ${item.name}`).join(", ") ||
     "No items",
+  // The lines themselves, for the short-pick panel. The summary above is a
+  // string and cannot say how many of each the picker actually found.
+  items: order.items || [],
+  substitutionPreference: order.substitutionPreference || "refund",
+  fulfillment: order.fulfillment || null,
   photoUrl: order.items?.[0]?.image || null,
   photoAlt: order.items?.[0]?.name || "Order",
   note: getRestaurantCookingNote(order),
@@ -228,6 +234,9 @@ function ScheduledOrders({ onSelectOrder, refreshToken = 0, searchQuery = "" }) 
           }),
           itemsSummary:
             order.items?.map((item) => `${item.quantity}x ${item.name}`).join(", ") || "No items",
+          items: order.items || [],
+          substitutionPreference: order.substitutionPreference || "refund",
+          fulfillment: order.fulfillment || null,
           photoUrl: order.items?.[0]?.image || null,
           photoAlt: order.items?.[0]?.name || "Order",
           note: getRestaurantCookingNote(order),
@@ -2875,12 +2884,16 @@ function OrderCard({
   photoAlt,
   deliveryPartnerId,
   dispatchStatus,
+  items = [],
+  substitutionPreference = "refund",
+  fulfillment = null,
   onSelect,
   onCancel,
   onMarkReady,
   isMarkingReady = false,
 }) {
   const [showAssign, setShowAssign] = useState(false);
+  const [showShortPick, setShowShortPick] = useState(false);
   const normalizedStatus = String(status || "").toLowerCase();
   const isReady = normalizedStatus === "ready";
   const isPreparing = normalizedStatus === "preparing";
@@ -2990,6 +3003,24 @@ function OrderCard({
               {showAssign ? "Close" : "Assign rider"}
             </button>
           )}
+          {/* Only while the goods are still on the shelf. Once the rider has
+              collected, a missing item is a return rather than a short pick,
+              and the server refuses it. */}
+          {items.length > 0 && (isPreparing || normalizedStatus === "confirmed" || normalizedStatus === "created") && (
+            <button
+              type="button"
+              data-testid="short-pick-toggle"
+              onClick={(e) => { e.stopPropagation(); setShowShortPick((v) => !v); }}
+              className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-[10px] font-semibold bg-amber-500 text-white hover:bg-amber-600"
+            >
+              {showShortPick ? "Close" : "Short pick"}
+            </button>
+          )}
+          {fulfillment?.status && fulfillment.status !== "complete" && (
+            <span className="inline-flex items-center px-2 py-1 rounded-full text-[10px] font-semibold bg-amber-100 text-amber-800">
+              {fulfillment.status === "substituted" ? "Substituted" : "Short"} · ₹{fulfillment.shortfallAmount} off
+            </span>
+          )}
         </div>
 
         {/* Mark Ready + ETA */}
@@ -3017,6 +3048,20 @@ function OrderCard({
           )}
         </div>
       </div>
+
+      {showShortPick ? (
+        <div className="px-3 pb-3" onClick={(e) => e.stopPropagation()}>
+          <ShortPickPanel
+            orderId={mongoId || orderId}
+            items={items}
+            substitutionPreference={substitutionPreference}
+            onAdjusted={() => {
+              setShowShortPick(false);
+              onSelect?.();
+            }}
+          />
+        </div>
+      ) : null}
 
       {showAssign && !deliveryPartnerId ? (
         <div className="px-3 pb-3" onClick={(e) => e.stopPropagation()}>
@@ -3090,6 +3135,9 @@ function PreparingOrders({
                 order.items
                   ?.map((item) => `${item.quantity}x ${item.name}`)
                   .join(", ") || "No items",
+              items: order.items || [],
+              substitutionPreference: order.substitutionPreference || "refund",
+              fulfillment: order.fulfillment || null,
               photoUrl: order.items?.[0]?.image || null,
               photoAlt: order.items?.[0]?.name || "Order",
               note: getRestaurantCookingNote(order),
