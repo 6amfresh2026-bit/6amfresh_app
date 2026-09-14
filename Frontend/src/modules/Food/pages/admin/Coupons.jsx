@@ -212,6 +212,8 @@ export default function Coupons() {
   const [errors, setErrors] = useState({})
   const [formData, setFormData] = useState({
     couponCode: "",
+    discountMode: "single",
+    slabs: [{ minOrderValue: "", discountType: "flat-price", discountValue: "", maxDiscount: "" }],
     discountType: "percentage",
     discountValue: "",
     customerScope: "all",
@@ -286,12 +288,37 @@ export default function Coupons() {
   const validateForm = (draft) => {
     const e = {}
     const f = draft || formData
+    const slabMode = f.discountMode === "slab"
     const pct = f.discountType === "percentage"
     const value = Number(f.discountValue)
     if (!String(f.couponCode || "").trim()) e.couponCode = "Coupon code is required"
-    if (!Number.isFinite(value) || value <= 0) e.discountValue = "Discount must be greater than 0"
-    if (pct && (f.maxDiscount === "" || f.maxDiscount === null || f.maxDiscount === undefined)) {
-      e.maxDiscount = "Max discount is required for percentage coupons"
+
+    // The same rules the server enforces, said here so the admin is told at the
+    // field rather than by a rejected save. The server still decides.
+    if (slabMode) {
+      const seen = new Set()
+      const rows = Array.isArray(f.slabs) ? f.slabs : []
+      if (rows.length === 0) e.slabs = "Add at least one slab"
+      rows.forEach((s, i) => {
+        const spend = Number(s.minOrderValue)
+        const off = Number(s.discountValue)
+        if (!Number.isFinite(spend) || spend < 0) e[`slab-${i}-min`] = "Enter a spend"
+        else if (seen.has(spend)) e[`slab-${i}-min`] = `Another slab already starts at ₹${spend}`
+        else seen.add(spend)
+        if (!Number.isFinite(off) || off <= 0) e[`slab-${i}-value`] = "Enter a discount"
+        if (s.discountType === "percentage") {
+          if (s.maxDiscount === "" || s.maxDiscount === null || s.maxDiscount === undefined) {
+            e[`slab-${i}-max`] = "A percentage slab needs a cap"
+          }
+        } else if (Number.isFinite(off) && Number.isFinite(spend) && spend > 0 && off > spend) {
+          e[`slab-${i}-value`] = "That gives the order away"
+        }
+      })
+    } else {
+      if (!Number.isFinite(value) || value <= 0) e.discountValue = "Discount must be greater than 0"
+      if (pct && (f.maxDiscount === "" || f.maxDiscount === null || f.maxDiscount === undefined)) {
+        e.maxDiscount = "Max discount is required for percentage coupons"
+      }
     }
     if (f.minOrderValue !== "" && Number(f.minOrderValue) < 0) e.minOrderValue = "Min order cannot be negative"
     if (f.usageLimit !== "" && Number(f.usageLimit) < 1) e.usageLimit = "Usage limit must be at least 1"
@@ -319,6 +346,91 @@ export default function Coupons() {
     }
     setErrors(e)
     return { valid: Object.keys(e).length === 0, e }
+  }
+
+  /**
+   * The ladder written out the way a customer will read it, lowest rung first.
+   * Mirrors describeCoupon() on the server so what the admin previews is what
+   * the cart and the till will say.
+   */
+  const slabPreview = useMemo(() => {
+    if (formData.discountMode !== "slab") return []
+    return formData.slabs
+      .filter((s) => s.minOrderValue !== "" && s.discountValue !== "")
+      .slice()
+      .sort((a, b) => Number(a.minOrderValue) - Number(b.minOrderValue))
+      .map((s) => {
+        const from = ` above ₹${Number(s.minOrderValue)}`
+        if (s.discountType === "percentage") {
+          const cap = s.maxDiscount !== "" ? `, up to ₹${Number(s.maxDiscount)}` : ""
+          return `${Number(s.discountValue)}% off${cap}${from}`
+        }
+        return `₹${Number(s.discountValue)} off${from}`
+      })
+  }, [formData.discountMode, formData.slabs])
+
+  /**
+   * A ladder that stops paying better as it climbs is almost always a typo.
+   * The engine protects the customer by giving them the best rung they have
+   * reached, so this never overcharges anyone — but the campaign would not do
+   * what it was written to do, and only the admin can fix that.
+   */
+  const slabWarning = useMemo(() => {
+    if (formData.discountMode !== "slab") return ""
+    const rungs = formData.slabs
+      .filter((s) => s.minOrderValue !== "" && s.discountValue !== "")
+      .map((s) => ({
+        spend: Number(s.minOrderValue),
+        // Worth what it pays at its own threshold, which is how the rungs compare.
+        worth: s.discountType === "percentage"
+          ? Math.min(
+            Number(s.minOrderValue) * Number(s.discountValue) / 100,
+            s.maxDiscount !== "" ? Number(s.maxDiscount) : Infinity,
+          )
+          : Number(s.discountValue),
+      }))
+      .sort((a, b) => a.spend - b.spend)
+
+    for (let i = 1; i < rungs.length; i += 1) {
+      if (rungs[i].worth <= rungs[i - 1].worth) {
+        return `Spending ₹${rungs[i].spend} is worth no more than spending ₹${rungs[i - 1].spend} — customers get the better slab either way, so this slab buys nothing.`
+      }
+    }
+    return ""
+  }, [formData.discountMode, formData.slabs])
+
+  /** Edit one rung of a spend-slab coupon, revalidating as the admin types. */
+  const handleSlabChange = (index, field, rawValue) => {
+    setFormData((prev) => {
+      const slabs = prev.slabs.map((slab, i) => {
+        if (i !== index) return slab
+        const next = { ...slab, [field]: rawValue }
+        // A flat rung has no cap to give, so clear it rather than sending a
+        // figure the engine would ignore.
+        if (field === "discountType" && rawValue === "flat-price") next.maxDiscount = ""
+        return next
+      })
+      const next = { ...prev, slabs }
+      validateForm(next)
+      return next
+    })
+    if (submitError) setSubmitError("")
+    if (submitSuccess) setSubmitSuccess("")
+  }
+
+  const addSlab = () => {
+    setFormData((prev) => ({
+      ...prev,
+      slabs: [...prev.slabs, { minOrderValue: "", discountType: "flat-price", discountValue: "", maxDiscount: "" }],
+    }))
+  }
+
+  const removeSlab = (index) => {
+    setFormData((prev) => {
+      const next = { ...prev, slabs: prev.slabs.filter((_, i) => i !== index) }
+      validateForm(next)
+      return next
+    })
   }
 
   const handleFormChange = (field, rawValue) => {
@@ -393,6 +505,8 @@ export default function Coupons() {
   const resetForm = () => {
     setFormData({
       couponCode: "",
+      discountMode: "single",
+      slabs: [{ minOrderValue: "", discountType: "flat-price", discountValue: "", maxDiscount: "" }],
       discountType: "percentage",
       discountValue: "",
       customerScope: "all",
@@ -427,8 +541,10 @@ export default function Coupons() {
       return
     }
 
+    // In slab mode the discount lives on the rungs; the single-mode field is
+    // left blank and the server fills it in from the bottom rung.
     const parsedDiscountValue = Number(formData.discountValue)
-    if (!Number.isFinite(parsedDiscountValue) || parsedDiscountValue <= 0) {
+    if (formData.discountMode !== "slab" && (!Number.isFinite(parsedDiscountValue) || parsedDiscountValue <= 0)) {
       setSubmitError("Discount value must be greater than 0")
       return
     }
@@ -440,8 +556,21 @@ export default function Coupons() {
 
     try {
       setIsSubmitting(true)
+      const slabMode = formData.discountMode === "slab"
       const payload = {
         couponCode: formData.couponCode.trim(),
+        discountMode: slabMode ? "slab" : "single",
+        // The server sorts these and mirrors the bottom rung onto
+        // discountType / discountValue / minOrderValue, so the form does not
+        // have to send those in slab mode.
+        slabs: slabMode
+          ? formData.slabs.map((s) => ({
+            minOrderValue: Number(s.minOrderValue),
+            discountType: s.discountType,
+            discountValue: Number(s.discountValue),
+            maxDiscount: s.discountType === "percentage" && s.maxDiscount !== "" ? Number(s.maxDiscount) : null,
+          }))
+          : undefined,
         discountType: formData.discountType,
         discountValue: parsedDiscountValue,
         customerScope: formData.customerScope,
@@ -562,6 +691,19 @@ export default function Coupons() {
                 </div>
 
                 <div>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">Discount Mode</label>
+                  <StyledSelect
+                    value={formData.discountMode}
+                    onChange={(value) => handleFormChange("discountMode", value)}
+                    ariaLabel="Discount mode"
+                    options={[
+                      { value: "single", label: "Single threshold" },
+                      { value: "slab", label: "Spend slabs" },
+                    ]}
+                  />
+                </div>
+
+                <div className={formData.discountMode === "slab" ? "hidden" : ""}>
                   <label className="block text-xs font-semibold text-slate-600 mb-1">Discount Type</label>
                   <StyledSelect
                     value={formData.discountType}
@@ -574,7 +716,10 @@ export default function Coupons() {
                   />
                 </div>
 
-                <div title={formData.discountType === "flat-price" ? "Max discount is not applicable for flat coupons" : ""}>
+                <div
+                  className={formData.discountMode === "slab" ? "hidden" : ""}
+                  title={formData.discountType === "flat-price" ? "Max discount is not applicable for flat coupons" : ""}
+                >
                   <label className="block text-xs font-semibold text-slate-600 mb-1">
                     {formData.discountType === "percentage" ? "Discount (%)" : "Discount Amount"}
                   </label>
@@ -589,6 +734,118 @@ export default function Coupons() {
                   />
                   {errors.discountValue && <p className="mt-1 text-xs text-red-600">{errors.discountValue}</p>}
                 </div>
+
+                {formData.discountMode === "slab" && (
+                  <div className="md:col-span-2 lg:col-span-3 rounded-xl border border-blue-200 bg-blue-50/60 p-3" data-testid="slab-editor">
+                    <div className="mb-2 flex items-center justify-between">
+                      <div>
+                        <p className="text-xs font-semibold text-slate-700">Spend slabs</p>
+                        <p className="text-[11px] text-slate-500">
+                          The customer gets the best slab their basket reaches — e.g. spend &#8377;300 get &#8377;50 off.
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={addSlab}
+                        data-testid="add-slab"
+                        className="rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue-700"
+                      >
+                        Add slab
+                      </button>
+                    </div>
+
+                    {errors.slabs && <p className="mb-2 text-xs text-red-600">{errors.slabs}</p>}
+
+                    <div className="space-y-2">
+                      {formData.slabs.map((slab, i) => (
+                        <div key={i} className="grid grid-cols-1 gap-2 sm:grid-cols-[1fr_1fr_1fr_1fr_auto]" data-testid={`slab-row-${i}`}>
+                          <div>
+                            <label className="block text-[11px] font-semibold text-slate-600 mb-1">Spend from (&#8377;)</label>
+                            <input
+                              type="number"
+                              min="0"
+                              step="1"
+                              value={slab.minOrderValue}
+                              onChange={(e) => handleSlabChange(i, "minOrderValue", e.target.value)}
+                              placeholder="300"
+                              data-testid={`slab-${i}-min`}
+                              className={`w-full px-3 py-2 text-sm rounded-lg border ${errors[`slab-${i}-min`] ? "border-red-500" : "border-slate-300"} bg-white focus:outline-none focus:ring-2 focus:ring-blue-500`}
+                            />
+                            {errors[`slab-${i}-min`] && <p className="mt-1 text-[11px] text-red-600">{errors[`slab-${i}-min`]}</p>}
+                          </div>
+
+                          <div>
+                            <label className="block text-[11px] font-semibold text-slate-600 mb-1">Type</label>
+                            <StyledSelect
+                              value={slab.discountType}
+                              onChange={(value) => handleSlabChange(i, "discountType", value)}
+                              ariaLabel={`Slab ${i + 1} discount type`}
+                              options={[
+                                { value: "flat-price", label: "Flat Amount" },
+                                { value: "percentage", label: "Percentage" },
+                              ]}
+                            />
+                          </div>
+
+                          <div>
+                            <label className="block text-[11px] font-semibold text-slate-600 mb-1">
+                              {slab.discountType === "percentage" ? "Discount (%)" : "Discount (₹)"}
+                            </label>
+                            <input
+                              type="number"
+                              min="1"
+                              step="0.01"
+                              value={slab.discountValue}
+                              onChange={(e) => handleSlabChange(i, "discountValue", e.target.value)}
+                              placeholder={slab.discountType === "percentage" ? "25" : "50"}
+                              data-testid={`slab-${i}-value`}
+                              className={`w-full px-3 py-2 text-sm rounded-lg border ${errors[`slab-${i}-value`] ? "border-red-500" : "border-slate-300"} bg-white focus:outline-none focus:ring-2 focus:ring-blue-500`}
+                            />
+                            {errors[`slab-${i}-value`] && <p className="mt-1 text-[11px] text-red-600">{errors[`slab-${i}-value`]}</p>}
+                          </div>
+
+                          <div>
+                            <label className="block text-[11px] font-semibold text-slate-600 mb-1">Max discount (&#8377;)</label>
+                            <input
+                              type="number"
+                              min="0"
+                              step="1"
+                              value={slab.maxDiscount}
+                              onChange={(e) => handleSlabChange(i, "maxDiscount", e.target.value)}
+                              disabled={slab.discountType !== "percentage"}
+                              placeholder={slab.discountType === "percentage" ? "250" : "n/a"}
+                              data-testid={`slab-${i}-max`}
+                              className={`w-full px-3 py-2 text-sm rounded-lg border ${errors[`slab-${i}-max`] ? "border-red-500" : "border-slate-300"} bg-white disabled:bg-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500`}
+                            />
+                            {errors[`slab-${i}-max`] && <p className="mt-1 text-[11px] text-red-600">{errors[`slab-${i}-max`]}</p>}
+                          </div>
+
+                          <div className="flex items-end">
+                            <button
+                              type="button"
+                              onClick={() => removeSlab(i)}
+                              disabled={formData.slabs.length <= 1}
+                              data-testid={`slab-${i}-remove`}
+                              title={formData.slabs.length <= 1 ? "A slab coupon needs at least one slab" : "Remove this slab"}
+                              className="h-[38px] rounded-lg border border-slate-300 bg-white px-3 text-xs font-semibold text-slate-600 hover:bg-slate-50 disabled:opacity-40"
+                            >
+                              Remove
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+
+                    {slabPreview.length > 0 && (
+                      <p className="mt-2 text-[11px] font-medium text-slate-600" data-testid="slab-preview">
+                        Customer sees: {slabPreview.join(", ")}
+                      </p>
+                    )}
+                    {slabWarning && (
+                      <p className="mt-1 text-[11px] font-medium text-amber-700" data-testid="slab-warning">{slabWarning}</p>
+                    )}
+                  </div>
+                )}
 
                 <div>
                   <label className="block text-xs font-semibold text-slate-600 mb-1">Customer Scope</label>
@@ -640,7 +897,7 @@ export default function Coupons() {
                 {errors.startDate && <p className="mt-1 text-xs text-red-600">{errors.startDate}</p>}
               </div>
 
-              <div>
+              <div className={formData.discountMode === "slab" ? "hidden" : ""}>
                 <label className="block text-xs font-semibold text-slate-600 mb-1">Min Order Value (₹)</label>
                 <input
                   type="number"
@@ -654,7 +911,10 @@ export default function Coupons() {
                 {errors.minOrderValue && <p className="mt-1 text-xs text-red-600">{errors.minOrderValue}</p>}
               </div>
 
-                <div title={formData.discountType === "flat-price" ? "Max discount is not applicable for flat coupons" : ""}>
+                <div
+                  className={formData.discountMode === "slab" ? "hidden" : ""}
+                  title={formData.discountType === "flat-price" ? "Max discount is not applicable for flat coupons" : ""}
+                >
                 <label className="block text-xs font-semibold text-slate-600 mb-1">Max Discount (₹, optional)</label>
                 <input
                   type="number"
