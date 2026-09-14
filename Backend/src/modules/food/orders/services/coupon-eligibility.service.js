@@ -27,14 +27,91 @@ const round0 = (n) => Math.max(0, Math.floor(Number(n) || 0));
  * bill to zero but must never make it negative, which would push the tax base
  * below zero further down.
  */
-export function couponDiscountFor(offer, subtotal) {
-    const goods = Math.max(0, Number(subtotal) || 0);
-    if (offer?.discountType === 'percentage') {
-        const raw = (goods * (Number(offer.discountValue) || 0)) / 100;
-        const capped = Number(offer.maxDiscount) ? Math.min(raw, Number(offer.maxDiscount)) : raw;
+/** What one rung, or a single-mode coupon, is worth on a given basket. */
+const flatOrPercentOff = (rule, goods) => {
+    if (rule?.discountType === 'percentage') {
+        const raw = (goods * (Number(rule.discountValue) || 0)) / 100;
+        const capped = Number(rule.maxDiscount) ? Math.min(raw, Number(rule.maxDiscount)) : raw;
         return Math.min(goods, round0(capped));
     }
-    return Math.min(goods, round0(offer?.discountValue));
+    return Math.min(goods, round0(rule?.discountValue));
+};
+
+/**
+ * A slab coupon's rungs, lowest threshold first.
+ *
+ * Sorted here as well as on write, because a document saved before that
+ * sorting existed — or edited straight in the database — must not change what
+ * a customer is charged.
+ */
+export function slabsOf(offer) {
+    if (offer?.discountMode !== 'slab' || !Array.isArray(offer?.slabs)) return [];
+    return offer.slabs
+        .filter((s) => s && Number.isFinite(Number(s.minOrderValue)))
+        .slice()
+        .sort((a, b) => Number(a.minOrderValue) - Number(b.minOrderValue));
+}
+
+/** The lowest spend that gets the customer anything at all. */
+export function couponEntryThreshold(offer) {
+    const slabs = slabsOf(offer);
+    if (slabs.length === 0) return Number(offer?.minOrderValue) || 0;
+    return Number(slabs[0].minOrderValue) || 0;
+}
+
+/**
+ * The rupees a coupon takes off, given the goods it applies to.
+ *
+ * Floored, not rounded, and never more than the bill: a coupon may reduce a
+ * bill to zero but must never make it negative, which would push the tax base
+ * below zero further down.
+ *
+ * On a slab coupon the customer gets the **best** rung they have reached, not
+ * simply the highest. Those are the same thing for a sanely written campaign,
+ * and they differ only when someone configures a higher slab that pays less —
+ * a mistake the customer should not be charged for. It also makes the result
+ * independent of the order the rungs happen to be stored in.
+ */
+export function couponDiscountFor(offer, subtotal) {
+    const goods = Math.max(0, Number(subtotal) || 0);
+
+    const slabs = slabsOf(offer);
+    if (slabs.length > 0) {
+        let best = 0;
+        for (const slab of slabs) {
+            if (goods < (Number(slab.minOrderValue) || 0)) break; // sorted: nothing above qualifies either
+            best = Math.max(best, flatOrPercentOff(slab, goods));
+        }
+        return best;
+    }
+
+    return flatOrPercentOff(offer, goods);
+}
+
+/**
+ * The next rung up, and what reaching it would be worth — the whole point of a
+ * slab campaign, and useless unless somebody is told about it.
+ *
+ * Returns null when the coupon has no slabs, the customer is already on the
+ * top rung, or climbing would not actually pay better.
+ */
+export function nextSlabFor(offer, subtotal) {
+    const goods = Math.max(0, Number(subtotal) || 0);
+    const slabs = slabsOf(offer);
+    if (slabs.length === 0) return null;
+
+    const current = couponDiscountFor(offer, goods);
+    for (const slab of slabs) {
+        const threshold = Number(slab.minOrderValue) || 0;
+        if (goods >= threshold) continue;
+        // Worth what it pays *at its own threshold*: a percentage rung is worth
+        // more on a bigger basket, and quoting that larger figure would promise
+        // a saving the customer would not get by spending exactly the minimum.
+        const worth = flatOrPercentOff(slab, threshold);
+        if (worth <= current) continue;
+        return { minOrderValue: threshold, spendMore: Math.ceil(threshold - goods), discount: worth };
+    }
+    return null;
 }
 
 /**
@@ -110,7 +187,9 @@ export function evaluateCoupon(offer, { subtotal = 0, restaurantId = '', now = n
     }
 
     const goods = Math.max(0, Number(subtotal) || 0);
-    const minimum = Number(offer.minOrderValue) || 0;
+    // On a slab coupon this is the bottom rung: the basket has to reach the
+    // cheapest one before the coupon is worth anything at all.
+    const minimum = couponEntryThreshold(offer);
     if (goods < minimum) return refuse(`Needs ₹${minimum} minimum — ₹${Math.ceil(minimum - goods)} more`);
 
     if (Number(offer.usageLimit) > 0 && Number(offer.usedCount || 0) >= Number(offer.usageLimit)) {
@@ -140,12 +219,28 @@ export function evaluateCoupon(offer, { subtotal = 0, restaurantId = '', now = n
     const discount = couponDiscountFor(offer, goods);
     if (discount <= 0) return refuse('Works out to no discount on this bill');
 
-    return { eligible: true, reason: '', discount };
+    // Carried on an *eligible* verdict, not a refusal: the customer already has
+    // a discount, and this says what one more rung would be worth.
+    return { eligible: true, reason: '', discount, nextSlab: nextSlabFor(offer, goods) };
 }
 
-/** "20% off, up to ₹100" / "₹50 off" — what the cashier reads out. */
+/** "20% off above ₹300" — one rung, as a campaign would print it. */
+const describeSlab = (slab) => {
+    const from = ` above ₹${Number(slab?.minOrderValue) || 0}`;
+    if (slab?.discountType === 'percentage') {
+        const cap = Number(slab.maxDiscount) ? `, up to ₹${Number(slab.maxDiscount)}` : '';
+        return `${Number(slab.discountValue) || 0}% off${cap}${from}`;
+    }
+    return `₹${Number(slab?.discountValue) || 0} off${from}`;
+};
+
+/** "20% off, up to ₹100" / "₹50 off above ₹300, ₹120 off above ₹600" — what the cashier reads out. */
 export function describeCoupon(offer) {
     if (!offer) return '';
+
+    const slabs = slabsOf(offer);
+    if (slabs.length > 0) return slabs.map(describeSlab).join(', ');
+
     if (offer.discountType === 'percentage') {
         const cap = Number(offer.maxDiscount) ? `, up to ₹${Number(offer.maxDiscount)}` : '';
         return `${Number(offer.discountValue) || 0}% off${cap}`;
