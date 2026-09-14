@@ -110,6 +110,8 @@ import {
   isStatusAdvance,
   STATUS_PRIORITY,
   DISPATCH_LEAD_MS,
+  buildOrderPromise,
+  settleOrderPromise,
 } from './order.helpers.js';
 
 
@@ -869,6 +871,17 @@ export async function createOrder(userId, dto) {
       sendCutlery: dto.sendCutlery !== false,
       deliveryFleet: String(dto.deliveryFleet || "standard"),
       scheduledAt: scheduledFor ? new Date(scheduledFor) : null,
+      // The number the customer saw on the way in, frozen onto the order they
+      // placed. Counted from the booked window when there is one, so a 7 AM
+      // round arranged at midnight is not seven hours late the moment it is
+      // created. A counter sale is already in the customer's hands and has no
+      // promise to keep — it falls out as 'not_applicable' on its own, because
+      // a POS quote carries no delivery minutes.
+      promise: buildOrderPromise({
+        quotedMinutes: counterSale ? null : pricingResult.pricing?.deliveryPromiseMinutes,
+        quotedAt: orderAt,
+        distanceKm,
+      }),
       ...(booking ? { deliverySlot: booking.deliverySlot } : {}),
       riderEarning: Number(riderEarning) || 0,
       platformProfit: Number(platformProfit) || 0,
@@ -1535,6 +1548,13 @@ export async function autoDeliverStaleOrders() {
           $set: {
             orderStatus: 'delivered',
             'deliveryState.deliveredAt': order.deliveryState?.deliveredAt || now,
+            // This is an administrative close, not an observed arrival: nobody
+            // knows when — or whether — the customer got it. Scoring it against
+            // the promise would file a bookkeeping action as a late delivery
+            // and quietly poison the on-time rate. The filter above only
+            // matches trips still in flight, so the promise is still pending
+            // and nothing already settled is overwritten.
+            'promise.outcome': 'not_applicable',
           },
           $push: {
             statusHistory: {

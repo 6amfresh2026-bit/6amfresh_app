@@ -10,6 +10,7 @@ import {
 } from "../../../../core/notifications/firebase.service.js";
 import { getIO, rooms } from '../../../../config/socket.js';
 import { addOrderJob } from '../../../../queues/producers/order.producer.js';
+import { resolveOrderPromise } from '../helpers/promise.util.js';
 
 export function enqueueOrderEvent(action, payload = {}) {
   try {
@@ -113,6 +114,25 @@ export const TERMINAL_ORDER_STATUSES = [
   'cancelled_by_restaurant',
   'cancelled_by_admin',
 ];
+
+/**
+ * The promise rules live in a leaf module because the order model's pre-save
+ * hook settles them too, and the model cannot import this file without a cycle.
+ */
+export { buildOrderPromise } from '../helpers/promise.util.js';
+
+/**
+ * Closes an order's promise out, in place, once it stops moving.
+ *
+ * The model does this on save for every ordinary path; this is for the callers
+ * that hold a document and want the settled figure back immediately.
+ */
+export function settleOrderPromise(order, { at = new Date(), status } = {}) {
+  const current = order?.promise?.toObject?.() || order?.promise || {};
+  const next = resolveOrderPromise(current, { at, status: status || order?.orderStatus });
+  if (order) order.promise = next;
+  return next;
+}
 
 export async function partnerHasActiveDelivery(deliveryPartnerId) {
   if (!deliveryPartnerId) return false;
