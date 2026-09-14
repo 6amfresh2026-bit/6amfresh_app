@@ -6,6 +6,7 @@ import { FoodOrder } from '../src/modules/food/orders/models/order.model.js';
 import { FoodItem } from '../src/modules/food/admin/models/food.model.js';
 import { FoodTransaction } from '../src/modules/food/orders/models/foodTransaction.model.js';
 import { restoreOrderStock } from '../src/modules/food/orders/services/inventory.service.js';
+import { sanitizeOrderForExternal, sanitizeOrderForDeliveryPartner } from '../src/modules/food/orders/services/order.helpers.js';
 import { createInitialTransaction } from '../src/modules/food/orders/services/foodTransaction.service.js';
 import {
     adjustOrderFulfilment,
@@ -469,5 +470,54 @@ describe('what the picker may offer instead', () => {
     it('returns nothing for a product with no nominations', async () => {
         const milk = await product();
         assert.deepEqual((await listSubstitutesForItem(milk._id)).substitutes, []);
+    });
+});
+
+describe('what the rider and the customer are shown', () => {
+    it('states the quantity actually being delivered, not the one ordered', async () => {
+        // Every screen renders item.quantity. Left as the ordered figure, a
+        // rider collects four when two are going, and an invoice shows
+        // 4 x 149 against a bill charging for two.
+        const milk = await product();
+        const order = await orderOf([line(milk, 4)]);
+        await adjustOrderFulfilment(order._id, { lines: [{ itemId: String(milk._id), fulfilledQuantity: 2 }] });
+
+        const view = sanitizeOrderForExternal(await FoodOrder.findById(order._id));
+        assert.equal(view.items[0].quantity, 2, 'what goes in the bag');
+        assert.equal(view.items[0].orderedQuantity, 4, 'what was asked for, still available to show');
+        assert.equal(view.items[0].wasShortPicked, true);
+    });
+
+    it('keeps the line total honest against the repriced bill', async () => {
+        const milk = await product();
+        const order = await orderOf([line(milk, 4)], {
+            pricing: { subtotal: 400, deliveryFee: 0, platformFee: 0, tax: 0, discount: 0, total: 400 }
+        });
+        const res = await adjustOrderFulfilment(order._id, { lines: [{ itemId: String(milk._id), fulfilledQuantity: 2 }] });
+
+        const view = sanitizeOrderForExternal(await FoodOrder.findById(order._id));
+        const lineTotal = view.items.reduce((sum, l) => sum + l.price * l.quantity, 0);
+        assert.equal(lineTotal, res.pricing.subtotal, 'an invoice built from these lines adds up to the bill');
+    });
+
+    it('drops a line the shelf could not supply at all from the picking list', async () => {
+        const milk = await product();
+        const soap = await product({ name: 'Soap', price: 50 });
+        const order = await orderOf([line(milk, 2), line(soap, 1)]);
+        await adjustOrderFulfilment(order._id, { lines: [{ itemId: String(soap._id), fulfilledQuantity: 0 }] });
+
+        const forRider = sanitizeOrderForDeliveryPartner(await FoodOrder.findById(order._id));
+        assert.deepEqual(forRider.items.map((i) => i.name), ['Amul Milk 1L'], 'nothing to collect, nothing listed');
+
+        const stored = await FoodOrder.findById(order._id).lean();
+        assert.equal(stored.items.length, 2, 'but the order itself still records what was asked for');
+    });
+
+    it('leaves an untouched order exactly as it was', async () => {
+        const milk = await product();
+        const order = await orderOf([line(milk, 3)]);
+        const view = sanitizeOrderForExternal(await FoodOrder.findById(order._id));
+        assert.equal(view.items[0].quantity, 3);
+        assert.equal(view.items[0].orderedQuantity, undefined, 'nothing invented for an order that never went short');
     });
 });
