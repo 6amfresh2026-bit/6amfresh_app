@@ -415,6 +415,12 @@ export async function expireUnacceptedOrders(filter = {}) {
         $set: {
           orderStatus: "cancelled_by_restaurant",
           note: "Not accepted by restaurant",
+          // Settled here because this sweep writes through findOneAndUpdate and
+          // so never reaches the model's pre-save hook. Without it every
+          // auto-cancelled order would sit in the report's 'pending' bucket for
+          // good, growing over time and making the denominator look uncertain.
+          // A cancellation is its own failure, never a missed promise.
+          "promise.outcome": "not_applicable",
         },
         $push: {
           statusHistory: {
