@@ -1,0 +1,266 @@
+import { after, before, beforeEach, describe, it } from 'node:test';
+import assert from 'node:assert/strict';
+
+import { connectTestDb, disconnectTestDb, resetDb, someId } from './helpers/db.js';
+import { FoodOrder } from '../src/modules/food/orders/models/order.model.js';
+import { FoodItem } from '../src/modules/food/admin/models/food.model.js';
+import {
+    adjustOrderFulfilment,
+    listSubstitutesForItem,
+    deliveredQty
+} from '../src/modules/food/orders/services/order-fulfilment.service.js';
+
+/**
+ * Short picks and substitutions.
+ *
+ * The most common real event in a grocery business, and until now the only
+ * expressible answers were "deliver everything" or "cancel the lot". The
+ * customer wanted ten things, nine are there, and they would like those nine.
+ */
+
+before(connectTestDb);
+after(disconnectTestDb);
+beforeEach(resetDb);
+
+const STORE = someId();
+
+const product = (over = {}) =>
+    FoodItem.create({
+        restaurantId: STORE,
+        name: 'Amul Milk 1L',
+        price: 100,
+        stockQty: 10,
+        gstRate: 0,
+        ...over
+    });
+
+const orderOf = (lines, over = {}) =>
+    FoodOrder.create({
+        userId: someId(),
+        restaurantId: STORE,
+        items: lines,
+        deliveryAddress: {
+            street: '1 Road',
+            city: 'Bengaluru',
+            state: 'Karnataka',
+            location: { type: 'Point', coordinates: [77.59, 12.97] }
+        },
+        pricing: {
+            subtotal: lines.reduce((s, l) => s + l.price * l.quantity, 0),
+            deliveryFee: 20,
+            platformFee: 5,
+            tax: 0,
+            discount: 0,
+            total: lines.reduce((s, l) => s + l.price * l.quantity, 0) + 25
+        },
+        payment: { method: 'cash', status: 'cod_pending' },
+        orderStatus: 'confirmed',
+        stockReservedAt: new Date(),
+        ...over
+    });
+
+const line = (item, quantity = 1, over = {}) => ({
+    itemId: String(item._id),
+    name: item.name,
+    price: item.price,
+    quantity,
+    gstRate: item.gstRate ?? null,
+    ...over
+});
+
+describe('a short pick', () => {
+    it('charges for what arrives and leaves the fees alone', async () => {
+        const milk = await product();
+        const order = await orderOf([line(milk, 3)]); // ₹300 goods + ₹25 fees
+
+        const res = await adjustOrderFulfilment(order._id, {
+            lines: [{ itemId: String(milk._id), fulfilledQuantity: 2 }]
+        });
+
+        // The rider still rode and the platform still ran; only the goods change.
+        assert.equal(res.pricing.subtotal, 200);
+        assert.equal(res.pricing.total, 225);
+        assert.equal(res.fulfillment.shortfallAmount, 100);
+        assert.equal(res.fulfillment.status, 'partial');
+    });
+
+    it('keeps saying what the customer actually ordered', async () => {
+        const milk = await product();
+        const order = await orderOf([line(milk, 3)]);
+        await adjustOrderFulfilment(order._id, { lines: [{ itemId: String(milk._id), fulfilledQuantity: 1 }] });
+
+        const fresh = await FoodOrder.findById(order._id).lean();
+        assert.equal(fresh.items[0].quantity, 3, 'overwriting this would erase the evidence anything went short');
+        assert.equal(fresh.items[0].fulfilledQuantity, 1);
+    });
+
+    it('puts the units nobody is getting back on the shelf', async () => {
+        const milk = await product({ stockQty: 7 });
+        const order = await orderOf([line(milk, 3)]);
+        await adjustOrderFulfilment(order._id, { lines: [{ itemId: String(milk._id), fulfilledQuantity: 1 }] });
+
+        assert.equal((await FoodItem.findById(milk._id).lean()).stockQty, 9, 'two unsold units are available again');
+    });
+
+    it('reduces what the rider collects on a cash order', async () => {
+        const milk = await product();
+        const order = await orderOf([line(milk, 2)]);
+        const res = await adjustOrderFulfilment(order._id, { lines: [{ itemId: String(milk._id), fulfilledQuantity: 1 }] });
+
+        assert.equal(res.amountDue, 125);
+        assert.equal(res.refundDue, 0);
+        assert.equal((await FoodOrder.findById(order._id).lean()).payment.amountDue, 125);
+    });
+
+    it('owes a refund on an order already paid for', async () => {
+        const milk = await product();
+        const order = await orderOf([line(milk, 2)], { payment: { method: 'razorpay', status: 'paid' } });
+        const res = await adjustOrderFulfilment(order._id, { lines: [{ itemId: String(milk._id), fulfilledQuantity: 1 }] });
+
+        assert.equal(res.refundDue, 100);
+        assert.equal(res.amountDue, 0);
+    });
+
+    it('scales a coupon rather than withdrawing it', async () => {
+        // Telling someone who lost one item that they have also lost their ₹50
+        // off is a worse outcome than the shortfall.
+        const milk = await product();
+        const order = await orderOf([line(milk, 4)], {
+            pricing: { subtotal: 400, deliveryFee: 20, platformFee: 5, tax: 0, discount: 100, total: 325 }
+        });
+
+        const res = await adjustOrderFulfilment(order._id, { lines: [{ itemId: String(milk._id), fulfilledQuantity: 2 }] });
+        assert.equal(res.pricing.subtotal, 200);
+        assert.equal(res.pricing.discount, 50, 'half the goods, half the discount');
+        assert.equal(res.pricing.total, 175);
+    });
+
+    it('never lets the bill go negative', async () => {
+        const milk = await product();
+        const order = await orderOf([line(milk, 2)], {
+            pricing: { subtotal: 200, deliveryFee: 0, platformFee: 0, tax: 0, discount: 200, total: 0 }
+        });
+        const res = await adjustOrderFulfilment(order._id, { lines: [{ itemId: String(milk._id), fulfilledQuantity: 1 }] });
+        assert.ok(res.pricing.total >= 0);
+        assert.ok(res.pricing.discount <= res.pricing.subtotal);
+    });
+
+    it('refuses to empty the order, because that is a cancellation', async () => {
+        const milk = await product();
+        const order = await orderOf([line(milk, 2)]);
+        await assert.rejects(
+            adjustOrderFulfilment(order._id, { lines: [{ itemId: String(milk._id), fulfilledQuantity: 0 }] }),
+            /cancel the order instead/i
+        );
+    });
+
+    it('refuses to deliver more than was ordered', async () => {
+        const milk = await product();
+        const order = await orderOf([line(milk, 2)]);
+        await assert.rejects(
+            adjustOrderFulfilment(order._id, { lines: [{ itemId: String(milk._id), fulfilledQuantity: 5 }] }),
+            /only 2 were ordered/i
+        );
+    });
+
+    it('refuses once the rider has the goods', async () => {
+        const milk = await product();
+        const order = await orderOf([line(milk, 2)], {
+            orderStatus: 'picked_up',
+            deliveryState: { pickedUpAt: new Date() }
+        });
+        await assert.rejects(
+            adjustOrderFulfilment(order._id, { lines: [{ itemId: String(milk._id), fulfilledQuantity: 1 }] }),
+            /return rather than a short pick|already collected/i
+        );
+    });
+
+    it('leaves the shelf alone when the adjustment is rejected', async () => {
+        const milk = await product({ stockQty: 7 });
+        const order = await orderOf([line(milk, 2)]);
+        await assert.rejects(adjustOrderFulfilment(order._id, { lines: [{ itemId: String(milk._id), fulfilledQuantity: 9 }] }));
+        assert.equal((await FoodItem.findById(milk._id).lean()).stockQty, 7);
+    });
+});
+
+describe('a substitution', () => {
+    it('swaps the line, takes the replacement off the shelf and puts the original back', async () => {
+        const lacto = await product({ name: 'Lactose Free Milk', price: 120, stockQty: 5 });
+        const milk = await product({ stockQty: 4, substituteItemIds: [lacto._id] });
+        const order = await orderOf([line(milk, 2)]);
+
+        const res = await adjustOrderFulfilment(order._id, {
+            lines: [{ itemId: String(milk._id), substituteItemId: String(lacto._id), quantity: 2 }]
+        });
+
+        assert.equal(res.fulfillment.status, 'substituted');
+        assert.equal(res.pricing.subtotal, 240, 'charged at the replacement price');
+        assert.equal((await FoodItem.findById(lacto._id).lean()).stockQty, 3);
+        assert.equal((await FoodItem.findById(milk._id).lean()).stockQty, 6);
+
+        const fresh = await FoodOrder.findById(order._id).lean();
+        const swapped = fresh.items.find((l) => l.substitutedForItemId);
+        assert.equal(swapped.name, 'Lactose Free Milk');
+        assert.equal(swapped.substitutedForName, 'Amul Milk 1L', 'the invoice has to say what it stood in for');
+        assert.equal(deliveredQty(fresh.items[0]), 0, 'the original line delivers nothing');
+    });
+
+    it('only allows a replacement the product itself nominates', async () => {
+        // A category is nowhere near a good enough guess to spend the
+        // customer's money on.
+        const unrelated = await product({ name: 'Soap', price: 50 });
+        const milk = await product({ substituteItemIds: [] });
+        const order = await orderOf([line(milk, 1)]);
+
+        await assert.rejects(
+            adjustOrderFulfilment(order._id, {
+                lines: [{ itemId: String(milk._id), substituteItemId: String(unrelated._id) }]
+            }),
+            /not listed as a replacement/i
+        );
+    });
+
+    it('refuses a replacement from another store', async () => {
+        const foreign = await FoodItem.create({ restaurantId: someId(), name: 'Milk', price: 90, stockQty: 5 });
+        const milk = await product({ substituteItemIds: [foreign._id] });
+        const order = await orderOf([line(milk, 1)]);
+
+        await assert.rejects(
+            adjustOrderFulfilment(order._id, {
+                lines: [{ itemId: String(milk._id), substituteItemId: String(foreign._id) }]
+            }),
+            /same store/i
+        );
+    });
+
+    it('refuses a replacement that is out of stock too', async () => {
+        const empty = await product({ name: 'Soy Milk', price: 110, stockQty: 0 });
+        const milk = await product({ substituteItemIds: [empty._id] });
+        const order = await orderOf([line(milk, 1)]);
+
+        await assert.rejects(
+            adjustOrderFulfilment(order._id, {
+                lines: [{ itemId: String(milk._id), substituteItemId: String(empty._id) }]
+            }),
+            /out of stock|Only \d+ left/i
+        );
+    });
+});
+
+describe('what the picker may offer instead', () => {
+    it('lists the nominated replacements and whether each is on the shelf', async () => {
+        const a = await product({ name: 'Soy Milk', price: 110, stockQty: 4 });
+        const b = await product({ name: 'Oat Milk', price: 130, stockQty: 0 });
+        const milk = await product({ substituteItemIds: [a._id, b._id] });
+
+        const res = await listSubstitutesForItem(milk._id);
+        const byName = new Map(res.substitutes.map((s) => [s.name, s]));
+        assert.equal(byName.get('Soy Milk').inStock, true);
+        assert.equal(byName.get('Oat Milk').inStock, false);
+    });
+
+    it('returns nothing for a product with no nominations', async () => {
+        const milk = await product();
+        assert.deepEqual((await listSubstitutesForItem(milk._id)).substitutes, []);
+    });
+});
