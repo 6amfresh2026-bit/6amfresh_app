@@ -368,7 +368,17 @@ const fulfillmentSchema = new mongoose.Schema(
         },
         adjustedAt: { type: Date, default: null },
         adjustedByRole: { type: String, enum: ['RESTAURANT', 'ADMIN', 'SYSTEM'], default: undefined },
-        /** Rupees taken off the bill because the shelf could not supply. */
+        /**
+         * What the bill was before anything went short — captured once, on the
+         * first adjustment, and never moved again.
+         *
+         * Without it `shortfallAmount` could only ever describe the most recent
+         * change: an order short-picked and then substituted would report the
+         * second delta alone, and a refund paid against that figure would
+         * underpay the customer by the first one.
+         */
+        originalTotal: { type: Number, default: null, min: 0 },
+        /** Rupees off the ORIGINAL bill, cumulative across every adjustment. */
         shortfallAmount: { type: Number, default: 0, min: 0 },
         note: { type: String, trim: true, default: '' }
     },
