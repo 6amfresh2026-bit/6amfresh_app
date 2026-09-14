@@ -21,13 +21,38 @@ const orderRef = (ctx) =>
  * is every document that existed before this file.
  */
 
-/** Same item can appear on several lines (different variants); the shelf sees the sum. */
+/**
+ * Units of each product this order is actually holding.
+ *
+ * Same item can appear on several lines (different variants); the shelf sees
+ * the sum.
+ *
+ * `fulfilledQuantity` wins over `quantity` when it has been set, because after
+ * a short pick the order is only holding what the picker found — the rest went
+ * back to the shelf at that moment. Reading the ordered figure here made
+ * cancelling a short-picked order return those units a second time: four taken,
+ * two returned at the shelf, four returned again on cancellation, and the
+ * shelf quietly gained two units that never existed.
+ *
+ * It is null on every line that was never adjusted, including every order
+ * placed before short-picking existed, so reservation at order time is
+ * unchanged.
+ */
 export function totalQuantityByItem(items = []) {
   const totals = new Map();
   for (const item of items) {
     const id = String(item?.itemId || '');
     if (!id || !mongoose.Types.ObjectId.isValid(id)) continue;
-    const qty = Math.max(1, Number(item?.quantity) || 1);
+
+    const adjusted = item?.fulfilledQuantity;
+    const wasAdjusted = adjusted !== null && adjusted !== undefined;
+    // The floor-at-one guard only applies to the ordered figure, where zero
+    // means a malformed line. An explicit zero from the picker means zero.
+    const qty = wasAdjusted
+      ? Math.max(0, Number(adjusted) || 0)
+      : Math.max(1, Number(item?.quantity) || 1);
+
+    if (qty === 0) continue;
     totals.set(id, (totals.get(id) || 0) + qty);
   }
   return totals;
