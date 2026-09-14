@@ -4,6 +4,8 @@ import assert from 'node:assert/strict';
 import { connectTestDb, disconnectTestDb, resetDb, someId } from './helpers/db.js';
 import { FoodOrder } from '../src/modules/food/orders/models/order.model.js';
 import { FoodItem } from '../src/modules/food/admin/models/food.model.js';
+import { FoodTransaction } from '../src/modules/food/orders/models/foodTransaction.model.js';
+import { createInitialTransaction } from '../src/modules/food/orders/services/foodTransaction.service.js';
 import {
     adjustOrderFulfilment,
     listSubstitutesForItem,
@@ -143,6 +145,76 @@ describe('a short pick', () => {
         const res = await adjustOrderFulfilment(order._id, { lines: [{ itemId: String(milk._id), fulfilledQuantity: 1 }] });
         assert.ok(res.pricing.total >= 0);
         assert.ok(res.pricing.discount <= res.pricing.subtotal);
+    });
+
+    it('reports the shortfall against the original bill, not the last change', async () => {
+        // Short-picked, then substituted. Refunding only the second delta would
+        // underpay the customer by the first one.
+        const lacto = await product({ name: 'Lactose Free Milk', price: 120, stockQty: 5 });
+        const milk = await product({ stockQty: 9, substituteItemIds: [lacto._id] });
+        const order = await orderOf([line(milk, 3)]); // ₹300 goods + ₹25 fees = ₹325
+
+        const first = await adjustOrderFulfilment(order._id, {
+            lines: [{ itemId: String(milk._id), fulfilledQuantity: 2 }]
+        });
+        assert.equal(first.fulfillment.shortfallAmount, 100);
+
+        const second = await adjustOrderFulfilment(order._id, {
+            lines: [{ itemId: String(milk._id), substituteItemId: String(lacto._id), quantity: 2 }]
+        });
+        // ₹325 originally; now 2 × ₹120 + ₹25 = ₹265.
+        assert.equal(second.pricing.total, 265);
+        assert.equal(second.fulfillment.shortfallAmount, 60, 'cumulative against ₹325, not against ₹225');
+        assert.equal(second.fulfillment.originalTotal, 325);
+    });
+
+    it('recharges the seller commission on the goods that were actually sold', async () => {
+        // Left alone, a store short by one item would still pay commission on
+        // the item it never sold.
+        const milk = await product();
+        const order = await orderOf([line(milk, 4)], {
+            pricing: {
+                subtotal: 400, deliveryFee: 20, platformFee: 5, tax: 0,
+                discount: 0, restaurantCommission: 40, total: 425
+            }
+        });
+
+        const res = await adjustOrderFulfilment(order._id, { lines: [{ itemId: String(milk._id), fulfilledQuantity: 2 }] });
+        assert.equal(res.pricing.subtotal, 200);
+        assert.notEqual(res.pricing.restaurantCommission, 40, 'commission must not still describe the basket that was ordered');
+        assert.ok(res.pricing.restaurantCommission <= 40);
+    });
+
+    it('re-splits the settlement, which reads the transaction before the order', async () => {
+        // restaurantPayout reads amounts.restaurantCommission in preference to
+        // pricing.restaurantCommission, so repricing the order alone would
+        // leave the seller's payout describing a basket never delivered.
+        const milk = await product();
+        const order = await orderOf([line(milk, 4)], {
+            pricing: { subtotal: 400, deliveryFee: 20, platformFee: 5, tax: 0, discount: 0, restaurantCommission: 40, total: 425 }
+        });
+        await createInitialTransaction(order);
+        const before = await FoodTransaction.findOne({ orderId: order._id }).lean();
+        assert.equal(before.amounts.totalCustomerPaid, 425);
+
+        await adjustOrderFulfilment(order._id, { lines: [{ itemId: String(milk._id), fulfilledQuantity: 2 }] });
+
+        const after = await FoodTransaction.findOne({ orderId: order._id }).lean();
+        assert.equal(after.amounts.totalCustomerPaid, 225, 'the ledger follows the bill');
+        assert.equal(after.pricing.subtotal, 200);
+        assert.ok(after.amounts.restaurantShare < before.amounts.restaurantShare);
+    });
+
+    it('leaves a settled transaction alone, because that is a credit note', async () => {
+        const milk = await product();
+        const order = await orderOf([line(milk, 2)]);
+        await createInitialTransaction(order);
+        await FoodTransaction.updateOne({ orderId: order._id }, { $set: { status: 'settled' } });
+
+        await adjustOrderFulfilment(order._id, { lines: [{ itemId: String(milk._id), fulfilledQuantity: 1 }] });
+
+        const after = await FoodTransaction.findOne({ orderId: order._id }).lean();
+        assert.equal(after.amounts.totalCustomerPaid, 225, 'money already moved; history is not rewritten');
     });
 
     it('refuses to empty the order, because that is a cancellation', async () => {
