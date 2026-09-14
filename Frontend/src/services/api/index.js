@@ -1642,6 +1642,25 @@ export const restaurantAPI = {
       { contextModule: "restaurant" },
     ),
 
+  /**
+   * What the picker actually found.
+   *
+   * Only the exceptions are sent — a line not mentioned is assumed found in
+   * full. Each entry is either `{ itemId, fulfilledQuantity }` for a short
+   * pick or `{ itemId, substituteItemId, quantity }` for a swap.
+   */
+  adjustOrderFulfilment: (orderId, lines, note = "") =>
+    apiClient.patch(
+      `/food/restaurant/orders/${String(orderId)}/fulfilment`,
+      { lines, note },
+      { contextModule: "restaurant" },
+    ),
+  /** What may go in the bag instead, and whether it is actually on the shelf. */
+  getItemSubstitutes: (itemId) =>
+    apiClient.get(`/food/restaurant/foods/${String(itemId)}/substitutes`, {
+      contextModule: "restaurant",
+    }),
+
   /** Dashboard summary widgets: account counts, order totals, 6-month charts */
   getDashboardSummary: () =>
     apiClient.get("/food/restaurant/dashboard-summary", {
