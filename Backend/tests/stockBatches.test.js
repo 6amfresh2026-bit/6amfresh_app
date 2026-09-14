@@ -14,6 +14,7 @@ import {
     listExpiringBatches
 } from '../src/modules/food/orders/services/stockBatch.service.js';
 import { reserveStockForItems, restoreOrderStock } from '../src/modules/food/orders/services/inventory.service.js';
+import { logger } from '../src/utils/logger.js';
 import { adjustOrderFulfilment } from '../src/modules/food/orders/services/order-fulfilment.service.js';
 
 /**
@@ -359,5 +360,45 @@ describe('a substitution keeps the batches and the count together', () => {
         const batch = (await FoodStockBatch.findOne({ batchNo: 'L1' }).lean()).remainingQty;
         assert.equal(count, 5);
         assert.equal(batch, 5, 'claimed and released, on both sides');
+    });
+});
+
+describe('products nobody tracks by batch', () => {
+    /** Captures what the service logs at error level for one call. */
+    const errorsDuring = async (fn) => {
+        const seen = [];
+        const real = logger.error.bind(logger);
+        logger.error = (...args) => { seen.push(String(args[0])); };
+        try { await fn(); } finally { logger.error = real; }
+        return seen;
+    };
+
+    it('are sold without allocating anything, and without complaining', async () => {
+        // Almost every product. Running the allocator anyway cost a query per
+        // line and logged an error about an inconsistency that did not exist —
+        // on every ordinary sale, burying the real ones underneath.
+        const brownie = await FoodItem.create({
+            restaurantId: STORE, name: 'Chocolate Brownie', price: 149, stockQty: 20, gstRate: 0
+        });
+
+        const errors = await errorsDuring(() =>
+            reserveStockForItems([{ itemId: String(brownie._id), quantity: 2 }], { orderLabel: 'ORDINARY' }));
+
+        assert.deepEqual(errors, [], 'an ordinary sale is not an inconsistency');
+        assert.equal((await FoodItem.findById(brownie._id).lean()).stockQty, 18, 'and it still sells');
+    });
+
+    it('still leaves a real mismatch shouting', async () => {
+        // The message has to keep working for the case it was written for: a
+        // batch-tracked product whose batches hold less than the count claims.
+        const milk = await product();
+        await receiveBatch({ itemId: milk._id, quantity: 1, expiryDate: inDays(5) });
+        await FoodItem.updateOne({ _id: milk._id }, { $set: { stockQty: 5 } });
+
+        const errors = await errorsDuring(() =>
+            reserveStockForItems([{ itemId: String(milk._id), quantity: 3 }], { orderLabel: 'REAL' }));
+
+        assert.equal(errors.length, 1);
+        assert.match(errors[0], /had no batch behind them/i);
     });
 });
