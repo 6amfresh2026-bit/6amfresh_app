@@ -160,7 +160,7 @@ export const BATCH_DROP_RADIUS_KM = Math.max(
   Number(process.env.BATCH_DROP_RADIUS_KM) || 1.5,
 );
 
-const ACTIVE_DELIVERY_SELECT = '_id order_id restaurantId deliveryAddress deliveryState orderStatus promise';
+const ACTIVE_DELIVERY_SELECT = '_id order_id restaurantId deliveryAddress deliveryState orderStatus promise payment pricing';
 
 /** Every order a rider is currently carrying. */
 export async function getActiveDeliveriesForPartner(deliveryPartnerId) {

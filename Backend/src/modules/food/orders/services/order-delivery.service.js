@@ -28,7 +28,6 @@ import {
   haversineKm,
   notifyOwnerSafely,
   notifyOwnersSafely,
-  partnerHasActiveDelivery,
   getActiveDeliveriesForPartner,
   canPartnerTakeOrder,
   MAX_ACTIVE_ORDERS_PER_RIDER,
@@ -456,7 +455,16 @@ export async function listOrdersAvailableDelivery(deliveryPartnerId, query) {
  * A limit of 0 means no limit, matching the schema default, so installs that never
  * configured this are untouched.
  */
-async function assertCashLimitAllows(deliveryPartnerId, order) {
+/** Cash the rider will have to collect on orders they are already carrying. */
+const committedCashOf = (activeOrders = []) =>
+  activeOrders.reduce((sum, o) => {
+    const method = String(o?.payment?.method || '').toLowerCase();
+    if (method !== 'cash' && method !== 'razorpay_qr') return sum;
+    if (String(o?.payment?.status || '').toLowerCase() === 'paid') return sum;
+    return sum + (Number(o?.payment?.amountDue) || Number(o?.pricing?.total) || 0);
+  }, 0);
+
+async function assertCashLimitAllows(deliveryPartnerId, order, activeOrders = []) {
   const method = String(order?.payment?.method || order?.paymentMethod || '').toLowerCase();
   if (method !== 'cash' && method !== 'razorpay_qr') return;
 
@@ -469,10 +477,27 @@ async function assertCashLimitAllows(deliveryPartnerId, order) {
   if (limit <= 0) return;
 
   const inHand = Number(wallet?.cashInHand) || 0;
+
+  // cashInHand is money already collected. On its own that was enough while a
+  // rider could only hold one order — at most one delivery's worth could be
+  // uncounted. Batching broke that: three ₹2,000 cash orders accepted against
+  // an empty wallet and a ₹3,000 ceiling ends with the rider carrying ₹6,000.
+  // What they have ALREADY promised to collect has to count too.
+  const committed = committedCashOf(activeOrders);
+  const thisOrder = Number(order?.payment?.amountDue) || Number(order?.pricing?.total) || 0;
+  const wouldHold = inHand + committed + thisOrder;
+
   if (inHand >= limit) {
     throw new ValidationError(
       `You are holding Rs.${inHand} in cash, which is at your Rs.${limit} limit. ` +
         'Deposit your cash to keep accepting cash orders.',
+    );
+  }
+
+  if (wouldHold > limit) {
+    throw new ValidationError(
+      `This would put you at Rs.${Math.round(wouldHold)} in cash, over your Rs.${limit} limit. ` +
+        'Deliver what you are carrying or deposit your cash first.',
     );
   }
 }
@@ -523,9 +548,11 @@ export async function acceptOrderDelivery(orderId, deliveryPartnerId) {
   // cash ceiling must not end up holding a cash trip they cannot be given.
   {
     const pending = await FoodOrder.findOne(identity)
-      .select('payment paymentMethod')
+      .select('payment paymentMethod pricing')
       .lean();
-    if (pending) await assertCashLimitAllows(partnerId, pending);
+    // activeOrders is what they are already carrying — the ceiling has to be
+    // judged against the whole batch, not this order on its own.
+    if (pending) await assertCashLimitAllows(partnerId, pending, activeOrders);
   }
 
   const order = await FoodOrder.findOneAndUpdate(
