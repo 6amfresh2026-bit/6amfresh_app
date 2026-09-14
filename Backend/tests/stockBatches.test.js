@@ -153,6 +153,43 @@ describe('putting units back', () => {
     });
 });
 
+describe('expired stock never reaches a customer', () => {
+    it('is not picked, even before the write-off sweep has run', async () => {
+        // The sweep is bookkeeping, not the guard. A batch that expired an hour
+        // ago is still status:'active' until something touches it — and because
+        // this picks soonest-expiry first, an expired batch is the FIRST thing
+        // it would choose. Measured before the fix: a customer ordering three
+        // units was handed three expired ones.
+        const milk = await product();
+        await receiveBatch({ itemId: milk._id, batchNo: 'FRESH', expiryDate: inDays(30), quantity: 5 });
+        await receiveBatch({ itemId: milk._id, batchNo: 'GONE', expiryDate: inDays(1), quantity: 5 });
+        await FoodStockBatch.updateOne({ batchNo: 'GONE' }, { $set: { expiryDate: inDays(-1) } });
+
+        const picked = await allocateFefo(milk._id, 3);
+        assert.deepEqual(picked.map((p) => p.batchNo), ['FRESH'], 'not the expired one, however soon it expires');
+    });
+
+    it('is not counted as stock a shop can sell', async () => {
+        const milk = await product();
+        await receiveBatch({ itemId: milk._id, batchNo: 'FRESH', expiryDate: inDays(30), quantity: 2 });
+        await receiveBatch({ itemId: milk._id, batchNo: 'GONE', expiryDate: inDays(1), quantity: 5 });
+        await FoodStockBatch.updateOne({ batchNo: 'GONE' }, { $set: { expiryDate: inDays(-1) } });
+
+        const summary = await getBatchSummary(milk._id);
+        assert.equal(summary.totalRemaining, 2, 'stock that cannot be sold is not stock on hand');
+    });
+
+    it('comes up short rather than substituting an expired unit', async () => {
+        // Nothing sellable is left, so the allocation is empty and the
+        // mismatch is logged. Handing over expired goods to make the numbers
+        // agree would be the worse answer.
+        const milk = await product();
+        await receiveBatch({ itemId: milk._id, batchNo: 'GONE', expiryDate: inDays(1), quantity: 5 });
+        await FoodStockBatch.updateOne({ batchNo: 'GONE' }, { $set: { expiryDate: inDays(-1) } });
+        assert.deepEqual(await allocateFefo(milk._id, 2), []);
+    });
+});
+
 describe('stock that has gone off', () => {
     it('is taken off the shelf and out of the count', async () => {
         const milk = await product();
