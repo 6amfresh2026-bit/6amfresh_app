@@ -52,7 +52,10 @@ describe('reserveStockForItems', () => {
             orderLabel: 'ORD-1'
         });
 
-        assert.deepEqual(taken, [{ itemId: String(item._id), qty: 2 }]);
+        // A reservation also reports which batches the units came from. This
+        // product is not batch-tracked, so there are none — but the field is
+        // there, and the shape is what callers now hand to the restore path.
+        assert.deepEqual(taken, [{ itemId: String(item._id), qty: 2, allocations: [] }]);
         assert.equal((await FoodItem.findById(item._id)).stockQty, 3);
 
         await settle();
