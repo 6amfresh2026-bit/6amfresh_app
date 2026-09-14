@@ -343,6 +343,13 @@ export default function Cart() {
   })
 
   const [sendCutlery, setSendCutlery] = useState(true)
+  /**
+   * What the store may do if something in the basket is not on the shelf.
+   *
+   * Defaults to a refund, because swapping spends the customer's money on
+   * something they did not choose — and only they can say that is fine.
+   */
+  const [allowSubstitution, setAllowSubstitution] = useState(false)
   const [isPlacingOrder, setIsPlacingOrder] = useState(false)
   const [showBillDetails, setShowBillDetails] = useState(true)
   const [showPlacingOrder, setShowPlacingOrder] = useState(false)
@@ -2268,6 +2275,7 @@ export default function Cart() {
         deliveryInstructions: deliveryInstructionText,
         deliveryMode,
         sendCutlery: sendCutlery !== false,
+        substitutionPreference: allowSubstitution ? "allow" : "refund",
         paymentMethod: selectedPaymentMethod,
         // `useZone()` can return `null`. Zod expects string/undefined, not null.
         zoneId: zoneId || undefined,
@@ -2733,6 +2741,20 @@ export default function Cart() {
                   >
                     <Square className={`h-3.5 w-3.5 ${sendCutlery ? "" : "fill-current"}`} />
                     {sendCutlery ? "Send cutlery" : "No cutlery"}
+                  </button>
+                  <button
+                    type="button"
+                    data-testid="substitution-toggle"
+                    onClick={() => setAllowSubstitution(!allowSubstitution)}
+                    title="If something is out of stock, should the store send a similar item or refund it?"
+                    className={`flex items-center gap-1.5 shrink-0 rounded-full border px-3 py-2 text-[12px] font-semibold ${
+                      allowSubstitution
+                        ? "border-[#EB590E]/40 bg-[#FFF1E8] text-[#EB590E]"
+                        : "border-gray-200 dark:border-gray-700 bg-white dark:bg-[#141414] text-gray-700 dark:text-gray-300"
+                    }`}
+                  >
+                    <Square className={`h-3.5 w-3.5 ${allowSubstitution ? "fill-current" : ""}`} />
+                    {allowSubstitution ? "Substitutes OK" : "Refund if out of stock"}
                   </button>
                 </div>
                 {note.trim() ? (
