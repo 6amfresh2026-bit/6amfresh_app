@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { connectTestDb, disconnectTestDb, resetDb, someId } from './helpers/db.js';
 import { FoodOrder } from '../src/modules/food/orders/models/order.model.js';
 import { getPromisePerformance } from '../src/modules/food/admin/services/dashboardAnalytics.service.js';
+import { expireUnacceptedOrders } from '../src/modules/food/orders/services/order.service.js';
 import {
     buildOrderPromise,
     resolveOrderPromise
@@ -309,5 +310,64 @@ describe('the on-time report', () => {
         assert.equal(r.scored, 0);
         assert.equal(r.onTimePercent, null);
         assert.equal(r.avgVarianceMinutes, null);
+    });
+});
+
+describe('orders nothing else would ever close', () => {
+    const HOURS = 60 * 60 * 1000;
+
+    const stuck = (over = {}) =>
+        makeOrder({
+            orderStatus: 'confirmed',
+            acceptanceDeadlineAt: null,
+            dispatch: { status: 'unassigned', deliveryPartnerId: null, offeredTo: [] },
+            createdAt: new Date(Date.now() - 6 * HOURS),
+            ...over
+        });
+
+    it('closes a confirmed order that never found a rider', async () => {
+        // An auto-accepting store arms no acceptance clock, so this order sat
+        // confirmed for ever holding its reserved stock. recoverStuckOrders
+        // only resets assignments and the stale-trip sweep only looks at
+        // orders already picked up — between them it was invisible.
+        const order = await stuck();
+        assert.equal(await expireUnacceptedOrders(), 1);
+        assert.equal((await FoodOrder.findById(order._id).lean()).orderStatus, 'cancelled_by_restaurant');
+    });
+
+    it('says why, because "not accepted" would be a lie', async () => {
+        const order = await stuck();
+        await expireUnacceptedOrders();
+        assert.match((await FoodOrder.findById(order._id).lean()).note, /no rider could be found/i);
+    });
+
+    it('leaves a booking alone, however long it has been waiting', async () => {
+        // A booking is meant to wait, and its window may be days out.
+        const order = await stuck({ scheduledAt: new Date(Date.now() + 2 * HOURS) });
+        assert.equal(await expireUnacceptedOrders(), 0);
+        assert.equal((await FoodOrder.findById(order._id).lean()).orderStatus, 'confirmed');
+    });
+
+    it('leaves an order a rider has already accepted', async () => {
+        const order = await stuck({ dispatch: { status: 'accepted', deliveryPartnerId: someId() } });
+        assert.equal(await expireUnacceptedOrders(), 0);
+        assert.equal((await FoodOrder.findById(order._id).lean()).orderStatus, 'confirmed');
+    });
+
+    it('leaves a recent one alone', async () => {
+        const order = await stuck({ createdAt: new Date() });
+        assert.equal(await expireUnacceptedOrders(), 0);
+        assert.equal((await FoodOrder.findById(order._id).lean()).orderStatus, 'confirmed');
+    });
+
+    it('still closes an order whose seller never answered', async () => {
+        const order = await makeOrder({
+            orderStatus: 'created',
+            acceptanceDeadlineAt: new Date(Date.now() - 60000),
+        });
+        assert.equal(await expireUnacceptedOrders(), 1);
+        const fresh = await FoodOrder.findById(order._id).lean();
+        assert.equal(fresh.orderStatus, 'cancelled_by_restaurant');
+        assert.match(fresh.note, /not accepted by restaurant/i);
     });
 });

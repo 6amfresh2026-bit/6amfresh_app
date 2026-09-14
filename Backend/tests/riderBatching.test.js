@@ -59,6 +59,24 @@ describe('when a second order may ride along', () => {
         assert.equal(v.activeCount, 1);
     });
 
+    it('never batches an order the customer paid to prioritise', () => {
+        // The surcharge buys a delivery with nobody in front of it, which is
+        // only true if it rides alone.
+        const quick = order({ pricing: { deliveryMode: 'quick' } });
+        const v = canPartnerTakeOrder([order()], quick);
+        assert.equal(v.allowed, false);
+        assert.match(v.reason, /priority order/i);
+    });
+
+    it('never adds anything behind a priority order already in hand', () => {
+        // The other direction matters just as much: it would spend the first
+        // customer's money on somebody else's doorstep.
+        const quick = order({ pricing: { deliveryMode: 'quick' } });
+        const v = canPartnerTakeOrder([quick], order());
+        assert.equal(v.allowed, false);
+        assert.match(v.reason, /carrying a priority order/i);
+    });
+
     it('refuses a second pickup from a different store', () => {
         const v = canPartnerTakeOrder([order()], order({ restaurantId: OTHER_STORE }));
         assert.equal(v.allowed, false);
@@ -135,6 +153,13 @@ describe('what the dispatcher sees', () => {
         for (let i = 0; i < MAX_ACTIVE_ORDERS_PER_RIDER; i += 1) await live();
         const { atCapacity } = await getDeliveryPartnerLoads();
         assert.equal(atCapacity.has(String(rider)), true);
+    });
+
+    it('calls a rider carrying a priority order full, whatever the count', async () => {
+        await live({ pricing: { deliveryMode: 'quick', subtotal: 100, total: 100 } });
+        const { atCapacity, loadByPartner } = await getDeliveryPartnerLoads();
+        assert.equal(loadByPartner.get(String(rider)).count, 1, 'one order');
+        assert.equal(atCapacity.has(String(rider)), true, 'and still no room — that trip is undivided');
     });
 
     it('calls them busy once they have ridden away with goods', async () => {
