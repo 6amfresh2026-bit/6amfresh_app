@@ -518,7 +518,10 @@ export async function acceptOrderDelivery(orderId, deliveryPartnerId) {
   const activeOrders = await getActiveDeliveriesForPartner(deliveryPartnerId);
   if (activeOrders.length > 0) {
     const requestedOrder = await FoodOrder.findOne(identity)
-      .select('_id restaurantId deliveryAddress')
+      // pricing.deliveryMode included deliberately: canPartnerTakeOrder reads
+      // it to keep a priority order out of a batch, and a projection that drops
+      // it makes every order look ordinary.
+      .select('_id restaurantId deliveryAddress pricing.deliveryMode')
       .lean();
     const requestedOrderKey = String(requestedOrder?._id || '');
 

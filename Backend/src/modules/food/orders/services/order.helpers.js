@@ -241,9 +241,31 @@ const dropPointOf = (order) => {
  * Returns a reason on refusal because the rider app shows it, and "you already
  * have an active delivery" was the single most useless sentence in that app.
  */
+/** A customer who paid the quick surcharge bought an undivided trip. */
+const isQuickOrder = (order) => String(order?.pricing?.deliveryMode || '') === 'quick';
+
 export function canPartnerTakeOrder(activeOrders, candidate) {
   const active = Array.isArray(activeOrders) ? activeOrders : [];
   if (active.length === 0) return { allowed: true, reason: '', activeCount: 0 };
+
+  // The surcharge buys a delivery with nobody in front of it, and that is only
+  // true if the order rides alone. It cuts both ways: a quick order is never
+  // added to a batch, and a batch is never added to a quick order — the second
+  // would spend the first customer's money on somebody else's doorstep.
+  if (isQuickOrder(candidate)) {
+    return {
+      allowed: false,
+      activeCount: active.length,
+      reason: 'That is a priority order — it has to be delivered on its own.',
+    };
+  }
+  if (active.some(isQuickOrder)) {
+    return {
+      allowed: false,
+      activeCount: active.length,
+      reason: 'You are carrying a priority order. Deliver it before taking another.',
+    };
+  }
 
   if (active.length >= MAX_ACTIVE_ORDERS_PER_RIDER) {
     return {
@@ -311,24 +333,27 @@ export async function getDeliveryPartnerLoads() {
     'dispatch.deliveryPartnerId': { $exists: true, $ne: null },
     orderStatus: { $nin: TERMINAL_ORDER_STATUSES },
   })
-    .select('dispatch.deliveryPartnerId restaurantId deliveryState orderStatus')
+    .select('dispatch.deliveryPartnerId restaurantId deliveryState orderStatus pricing.deliveryMode')
     .lean();
 
   const loadByPartner = new Map();
   for (const row of rows) {
     const key = String(row.dispatch.deliveryPartnerId);
-    const entry = loadByPartner.get(key) || { count: 0, restaurantIds: new Set(), collected: false };
+    const entry = loadByPartner.get(key) || { count: 0, restaurantIds: new Set(), collected: false, quick: false };
     entry.count += 1;
     entry.restaurantIds.add(String(row.restaurantId || ''));
     if (row?.deliveryState?.pickedUpAt || ['picked_up', 'reached_drop'].includes(String(row.orderStatus))) {
       entry.collected = true;
     }
+    if (isQuickOrder(row)) entry.quick = true;
     loadByPartner.set(key, entry);
   }
 
+  // A rider carrying a priority order is full regardless of the count — that
+  // customer paid for an undivided trip.
   const atCapacity = new Set(
     [...loadByPartner.entries()]
-      .filter(([, e]) => e.count >= MAX_ACTIVE_ORDERS_PER_RIDER || e.collected)
+      .filter(([, e]) => e.count >= MAX_ACTIVE_ORDERS_PER_RIDER || e.collected || e.quick)
       .map(([key]) => key),
   );
 
