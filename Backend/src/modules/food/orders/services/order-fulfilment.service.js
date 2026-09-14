@@ -170,6 +170,8 @@ async function refundShortfall(order, amount) {
 async function releaseTakenReplacements(takes = []) {
   for (const entry of takes) {
     try {
+      // The batch first, then the count, so the two never drift apart.
+      await returnAllocations(entry.allocations || []);
       await returnStockUnits(entry.itemId, entry.qty, { reason: 'Substitution abandoned' });
     } catch (err) {
       logger.error(
@@ -248,11 +250,18 @@ export async function adjustOrderFulfilment(orderId, { lines = [], byRole = 'RES
       // Claims the units the same way an order does, and throws in the same
       // words if the shelf cannot supply them — "Soy Milk just went out of
       // stock" says more than any message this file could add.
-      await reserveStockForItems(
+      // The reservation says WHICH units it took, not just how many, and both
+      // halves are needed: the new line has to carry them so a cancellation
+      // returns them to the right cartons, and `takes` has to carry them so an
+      // abandoned substitution does. Discarding this return left the units
+      // gone from the batch but back in the count, and the two drifted further
+      // apart with every swap.
+      const [claimedReplacement] = await reserveStockForItems(
         [{ itemId: String(replacement._id), quantity: qty }],
         { orderId: order._id, orderLabel: order.order_id || '' },
       );
-      takes.push({ itemId: String(replacement._id), qty });
+      const replacementAllocations = claimedReplacement?.allocations || [];
+      takes.push({ itemId: String(replacement._id), qty, allocations: replacementAllocations });
 
       // The original line goes to zero and its units go back; the replacement
       // is a new line that remembers what it stood in for, so the invoice can
@@ -278,6 +287,7 @@ export async function adjustOrderFulfilment(orderId, { lines = [], byRole = 'RES
         isVeg: line.isVeg !== false,
         substitutedForItemId: String(line.itemId),
         substitutedForName: line.name,
+        batchAllocations: replacementAllocations,
       });
       substituted = true;
       continue;
