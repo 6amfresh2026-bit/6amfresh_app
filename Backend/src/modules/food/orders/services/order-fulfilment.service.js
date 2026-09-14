@@ -84,11 +84,16 @@ export function repriceForFulfilment(order) {
     computeItemsTax(taxableLines, { subtotal, discount, fallbackRate: pricing.gstRate ?? 0 }),
   );
 
+  // Carried across unchanged, not recomputed. A short pick can push the basket
+  // under the small-cart threshold, and charging the customer a surcharge
+  // because the shop ran out would be billing them for our mistake. Equally it
+  // is not dropped: the trip was already priced on the basket they ordered.
   const fees =
     (Number(pricing.deliveryFee) || 0) +
     (Number(pricing.deliveryFeeGst) || 0) +
     (Number(pricing.platformFee) || 0) +
     (Number(pricing.packagingFee) || 0) +
+    (Number(pricing.smallCartFee) || 0) +
     (Number(pricing.additionalCharges) || 0);
 
   const total = Math.max(0, round2(subtotal - discount + tax + fees));

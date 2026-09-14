@@ -125,6 +125,12 @@ const pricingSchema = new mongoose.Schema(
         platformFee: { type: Number, default: 0, min: 0 },
         /** Extra surcharge when user selects Quick Mode (also included in platformFee). */
         quickDeliveryFee: { type: Number, default: 0, min: 0 },
+        /**
+         * Charged on a basket below the configured threshold: the trip costs
+         * the same whatever is in the bag. Its own line rather than folded
+         * into the platform fee, so a customer can see what it was for.
+         */
+        smallCartFee: { type: Number, default: 0, min: 0 },
         deliveryMode: { type: String, enum: ['basic', 'quick'], default: 'basic' },
         restaurantCommission: { type: Number, default: 0, min: 0 },
         discount: { type: Number, default: 0, min: 0 },
