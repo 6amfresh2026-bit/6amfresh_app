@@ -21,12 +21,6 @@ import { recordMovement } from './stockLedger.service.js';
 
 const oid = (v) => new mongoose.Types.ObjectId(String(v));
 
-/** Whether this product is tracked batch by batch at all. */
-export async function usesBatches(itemId) {
-    const item = await FoodItem.findById(itemId).select('manageMultipleBatch').lean();
-    return Boolean(item?.manageMultipleBatch);
-}
-
 /**
  * Records an intake and puts its units on the shelf.
  *

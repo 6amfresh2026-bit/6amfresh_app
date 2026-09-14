@@ -115,7 +115,9 @@ export async function reserveStockForItems(items = [], ctx = {}) {
     const updated = await FoodItem.findOneAndUpdate(
       { _id: id, stockQty: { $gte: qty } },
       { $inc: { stockQty: -qty } },
-      { new: true, projection: { stockQty: 1, name: 1, itemCode: 1, restaurantId: 1 } },
+      // manageMultipleBatch rides along so the allocation below can be skipped
+      // without a second lookup.
+      { new: true, projection: { stockQty: 1, name: 1, itemCode: 1, restaurantId: 1, manageMultipleBatch: 1 } },
     ).lean();
 
     if (updated) {
@@ -123,7 +125,15 @@ export async function reserveStockForItems(items = [], ctx = {}) {
       // conditional decrement above, never instead of it: that single atomic
       // update is what stops two customers buying the last one, and batches
       // must not take that job over.
-      const allocations = await allocateFefo(itemId, qty, ctx);
+      //
+      // Skipped entirely for a product nobody tracks by batch, which is almost
+      // everything. Running it anyway cost a query per line and — worse — hit
+      // the "no batch behind these units" branch on every ordinary sale,
+      // logging an error about an inconsistency that did not exist and burying
+      // the real ones under it.
+      const allocations = updated.manageMultipleBatch
+        ? await allocateFefo(itemId, qty, ctx)
+        : [];
       taken.push({ itemId, qty, allocations });
       // Hide it once empty so the existing listing/search filters, which all key
       // off isAvailable, keep working without knowing inventory exists.
