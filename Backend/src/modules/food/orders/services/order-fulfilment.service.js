@@ -140,6 +140,26 @@ async function refundShortfall(order, amount) {
 }
 
 /**
+ * Puts back replacement stock claimed for a substitution that then failed.
+ *
+ * The replacement is taken from the shelf before the order is saved, so every
+ * throw between those two points would otherwise strand those units: claimed
+ * against an order that does not reference them, and invisible to every
+ * restock path there is.
+ */
+async function releaseTakenReplacements(takes = []) {
+  for (const entry of takes) {
+    try {
+      await returnStockUnits(entry.itemId, entry.qty, { reason: 'Substitution abandoned' });
+    } catch (err) {
+      logger.error(
+        `[CRITICAL] could not put back replacement stock ${entry.itemId} (+${entry.qty}): ${err?.message || err}`,
+      );
+    }
+  }
+}
+
+/**
  * Applies what the picker found.
  *
  * `lines` is a list of `{ itemId, variantId?, fulfilledQuantity }` and/or
@@ -168,6 +188,7 @@ export async function adjustOrderFulfilment(orderId, { lines = [], byRole = 'RES
   const takes = [];
   let substituted = false;
 
+  try {
   for (const change of lines) {
     const key = `${String(change.itemId)}::${String(change.variantId || '')}`;
     const line = byKey.get(key);
@@ -253,6 +274,14 @@ export async function adjustOrderFulfilment(orderId, { lines = [], byRole = 'RES
     // would leave an order that is delivered, empty and paid for.
     throw new ValidationError('Nothing would be left to deliver — cancel the order instead.');
   }
+  } catch (err) {
+    // Any refusal from here back to the first reserve leaves replacement units
+    // claimed against an order that will not carry them. Every throw in the
+    // block above has to give them back — a later line naming a product that
+    // is not on the order, an emptied basket, anything.
+    await releaseTakenReplacements(takes);
+    throw err;
+  }
 
   // Measured against the bill as it was BEFORE anything went short, not
   // against the last adjustment. An order short-picked and then substituted
@@ -331,7 +360,14 @@ export async function adjustOrderFulfilment(orderId, { lines = [], byRole = 'RES
     };
   }
 
-  await order.save();
+  try {
+    await order.save();
+  } catch (err) {
+    // Replacement units were claimed before this point and this order will now
+    // carry none of them, so nothing downstream could ever give them back.
+    await releaseTakenReplacements(takes);
+    throw err;
+  }
 
   // The settlement side reads `amounts` on the transaction in preference to
   // `pricing` on the order, so repricing the order alone would leave the
