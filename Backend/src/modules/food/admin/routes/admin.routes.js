@@ -306,6 +306,11 @@ router.get('/stocks/movements', stockAdmin.listMovementsController);
 router.get('/stocks/:itemId/movements', stockAdmin.listItemMovementsController);
 router.get('/stocks', stockAdmin.listStocksController);
 router.post('/stocks/adjust', stockAdmin.adjustStockController);
+// Batch-tracked stock: what came in, when it goes off, and clearing what has.
+router.post('/stocks/batches', stockAdmin.receiveBatchController);
+router.get('/stocks/batches/expiring', stockAdmin.listExpiringBatchesController);
+router.post('/stocks/batches/write-off-expired', stockAdmin.writeOffExpiredController);
+router.get('/stocks/:itemId/batches', stockAdmin.getBatchSummaryController);
 
 router.get('/stock-verifications', stockAdmin.listVerificationsController);
 router.post('/stock-verifications', stockAdmin.createVerificationController);
