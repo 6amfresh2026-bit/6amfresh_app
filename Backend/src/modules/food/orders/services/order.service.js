@@ -392,15 +392,44 @@ async function applyCancellationRefund(order, { cancelledBy = 'system', refundAm
   return { attempted: false, processed: false, reason: `unsupported_method_${paymentMethod}`, method: paymentMethod };
 }
 
+/**
+ * How long an order may sit confirmed with no rider before it is given up on.
+ *
+ * Generous, because this is the backstop and not the primary timeout: the
+ * acceptance clock handles a seller who never answers, and this handles the
+ * case that clock never covers.
+ */
+const UNDISPATCHED_TIMEOUT_MS =
+  Math.max(1, Number(process.env.UNDISPATCHED_ORDER_TIMEOUT_MINUTES) || 120) * 60 * 1000;
+
 export async function expireUnacceptedOrders(filter = {}) {
   const now = new Date();
   const baseFilter = {
     orderStatus: { $in: ["created", "confirmed"] },
-    acceptanceDeadlineAt: { $ne: null, $lte: now },
+    $or: [
+      // A seller who never answered. The clock was armed at order time.
+      { acceptanceDeadlineAt: { $ne: null, $lte: now } },
+      // And the case nothing closed at all: an auto-accepting store arms no
+      // acceptance clock, so an order that then never finds a rider sat
+      // confirmed for ever, holding its reserved stock out of everyone else's
+      // reach. recoverStuckOrders only resets assignments and the stale-trip
+      // sweep only looks at orders already picked up, so between them this
+      // order was invisible. Nineteen of them accumulated in one test database.
+      {
+        acceptanceDeadlineAt: null,
+        "dispatch.status": "unassigned",
+        createdAt: { $lte: new Date(now.getTime() - UNDISPATCHED_TIMEOUT_MS) },
+        // A booking is meant to wait, and its window may be days out.
+        $or: [
+          { scheduledAt: null },
+          { scheduledAt: { $lte: new Date(now.getTime() - UNDISPATCHED_TIMEOUT_MS) } },
+        ],
+      },
+    ],
     ...filter,
   };
 
-  const docs = await FoodOrder.find(baseFilter).select("_id orderStatus").lean();
+  const docs = await FoodOrder.find(baseFilter).select("_id orderStatus acceptanceDeadlineAt").lean();
   if (!docs.length) return 0;
 
   for (const doc of docs) {
@@ -408,13 +437,19 @@ export async function expireUnacceptedOrders(filter = {}) {
     const updated = await FoodOrder.findOneAndUpdate(
       {
         _id: doc._id,
+        // Status only. The deadline was re-asserted here to stop a race with a
+        // seller accepting in the same instant, and the status guard already
+        // does that — while repeating the deadline would have silently skipped
+        // every order selected by the undispatched branch above, which has no
+        // deadline by definition.
         orderStatus: { $in: ["created", "confirmed"] },
-        acceptanceDeadlineAt: { $ne: null, $lte: now },
       },
       {
         $set: {
           orderStatus: "cancelled_by_restaurant",
-          note: "Not accepted by restaurant",
+          note: doc.acceptanceDeadlineAt
+            ? "Not accepted by restaurant"
+            : "No rider could be found for this order",
           // Settled here because this sweep writes through findOneAndUpdate and
           // so never reaches the model's pre-save hook. Without it every
           // auto-cancelled order would sit in the report's 'pending' bucket for
