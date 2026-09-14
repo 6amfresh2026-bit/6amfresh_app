@@ -344,13 +344,88 @@ export async function getProductSales(query = {}) {
 }
 
 /** Everything the dashboard needs, in one round trip. */
+// ───────────────────────────── Delivery promise ─────────────────────────────
+
+/**
+ * How often the promise was kept, over the period.
+ *
+ * Scored against `promise.dueBy` — the deadline built from the minutes the
+ * customer was actually shown before they committed — rather than from today's
+ * distance and constants. Recomputing would answer a different question: what
+ * we *would* quote now, not what we said then.
+ *
+ * Deliberately NOT filtered by SETTLED_ORDER_MATCH. That excludes cancellations
+ * to keep money figures honest, but the promise is about arrival, not revenue:
+ * a COD order still awaiting its cash line was still delivered on time or it
+ * was not. Orders carrying no promise — everything placed before the field
+ * existed, counter sales, administratively closed trips — settle as
+ * 'not_applicable' and are reported separately rather than folded into the
+ * rate, so the denominator is only orders that actually made a promise.
+ */
+export async function getPromisePerformance(query = {}) {
+    const { start, end } = dateRange(query);
+    const match = { createdAt: { $gte: start, $lte: end } };
+    if (query.restaurantId) {
+        if (!mongoose.Types.ObjectId.isValid(String(query.restaurantId))) {
+            throw new ValidationError('Invalid restaurantId');
+        }
+        match.restaurantId = new mongoose.Types.ObjectId(String(query.restaurantId));
+    }
+    if (query.zoneId && mongoose.Types.ObjectId.isValid(String(query.zoneId))) {
+        match.zoneId = new mongoose.Types.ObjectId(String(query.zoneId));
+    }
+
+    const rows = await FoodOrder.aggregate([
+        { $match: match },
+        {
+            $group: {
+                _id: { $ifNull: ['$promise.outcome', 'not_applicable'] },
+                orders: { $sum: 1 },
+                // Averaged over the scored orders only; a pending or
+                // inapplicable order has no variance to contribute.
+                totalVariance: { $sum: { $ifNull: ['$promise.varianceSeconds', 0] } },
+                quotedMinutes: { $sum: { $ifNull: ['$promise.quotedMinutes', 0] } },
+                worstLateSeconds: { $max: { $ifNull: ['$promise.varianceSeconds', 0] } }
+            }
+        }
+    ]);
+
+    const by = new Map(rows.map((r) => [String(r._id), r]));
+    const onTime = by.get('on_time')?.orders || 0;
+    const late = by.get('late')?.orders || 0;
+    const pending = by.get('pending')?.orders || 0;
+    const notApplicable = by.get('not_applicable')?.orders || 0;
+    const scored = onTime + late;
+
+    const varianceSum = (by.get('on_time')?.totalVariance || 0) + (by.get('late')?.totalVariance || 0);
+    const quotedSum = (by.get('on_time')?.quotedMinutes || 0) + (by.get('late')?.quotedMinutes || 0);
+
+    return {
+        from: start,
+        to: end,
+        scored,
+        onTime,
+        late,
+        /** Still in flight — reported so a small denominator is visible, not hidden. */
+        pending,
+        /** No promise to keep: counter sales, pre-feature orders, admin closes. */
+        notApplicable,
+        onTimePercent: scored > 0 ? round2((onTime * 100) / scored) : null,
+        avgQuotedMinutes: scored > 0 ? round2(quotedSum / scored) : null,
+        /** Negative is early. Minutes, signed, averaged over scored orders. */
+        avgVarianceMinutes: scored > 0 ? round2(varianceSum / scored / 60) : null,
+        worstLateMinutes: late > 0 ? round2((by.get('late')?.worstLateSeconds || 0) / 60) : null
+    };
+}
+
 export async function getDashboardAnalytics(query = {}) {
-    const [topCustomers, segments, categorySales, bestSelling, leastSelling] = await Promise.all([
+    const [topCustomers, segments, categorySales, bestSelling, leastSelling, promise] = await Promise.all([
         getTopCustomers(query),
         getCustomerSegments(query),
         getCategorySales(query),
         getProductSales({ ...query, order: 'best', limit: query.productLimit || 10 }),
-        getProductSales({ ...query, order: 'least', limit: query.productLimit || 10 })
+        getProductSales({ ...query, order: 'least', limit: query.productLimit || 10 }),
+        getPromisePerformance(query)
     ]);
-    return { topCustomers, segments, categorySales, bestSelling, leastSelling };
+    return { topCustomers, segments, categorySales, bestSelling, leastSelling, promise };
 }
