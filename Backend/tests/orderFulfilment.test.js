@@ -5,6 +5,7 @@ import { connectTestDb, disconnectTestDb, resetDb, someId } from './helpers/db.j
 import { FoodOrder } from '../src/modules/food/orders/models/order.model.js';
 import { FoodItem } from '../src/modules/food/admin/models/food.model.js';
 import { FoodTransaction } from '../src/modules/food/orders/models/foodTransaction.model.js';
+import { restoreOrderStock } from '../src/modules/food/orders/services/inventory.service.js';
 import { createInitialTransaction } from '../src/modules/food/orders/services/foodTransaction.service.js';
 import {
     adjustOrderFulfilment,
@@ -263,6 +264,60 @@ describe('a short pick', () => {
         });
         const res = await adjustOrderFulfilment(order._id, { lines: [{ itemId: String(milk._id), fulfilledQuantity: 3 }] });
         assert.equal(res.refund.amount, 100, 'a failed refund is not money given back');
+    });
+
+    it('does not hand back the same units twice when a short-picked order is cancelled', async () => {
+        // Four taken, two returned at the shelf. Cancelling must return the
+        // two the order is still holding, not the four originally ordered.
+        const milk = await product({ stockQty: 10 });
+        await FoodItem.updateOne({ _id: milk._id }, { $inc: { stockQty: -4 } });
+        const order = await orderOf([line(milk, 4)], {
+            pricing: { subtotal: 400, deliveryFee: 0, platformFee: 0, tax: 0, discount: 0, total: 400 }
+        });
+
+        await adjustOrderFulfilment(order._id, { lines: [{ itemId: String(milk._id), fulfilledQuantity: 2 }] });
+        await new Promise((r) => setTimeout(r, 200));
+        assert.equal((await FoodItem.findById(milk._id).lean()).stockQty, 8, 'two came back at the shelf');
+
+        await restoreOrderStock(await FoodOrder.findById(order._id));
+        await new Promise((r) => setTimeout(r, 200));
+        assert.equal((await FoodItem.findById(milk._id).lean()).stockQty, 10, 'back where it started — not 12');
+    });
+
+    it('gives back a substituted line correctly on cancellation', async () => {
+        const lacto = await product({ name: 'Lactose Free Milk', price: 120, stockQty: 5 });
+        const milk = await product({ stockQty: 10, substituteItemIds: [lacto._id] });
+        await FoodItem.updateOne({ _id: milk._id }, { $inc: { stockQty: -2 } });
+        const order = await orderOf([line(milk, 2)]);
+
+        await adjustOrderFulfilment(order._id, {
+            lines: [{ itemId: String(milk._id), substituteItemId: String(lacto._id), quantity: 2 }]
+        });
+        await new Promise((r) => setTimeout(r, 200));
+
+        await restoreOrderStock(await FoodOrder.findById(order._id));
+        await new Promise((r) => setTimeout(r, 200));
+        assert.equal((await FoodItem.findById(milk._id).lean()).stockQty, 10, 'the original was already returned at the swap');
+        assert.equal((await FoodItem.findById(lacto._id).lean()).stockQty, 5, 'the replacement comes back too');
+    });
+
+    it('puts replacement stock back when the substitution cannot go through', async () => {
+        // Swapping the only line to a replacement, then emptying it, leaves
+        // nothing to deliver — the claimed replacement must not be stranded.
+        const lacto = await product({ name: 'Lactose Free Milk', price: 120, stockQty: 5 });
+        const milk = await product({ stockQty: 10, substituteItemIds: [lacto._id] });
+        const order = await orderOf([line(milk, 1)]);
+
+        await assert.rejects(
+            adjustOrderFulfilment(order._id, {
+                lines: [
+                    { itemId: String(milk._id), substituteItemId: String(lacto._id), quantity: 1 },
+                    { itemId: String(lacto._id), fulfilledQuantity: 0 }
+                ]
+            })
+        );
+        await new Promise((r) => setTimeout(r, 200));
+        assert.equal((await FoodItem.findById(lacto._id).lean()).stockQty, 5, 'claimed and then released');
     });
 
     it('refuses to empty the order, because that is a cancellation', async () => {
