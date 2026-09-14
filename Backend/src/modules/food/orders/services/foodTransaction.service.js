@@ -84,9 +84,15 @@ export async function getRestaurantCommissionSnapshot(orderDoc) {
 /**
  * Creates an initial 'pending' transaction when an order is created.
  */
-export async function createInitialTransaction(order) {
-    if (!order) return null;
-
+/**
+ * The money split for an order, from its pricing as it stands right now.
+ *
+ * Extracted so the initial transaction and a reprice share one definition.
+ * A short pick changes what the customer pays, what the seller is owed and
+ * what commission is due, and two copies of this arithmetic would drift into
+ * two different answers about the same order.
+ */
+export async function computeTransactionAmounts(order) {
     const { commissionAmount = 0 } = await getRestaurantCommissionSnapshot(order).catch(() => ({ commissionAmount: 0 }));
     
     // Split logic - Ensure all values are finite numbers
@@ -131,6 +137,24 @@ export async function createInitialTransaction(order) {
     // Ensure nets are finite and rounded
     restaurantNet = Math.round((Number(restaurantNet) || 0) * 100) / 100;
     platformNetProfit = Math.round((Number(platformNetProfit) || 0) * 100) / 100;
+
+    return {
+        totalCustomerPaid, riderShare, restaurantCommission, discount, subtotal,
+        packagingFee, platformFee, deliveryFee, deliveryFeeGst, tax, couponCode,
+        restaurantNet, platformNetProfit, adminDiscountShare, restaurantDiscountShare,
+        discountAdminBearPercentage, discountRestaurantBearPercentage,
+    };
+}
+
+export async function createInitialTransaction(order) {
+    if (!order) return null;
+
+    const {
+        totalCustomerPaid, riderShare, restaurantCommission, discount, subtotal,
+        packagingFee, platformFee, deliveryFee, deliveryFeeGst, tax, couponCode,
+        restaurantNet, platformNetProfit, adminDiscountShare, restaurantDiscountShare,
+        discountAdminBearPercentage, discountRestaurantBearPercentage,
+    } = await computeTransactionAmounts(order);
 
     const transaction = new FoodTransaction({
         orderId: order._id,
@@ -205,6 +229,62 @@ export async function createInitialTransaction(order) {
         // Log but don't fail transaction if the backlink fails
     }
 
+    return transaction;
+}
+
+/**
+ * Re-splits the money after an order's bill changed under it.
+ *
+ * A short pick or a substitution reprices the order, and the settlement side
+ * reads `amounts` on the transaction in preference to `pricing` on the order —
+ * so without this the seller would keep being charged commission on goods they
+ * never sold, and the payout would describe a basket that was never delivered.
+ *
+ * Leaves a settled transaction alone: once the money has moved, a correction
+ * is a credit note rather than a silent rewrite of history.
+ */
+export async function repriceTransactionForOrder(order) {
+    if (!order?._id) return null;
+
+    const transaction = await FoodTransaction.findOne({ orderId: order._id });
+    if (!transaction) return null;
+    if (String(transaction.status) === 'settled') return transaction;
+
+    const a = await computeTransactionAmounts(order);
+
+    transaction.pricing = {
+        ...(transaction.pricing?.toObject?.() || transaction.pricing || {}),
+        subtotal: a.subtotal,
+        tax: a.tax,
+        packagingFee: a.packagingFee,
+        deliveryFee: a.deliveryFee,
+        deliveryFeeGst: a.deliveryFeeGst,
+        platformFee: a.platformFee,
+        restaurantCommission: a.restaurantCommission,
+        discount: a.discount,
+        total: a.totalCustomerPaid,
+    };
+    transaction.amounts = {
+        ...(transaction.amounts?.toObject?.() || transaction.amounts || {}),
+        totalCustomerPaid: a.totalCustomerPaid,
+        restaurantShare: Math.max(0, a.restaurantNet),
+        restaurantCommission: a.restaurantCommission,
+        riderShare: a.riderShare,
+        platformNetProfit: a.platformNetProfit,
+        taxAmount: a.tax,
+        adminDiscountShare: a.adminDiscountShare,
+        restaurantDiscountShare: a.restaurantDiscountShare,
+    };
+    if (transaction.payment) {
+        transaction.payment.amountDue = Number(order.payment?.amountDue ?? a.totalCustomerPaid) || 0;
+    }
+    transaction.history.push({
+        kind: 'created',
+        amount: a.totalCustomerPaid,
+        note: 'Re-split after the order was repriced at the shelf',
+    });
+
+    await transaction.save();
     return transaction;
 }
 
