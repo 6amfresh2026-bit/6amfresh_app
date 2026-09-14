@@ -114,6 +114,21 @@ export async function releaseReservations(taken = [], ctx = {}) {
   }
 }
 
+/**
+ * Puts units back on the shelf that an order claimed but did not consume.
+ *
+ * Used when a line is short-picked or swapped out: those units were reserved
+ * at order time and are now available to somebody else. Distinct from
+ * restoreOrderStock(), which gives back a whole order exactly once — a short
+ * pick returns part of one and the order lives on.
+ */
+export async function returnStockUnits(itemId, qty, ctx = {}) {
+  const units = Math.max(0, Number(qty) || 0);
+  if (!itemId || units === 0) return false;
+  await incrementStock(itemId, units, { ...ctx, reason: ctx.reason || 'Short picked at the shelf' });
+  return true;
+}
+
 async function incrementStock(itemId, qty, ctx = {}) {
   const id = new mongoose.Types.ObjectId(String(itemId));
   const updated = await FoodItem.findOneAndUpdate(
