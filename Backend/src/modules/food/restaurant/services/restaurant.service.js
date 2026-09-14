@@ -2429,10 +2429,21 @@ export async function createRestaurantOffer(restaurantId, body) {
         throw new ValidationError('Coupon code already exists');
     }
 
+    // Spend slabs are a platform campaign: the admin funds the bigger basket
+    // they are meant to buy, and a store writing its own would be spending
+    // someone else's money. Refused out loud rather than quietly dropped, so a
+    // seller who tries is told why instead of getting a coupon that is not the
+    // one they configured.
+    if (body.discountMode === 'slab' || (Array.isArray(body.slabs) && body.slabs.length > 0)) {
+        throw new ValidationError('Spend-slab coupons are set up by the admin. Please ask them to create it.');
+    }
+
     const doc = await FoodOffer.create({
         couponCode: body.couponCode,
         discountType: body.discountType,
         discountValue: body.discountValue,
+        discountMode: 'single',
+        slabs: [],
         customerScope: body.customerScope || 'all',
         restaurantScope: 'selected',
         restaurantId: new mongoose.Types.ObjectId(restaurantId),
