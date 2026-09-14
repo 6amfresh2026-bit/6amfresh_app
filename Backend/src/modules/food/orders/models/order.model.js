@@ -1,5 +1,7 @@
 import mongoose from 'mongoose';
 
+import { resolveOrderPromise, PROMISE_TERMINAL_STATUSES } from '../helpers/promise.util.js';
+
 const orderItemSchema = new mongoose.Schema(
     {
         itemId: { type: String, required: true, trim: true },
@@ -294,6 +296,47 @@ const deliveryStateSchema = new mongoose.Schema(
     { _id: false }
 );
 
+/**
+ * What the customer was told, and whether it was kept.
+ *
+ * The promise is the product in quick commerce, and until this existed it was
+ * computed for display at quote time and thrown away — so "what share of
+ * orders arrived in time?" could not be answered for a single past order, let
+ * alone a week of them. Recomputing it later is not the same thing: the
+ * distance, the fee bands and the packing constant all move, and the honest
+ * question is whether *the number the customer actually saw* was met.
+ *
+ * `quotedMinutes` is null on an order placed with no usable distance, and on
+ * every order that predates this field. `outcome` stays 'pending' until the
+ * order reaches a terminal state, so an order in flight is never miscounted as
+ * on time.
+ */
+const promiseSchema = new mongoose.Schema(
+    {
+        /** Minutes shown to the customer before they committed. */
+        quotedMinutes: { type: Number, default: null, min: 0 },
+        /** The clock the quote started from — order placement, or the booked window. */
+        quotedAt: { type: Date, default: null },
+        /** quotedAt + quotedMinutes. The deadline, stored so nobody re-derives it. */
+        dueBy: { type: Date, default: null, index: true },
+        /** Straight-line store→customer distance the quote was built on. */
+        distanceKm: { type: Number, default: null, min: 0 },
+        outcome: {
+            type: String,
+            enum: ['pending', 'on_time', 'late', 'not_applicable'],
+            default: 'pending',
+            index: true
+        },
+        /**
+         * Signed seconds against the deadline: negative is early, positive is
+         * late. Stored at delivery so a report is a sum, not a per-row date
+         * subtraction across two optional fields.
+         */
+        varianceSeconds: { type: Number, default: null }
+    },
+    { _id: false }
+);
+
 const statusHistorySchema = new mongoose.Schema(
     {
         at: { type: Date, default: Date.now },
@@ -448,6 +491,10 @@ const orderSchema = new mongoose.Schema(
             type: deliveryStateSchema,
             default: () => ({})
         },
+        promise: {
+            type: promiseSchema,
+            default: () => ({})
+        },
         statusHistory: {
             type: [statusHistorySchema],
             default: []
@@ -563,6 +610,29 @@ orderSchema.methods.ensureOrderId = async function ensureOrderId() {
 orderSchema.pre('save', async function (next) {
     try {
         await this.ensureOrderId();
+
+        // Settle the delivery promise here rather than at each of the five
+        // places an order can reach a terminal state — the rider completing a
+        // trip, the seller or admin marking it delivered, and the three
+        // cancellation paths. Scattering it is how the other status-derived
+        // fields in this file drifted; a hook cannot be forgotten by a new
+        // caller. resolveOrderPromise returns the promise unchanged unless
+        // there is something to settle, so this is safe on every save.
+        // Only on the way INTO a terminal state, and never on insert: a new
+        // document reports every path as modified, so without the isNew guard
+        // an order would settle as 'not_applicable' the moment it was created
+        // and could never be scored. And without the terminal check, any
+        // ordinary status change on the way — confirmed, preparing, picked_up —
+        // would do the same.
+        if (!this.isNew
+            && PROMISE_TERMINAL_STATUSES.includes(String(this.orderStatus))
+            && (this.isModified('orderStatus') || this.isModified('deliveryState'))) {
+            this.promise = resolveOrderPromise(this.promise?.toObject?.() || this.promise, {
+                at: this.deliveryState?.deliveredAt || new Date(),
+                status: this.orderStatus,
+            });
+        }
+
         next();
     } catch (err) {
         next(err);
