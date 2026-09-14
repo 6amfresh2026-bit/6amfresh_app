@@ -326,6 +326,10 @@ router.get('/orders', authMiddleware, requireRestaurant, orderController.listOrd
 router.get('/orders/:orderId', authMiddleware, requireRestaurant, orderController.getOrderByIdRestaurantController);
 router.patch('/orders/:orderId/status', authMiddleware, requireRestaurant, orderController.updateOrderStatusRestaurantController);
 router.post('/orders/:orderId/resend-notification', authMiddleware, requireRestaurant, orderController.resendDeliveryNotificationRestaurantController);
+// What the picker actually found. Short picks and substitutions, before the
+// rider collects — afterwards it is a return, not a pick.
+router.patch('/orders/:orderId/fulfilment', authMiddleware, requireRestaurant, orderController.adjustOrderFulfilmentController);
+router.get('/foods/:itemId/substitutes', authMiddleware, requireRestaurant, orderController.listItemSubstitutesController);
 
 // Complaints (restaurant dashboard)
 router.get('/complaints', authMiddleware, requireRestaurant, getRestaurantComplaintsController);

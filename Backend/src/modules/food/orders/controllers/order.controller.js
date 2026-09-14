@@ -1,5 +1,6 @@
 import { sendResponse } from '../../../../utils/response.js';
 import * as orderService from '../services/order.service.js';
+import { adjustOrderFulfilment, listSubstitutesForItem } from '../services/order-fulfilment.service.js';
 import * as foodOrderPaymentService from '../services/foodOrderPayment.service.js';
 import {
     validateCalculateOrderDto,
@@ -495,6 +496,33 @@ export async function getOrderRouteUserController(req, res, next) {
             req.query || {}
         );
         return sendResponse(res, 200, 'Route fetched', result);
+    } catch (err) {
+        next(err);
+    }
+}
+
+/**
+ * What the picker found. Only the exceptions need reporting — anything not
+ * mentioned is assumed found in full.
+ */
+export async function adjustOrderFulfilmentController(req, res, next) {
+    try {
+        const result = await adjustOrderFulfilment(req.params.orderId, {
+            lines: req.body?.lines || [],
+            note: req.body?.note || '',
+            byRole: String(req.user?.role || '').toUpperCase() === 'ADMIN' ? 'ADMIN' : 'RESTAURANT',
+        });
+        return sendResponse(res, 200, 'Order updated for what was picked', result);
+    } catch (err) {
+        next(err);
+    }
+}
+
+/** What may go in the bag instead, and whether it is actually on the shelf. */
+export async function listItemSubstitutesController(req, res, next) {
+    try {
+        const result = await listSubstitutesForItem(req.params.itemId);
+        return sendResponse(res, 200, 'Substitutes fetched', result);
     } catch (err) {
         next(err);
     }
