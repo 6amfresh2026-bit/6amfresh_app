@@ -102,6 +102,18 @@ const foodSchema = new mongoose.Schema(
         lowStockThreshold: { type: Number, default: null, min: 0 },
         /** Cap per single order, so one buyer cannot clear the shelf. `null` = uncapped. */
         maxQtyPerOrder: { type: Number, default: null, min: 1 },
+        /**
+         * What the picker may put in the bag when this runs out.
+         *
+         * Nominated per product rather than inferred from the category: the
+         * customer who ordered lactose-free milk did not order milk, and a
+         * category is nowhere near a good enough guess to spend their money
+         * on. Empty means no substitution — refund the line instead.
+         */
+        substituteItemIds: {
+            type: [{ type: mongoose.Schema.Types.ObjectId, ref: 'FoodItem' }],
+            default: []
+        },
         /** Running average of per-dish ratings left by customers. */
         rating: { type: Number, default: 0, min: 0, max: 5 },
         totalRatings: { type: Number, default: 0, min: 0 },

@@ -13,6 +13,19 @@ const orderItemSchema = new mongoose.Schema(
         /** Compare-at / other-platform unit price snapshot at order time. */
         otherPrice: { type: Number, min: 0, default: 0 },
         quantity: { type: Number, required: true, min: 1 },
+        /**
+         * What the picker actually found, when that differs from what was
+         * ordered. Null means "everything" — which is every line on every
+         * order that predates short-picking, so nothing has to be backfilled.
+         *
+         * `quantity` deliberately keeps saying what the customer asked for:
+         * the invoice has to show both, and overwriting the ordered figure
+         * would erase the evidence that anything went short.
+         */
+        fulfilledQuantity: { type: Number, default: null, min: 0 },
+        /** Set on a line swapped in for one the shelf could not supply. */
+        substitutedForItemId: { type: String, trim: true, default: '' },
+        substitutedForName: { type: String, trim: true, default: '' },
         isVeg: { type: Boolean, default: true },
         /**
          * Rate this line was taxed at, snapshotted like the price is: a
@@ -337,6 +350,31 @@ const promiseSchema = new mongoose.Schema(
     { _id: false }
 );
 
+/**
+ * What happened at the shelf, when the basket could not be filled as ordered.
+ *
+ * Groceries go short — this is the most common real event in the whole system
+ * and until now the only expressible answers were "deliver everything" or
+ * "cancel the lot". A short pick is neither: the customer usually wants the
+ * other nine things.
+ */
+const fulfillmentSchema = new mongoose.Schema(
+    {
+        status: {
+            type: String,
+            enum: ['complete', 'partial', 'substituted'],
+            default: 'complete',
+            index: true
+        },
+        adjustedAt: { type: Date, default: null },
+        adjustedByRole: { type: String, enum: ['RESTAURANT', 'ADMIN', 'SYSTEM'], default: undefined },
+        /** Rupees taken off the bill because the shelf could not supply. */
+        shortfallAmount: { type: Number, default: 0, min: 0 },
+        note: { type: String, trim: true, default: '' }
+    },
+    { _id: false }
+);
+
 const statusHistorySchema = new mongoose.Schema(
     {
         at: { type: Date, default: Date.now },
@@ -493,6 +531,10 @@ const orderSchema = new mongoose.Schema(
         },
         promise: {
             type: promiseSchema,
+            default: () => ({})
+        },
+        fulfillment: {
+            type: fulfillmentSchema,
             default: () => ({})
         },
         statusHistory: {
