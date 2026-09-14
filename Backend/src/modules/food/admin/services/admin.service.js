@@ -4753,6 +4753,8 @@ export async function getAllOffers(_query = {}) {
             // Additional info for admin UI (backward compatible)
             minOrderValue: o.minOrderValue ?? 0,
             maxDiscount: o.maxDiscount ?? null,
+            discountMode: o.discountMode || 'single',
+            slabs: Array.isArray(o.slabs) ? o.slabs : [],
             usageLimit: o.usageLimit ?? null,
             usedCount: o.usedCount ?? 0,
             restaurantScope: o.restaurantScope,
@@ -4777,6 +4779,8 @@ export async function createAdminOffer(body) {
         couponCode: body.couponCode,
         discountType: body.discountType,
         discountValue: body.discountValue,
+        discountMode: body.discountMode || 'single',
+        slabs: body.discountMode === 'slab' ? (body.slabs || []) : [],
         customerScope: body.customerScope,
         restaurantScope: body.restaurantScope,
         restaurantId: body.restaurantScope === 'selected' ? body.restaurantId : undefined,
