@@ -8,6 +8,8 @@ import {
     buildOrderPromise,
     resolveOrderPromise
 } from '../src/modules/food/orders/helpers/promise.util.js';
+import { estimateDeliveryPromiseMinutes } from '../src/modules/food/orders/services/order-pricing.service.js';
+import { PACKING_MINUTES, PER_DROP_MINUTES, AVG_SPEED_KMPH } from '../src/modules/food/orders/services/order.helpers.js';
 
 /**
  * The delivery promise.
@@ -71,6 +73,45 @@ describe('recording what the customer was told', () => {
 
     it('rounds a fractional quote up, never down', () => {
         assert.equal(buildOrderPromise({ quotedMinutes: 11.2, quotedAt: new Date() }).quotedMinutes, 12);
+    });
+});
+
+describe('what the quote is made of', () => {
+    it('still quotes packing plus the ride when nothing else is known', () => {
+        // The old shape, preserved: an unmeasurable rider leg must not invent
+        // a distance, it must fall back.
+        const km = 2.2;
+        const expected = Math.ceil(PACKING_MINUTES + (km / AVG_SPEED_KMPH) * 60);
+        assert.equal(estimateDeliveryPromiseMinutes(km), expected);
+        assert.equal(estimateDeliveryPromiseMinutes(km, { riderLegKm: null }), expected);
+    });
+
+    it('counts the rider getting to the store, which it used to ignore', () => {
+        // Systematically optimistic exactly when it mattered: a busy evening,
+        // when the nearest free rider is furthest away.
+        const near = estimateDeliveryPromiseMinutes(2, { riderLegKm: 0.2 });
+        const far = estimateDeliveryPromiseMinutes(2, { riderLegKm: 6 });
+        assert.ok(far > near, 'a distant rider has to cost minutes');
+    });
+
+    it('overlaps packing with the approach rather than adding them', () => {
+        // Both happen at once. A rider two minutes away costs nothing extra
+        // while the bag is still being filled.
+        const quick = estimateDeliveryPromiseMinutes(2, { riderLegKm: 0.1 });
+        const none = estimateDeliveryPromiseMinutes(2);
+        assert.equal(quick, none);
+    });
+
+    it('adds the doorsteps already ahead of this one', () => {
+        const alone = estimateDeliveryPromiseMinutes(2, { dropsAhead: 0 });
+        const behindTwo = estimateDeliveryPromiseMinutes(2, { dropsAhead: 2 });
+        assert.equal(behindTwo - alone, 2 * PER_DROP_MINUTES, 'batching is not free for the customer behind');
+    });
+
+    it('still refuses to quote without a distance', () => {
+        for (const bad of [null, undefined, '', -1, NaN]) {
+            assert.equal(estimateDeliveryPromiseMinutes(bad, { riderLegKm: 1, dropsAhead: 3 }), null);
+        }
     });
 });
 

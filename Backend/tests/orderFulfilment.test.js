@@ -58,6 +58,7 @@ const orderOf = (lines, over = {}) =>
         payment: { method: 'cash', status: 'cod_pending' },
         orderStatus: 'confirmed',
         stockReservedAt: new Date(),
+        substitutionPreference: 'allow',
         ...over
     });
 
@@ -217,6 +218,23 @@ describe('a short pick', () => {
         assert.equal(after.amounts.totalCustomerPaid, 225, 'money already moved; history is not rewritten');
     });
 
+    it('actually gives the money back on a prepaid order', async () => {
+        const milk = await product();
+        const order = await orderOf([line(milk, 2)], {
+            userId: someId(),
+            payment: { method: 'wallet', status: 'paid' }
+        });
+
+        const res = await adjustOrderFulfilment(order._id, { lines: [{ itemId: String(milk._id), fulfilledQuantity: 1 }] });
+        assert.equal(res.refund.status, 'processed');
+        assert.equal(res.refund.amount, 100);
+
+        const fresh = await FoodOrder.findById(order._id).lean();
+        assert.equal(fresh.payment.refund.status, 'processed');
+        assert.equal(fresh.payment.refund.amount, 100);
+        assert.equal(fresh.payment.status, 'paid', 'only part came back; the payment is not "refunded"');
+    });
+
     it('refuses to empty the order, because that is a cancellation', async () => {
         const milk = await product();
         const order = await orderOf([line(milk, 2)]);
@@ -275,6 +293,38 @@ describe('a substitution', () => {
         assert.equal(swapped.name, 'Lactose Free Milk');
         assert.equal(swapped.substitutedForName, 'Amul Milk 1L', 'the invoice has to say what it stood in for');
         assert.equal(deliveredQty(fresh.items[0]), 0, 'the original line delivers nothing');
+    });
+
+    it('refuses to swap when the customer asked for a refund instead', async () => {
+        // Silence is not consent: a substitution spends the customer's money on
+        // something they did not choose.
+        const lacto = await product({ name: 'Lactose Free Milk', price: 120, stockQty: 5 });
+        const milk = await product({ substituteItemIds: [lacto._id] });
+        const order = await orderOf([line(milk, 1)], { substitutionPreference: 'refund' });
+
+        await assert.rejects(
+            adjustOrderFulfilment(order._id, {
+                lines: [{ itemId: String(milk._id), substituteItemId: String(lacto._id) }]
+            }),
+            /asked for a refund instead/i
+        );
+    });
+
+    it('defaults to refund when the cart said nothing', async () => {
+        const lacto = await product({ name: 'Lactose Free Milk', price: 120, stockQty: 5 });
+        const milk = await product({ substituteItemIds: [lacto._id] });
+        const order = await FoodOrder.create({
+            userId: someId(), restaurantId: STORE,
+            items: [line(milk, 1)],
+            deliveryAddress: { street: '1 Road', city: 'Bengaluru', state: 'Karnataka', location: { type: 'Point', coordinates: [77.59, 12.97] } },
+            pricing: { subtotal: 100, total: 125, deliveryFee: 20, platformFee: 5 },
+            payment: { method: 'cash' }, orderStatus: 'confirmed'
+        });
+        assert.equal(order.substitutionPreference, 'refund');
+        await assert.rejects(
+            adjustOrderFulfilment(order._id, { lines: [{ itemId: String(milk._id), substituteItemId: String(lacto._id) }] }),
+            /asked for a refund instead/i
+        );
     });
 
     it('only allows a replacement the product itself nominates', async () => {
