@@ -115,12 +115,24 @@ export async function allocateFefo(itemId, quantity, ctx = {}) {
     // of short-dated stock and the dated stock would be left to spoil — the
     // exact failure FEFO exists to prevent. Undated batches are pushed to the
     // far future so they are always picked last.
+    const now = new Date();
+
+    // Expired units never leave the shelf, whatever the count says and whether
+    // or not the write-off sweep has run yet.
+    //
+    // This is not belt-and-braces with the sweep — it is the actual guard. A
+    // batch that expired an hour ago is still `status: 'active'` until a sweep
+    // touches it, and because this picks soonest-expiry first, an expired
+    // batch is the FIRST thing it would choose. Without this line the feature
+    // built to stop expired stock reaching a customer routes it to them
+    // preferentially.
     const batches = await FoodStockBatch.aggregate([
         {
             $match: {
                 itemId: oid(itemId),
                 status: 'active',
                 remainingQty: { $gt: 0 },
+                $or: [{ expiryDate: null }, { expiryDate: { $gt: now } }],
             },
         },
         { $addFields: { expirySortKey: { $ifNull: ['$expiryDate', new Date('9999-12-31T00:00:00.000Z')] } } },
@@ -251,8 +263,17 @@ export async function getBatchSummary(itemId, { expiringWithinDays = 7, now = ne
 
     // Same computed key as the picker, so what a shop is shown is the order it
     // will actually be picked in.
+    // Same exclusion as the picker: stock that cannot be sold is not stock on
+    // hand, and counting it would tell a shop it has cover it does not have.
     const batches = await FoodStockBatch.aggregate([
-        { $match: { itemId: oid(itemId), status: 'active', remainingQty: { $gt: 0 } } },
+        {
+            $match: {
+                itemId: oid(itemId),
+                status: 'active',
+                remainingQty: { $gt: 0 },
+                $or: [{ expiryDate: null }, { expiryDate: { $gt: now } }],
+            },
+        },
         { $addFields: { expirySortKey: { $ifNull: ['$expiryDate', new Date('9999-12-31T00:00:00.000Z')] } } },
         { $sort: { expirySortKey: 1, receivedAt: 1 } },
     ]);
