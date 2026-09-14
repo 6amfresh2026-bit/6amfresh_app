@@ -406,13 +406,24 @@ export async function calculateOrderPricing(userId, dto, options = {}) {
 
   let discount = 0;
   let appliedCoupon = null;
+  // Why a code that was sent did not come off the bill, in the customer's
+  // words. The code is echoed back either way (see couponCode below), so
+  // without this a refused coupon is indistinguishable from an applied one
+  // worth nothing — the cart reads "applied · you saved ₹0" and says nothing
+  // about the ₹2 that would fix it. Slab coupons make that routine: a basket
+  // crosses a threshold every time a quantity changes.
+  let couponRejectedReason = "";
+  // What reaching the next spend slab would be worth, when there is one.
+  let couponNextSlab = null;
   const codeRaw = dto.couponCode
     ? String(dto.couponCode).trim().toUpperCase()
     : "";
 
   if (codeRaw) {
     const offer = await FoodOffer.findOne({ couponCode: codeRaw }).lean();
-    if (offer) {
+    if (!offer) {
+      couponRejectedReason = "No such coupon";
+    } else {
       // The same judgement the till's coupon list shows the cashier. Keeping
       // one implementation is the point: a list that offers a coupon this
       // engine then refuses is worse than no list at all.
@@ -425,6 +436,9 @@ export async function calculateOrderPricing(userId, dto, options = {}) {
       if (verdict.eligible) {
         discount = verdict.discount;
         appliedCoupon = { code: codeRaw, discount };
+        couponNextSlab = verdict.nextSlab || null;
+      } else {
+        couponRejectedReason = verdict.reason || "";
       }
     }
   }
@@ -481,6 +495,8 @@ export async function calculateOrderPricing(userId, dto, options = {}) {
     currency: "INR",
     couponCode: appliedCoupon?.code || codeRaw || null,
     appliedCoupon,
+    couponRejectedReason,
+    couponNextSlab,
     manualDiscount,
     additionalCharges,
     roundOff,
