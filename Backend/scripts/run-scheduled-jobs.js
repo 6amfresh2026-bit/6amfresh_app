@@ -8,7 +8,9 @@ import { runBillingCatchUp } from '../src/modules/food/restaurant/services/subsc
 import { writeOffExpiredBatches } from '../src/modules/food/orders/services/stockBatch.service.js';
 import { hideExpiredProducts } from '../src/modules/food/orders/services/inventory.service.js';
 import { dispatchOrdersSellerDidNotAccept } from '../src/modules/food/orders/services/order-dispatch.service.js';
+import { FoodSettings } from '../src/modules/food/orders/models/order.model.js';
 import { logger } from '../src/utils/logger.js';
+import os from 'os';
 
 let expireOffersInterval = null;
 let monthlyOfferSweepInterval = null;
@@ -121,7 +123,43 @@ const start = async () => {
          * a sweep on a slower cadence would add most of its own interval to the
          * wait, which the customer pays for.
          */
+        /**
+         * Says this process is alive, from inside the database.
+         *
+         * Written on the most frequent tick rather than a timer of its own, so
+         * it cannot report health while the actual sweeps are wedged: if the
+         * interval stops firing, so does this.
+         */
+        const beat = async () => {
+            try {
+                await FoodSettings.updateOne(
+                    { key: 'scheduler_heartbeat' },
+                    {
+                        $set: {
+                            heartbeatAt: new Date(),
+                            heartbeatHost: os.hostname(),
+                            heartbeatPid: process.pid,
+                            heartbeatJobs: [
+                                'unaccepted-order-dispatch',
+                                'expired-batch-write-off',
+                                'expired-product-hide',
+                                'offers',
+                                'subscriptions',
+                                'fssai',
+                                'auto-deliver',
+                                'stuck-order-watchdog'
+                            ]
+                        }
+                    },
+                    { upsert: true },
+                );
+            } catch (err) {
+                logger.error(`Scheduler heartbeat failed: ${err.message}`);
+            }
+        };
+
         const runUnacceptedOrderDispatch = async () => {
+            await beat();
             try {
                 const dispatched = await dispatchOrdersSellerDidNotAccept({});
                 if (dispatched > 0) {

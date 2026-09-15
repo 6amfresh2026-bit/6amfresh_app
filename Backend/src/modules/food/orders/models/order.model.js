@@ -757,6 +757,23 @@ const settingsSchema = new mongoose.Schema(
     {
         key: { type: String, required: true, unique: true, trim: true },
         dispatchMode: { type: String, enum: ['auto'], default: 'auto' },
+        /**
+         * Proof of life from the scheduled-jobs process.
+         *
+         * That process is separate from the API, and nothing in the system
+         * could tell whether it was running -- the only way to answer "are the
+         * sweeps happening" was a shell on the box. Which matters more than it
+         * used to: an order the seller never accepts now gets its rider from a
+         * sweep, so a scheduler that quietly died means orders that quietly
+         * never reach anybody.
+         *
+         * Host and pid are recorded because the failure this catches second is
+         * two schedulers running, each undoing the other's assumptions.
+         */
+        heartbeatAt: { type: Date, default: null },
+        heartbeatHost: { type: String, default: '' },
+        heartbeatPid: { type: Number, default: null },
+        heartbeatJobs: { type: [String], default: [] },
         updatedBy: {
             role: { type: String },
             adminId: { type: mongoose.Schema.Types.ObjectId },
