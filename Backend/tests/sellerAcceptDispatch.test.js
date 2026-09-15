@@ -5,6 +5,7 @@ import { connectTestDb, disconnectTestDb, resetDb, someId } from './helpers/db.j
 import { FoodOrder } from '../src/modules/food/orders/models/order.model.js';
 import { FoodRestaurant } from '../src/modules/food/restaurant/models/restaurant.model.js';
 import { dispatchOrdersSellerDidNotAccept } from '../src/modules/food/orders/services/order-dispatch.service.js';
+import { expireUnacceptedOrders } from '../src/modules/food/orders/services/order.service.js';
 
 /**
  * The seller answers first, but not for ever.
@@ -155,5 +156,28 @@ describe('an order the seller has not accepted', () => {
         const swept = await dispatchOrdersSellerDidNotAccept({});
         assert.ok(swept <= 50, `swept ${swept}, which is above the per-run cap`);
         assert.equal(swept, 3);
+    });
+});
+
+describe('an order cancelled while a rider was already holding it', () => {
+    it('lets the rider go, rather than sending them to collect nothing', async () => {
+        // The window is real and now guaranteed: a rider is dispatched three
+        // minutes in, and the acceptance clock cancels the order at four. The
+        // sweep told the customer and the shop and never told the rider, who
+        // rode to a shop for an order that no longer existed.
+        const riderId = someId();
+        const order = await anOrder({
+            acceptanceWindowSeconds: 240,
+            acceptanceDeadlineAt: new Date(Date.now() - MINUTE),
+            dispatch: { status: 'assigned', deliveryPartnerId: riderId, assignmentMode: 'fleet' }
+        });
+
+        const cancelled = await expireUnacceptedOrders({});
+        assert.equal(cancelled, 1);
+
+        const after = await FoodOrder.findById(order._id).lean();
+        assert.equal(after.orderStatus, 'cancelled_by_restaurant');
+        assert.equal(after.dispatch.deliveryPartnerId, null, 'the rider must not still be holding it');
+        assert.equal(after.dispatch.status, 'cancelled');
     });
 });

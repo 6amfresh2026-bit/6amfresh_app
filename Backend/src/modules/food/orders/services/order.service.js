@@ -461,7 +461,9 @@ export async function expireUnacceptedOrders(filter = {}) {
     ...filter,
   };
 
-  const docs = await FoodOrder.find(baseFilter).select("_id orderStatus acceptanceDeadlineAt").lean();
+  const docs = await FoodOrder.find(baseFilter)
+    .select("_id orderStatus acceptanceDeadlineAt dispatch.deliveryPartnerId")
+    .lean();
   if (!docs.length) return 0;
 
   for (const doc of docs) {
@@ -503,6 +505,39 @@ export async function expireUnacceptedOrders(filter = {}) {
     );
 
     if (!updated) continue;
+
+    // A rider may already be holding this order: dispatch happens before the
+    // seller has answered, so there is a window where one has been told the
+    // order is theirs and is riding to the shop for it. Cancelling without
+    // telling them leaves them collecting something that no longer exists, and
+    // holding capacity for it until somebody notices.
+    const strandedRiderId = doc.dispatch?.deliveryPartnerId || null;
+    if (strandedRiderId) {
+      await FoodOrder.updateOne(
+        { _id: updated._id },
+        { $set: { "dispatch.status": "cancelled", "dispatch.deliveryPartnerId": null } },
+      );
+      try {
+        const io = getIO();
+        const riderPayload = {
+          orderId: String(updated._id),
+          orderMongoId: String(updated._id),
+          order_id: updated.order_id || "",
+          reason: "The store did not accept this order",
+        };
+        if (io) io.to(rooms.delivery(String(strandedRiderId))).emit("order_deassigned", riderPayload);
+        await notifyOwnersSafely(
+          [{ ownerType: "DELIVERY_PARTNER", ownerId: String(strandedRiderId) }],
+          {
+            title: "Order cancelled",
+            body: `Order #${updated.order_id || updated._id} was not accepted by the store. Do not collect it.`,
+            data: { type: "order_deassigned", orderId: String(updated._id) },
+          },
+        );
+      } catch (err) {
+        logger.warn(`Stranded-rider notice failed for ${updated._id}: ${err?.message || err}`);
+      }
+    }
 
     await restoreOrderStock(updated);
 
