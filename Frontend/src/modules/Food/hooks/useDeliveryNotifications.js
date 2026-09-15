@@ -464,19 +464,32 @@ export const useDeliveryNotifications = () => {
             availableResult.value?.data ??
             {}
           : {};
-      const availableOrders = Array.isArray(availablePayload?.docs)
-        ? availablePayload.docs
-        : Array.isArray(availablePayload?.items)
-          ? availablePayload.items
-          : Array.isArray(availablePayload)
-            ? availablePayload
-            : [];
+      // The endpoint answers { data: { data: [...], meta } }, so the list sits
+      // under `data`. That key was the one shape not checked here, which made
+      // this recovery silently find nothing at all -- every poll parsed an
+      // empty array and concluded there was nothing to recover.
+      const availableOrders = Array.isArray(availablePayload?.data)
+        ? availablePayload.data
+        : Array.isArray(availablePayload?.docs)
+          ? availablePayload.docs
+          : Array.isArray(availablePayload?.items)
+            ? availablePayload.items
+            : Array.isArray(availablePayload)
+              ? availablePayload
+              : [];
 
       const recoverableOrder = availableOrders.find((order) => {
         const dispatchStatus = order?.dispatch?.status;
         return (
           ['unassigned', 'assigned'].includes(dispatchStatus) &&
-          ['preparing', 'ready_for_pickup'].includes(order?.orderStatus)
+          // `created` and `confirmed` belong here as much as the later two.
+          // A rider is dispatched while the seller is still answering, so an
+          // order handed to somebody whose app was closed at that moment sits
+          // in exactly these states -- and leaving them out meant the socket
+          // event was the only way to ever learn about it. Miss that one
+          // message and the order was invisible until the seller happened to
+          // press "preparing".
+          ['created', 'confirmed', 'preparing', 'ready_for_pickup'].includes(order?.orderStatus)
         );
       });
 
