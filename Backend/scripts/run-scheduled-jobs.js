@@ -7,6 +7,7 @@ import { syncExpiredFssaiNotifications } from '../src/modules/food/restaurant/se
 import { runBillingCatchUp } from '../src/modules/food/restaurant/services/subscriptionBilling.service.js';
 import { writeOffExpiredBatches } from '../src/modules/food/orders/services/stockBatch.service.js';
 import { hideExpiredProducts } from '../src/modules/food/orders/services/inventory.service.js';
+import { dispatchOrdersSellerDidNotAccept } from '../src/modules/food/orders/services/order-dispatch.service.js';
 import { logger } from '../src/utils/logger.js';
 
 let expireOffersInterval = null;
@@ -16,6 +17,7 @@ let fssaiExpiryInterval = null;
 let subscriptionBillingInterval = null;
 let autoDeliverInterval = null;
 let expiredBatchInterval = null;
+let unacceptedDispatchInterval = null;
 let stuckOrderInterval = null;
 
 const shutdown = async (signal) => {
@@ -27,6 +29,7 @@ const shutdown = async (signal) => {
     if (subscriptionBillingInterval) clearInterval(subscriptionBillingInterval);
     if (autoDeliverInterval) clearInterval(autoDeliverInterval);
     if (expiredBatchInterval) clearInterval(expiredBatchInterval);
+    if (unacceptedDispatchInterval) clearInterval(unacceptedDispatchInterval);
     if (stuckOrderInterval) clearInterval(stuckOrderInterval);
 
     try {
@@ -111,6 +114,24 @@ const start = async () => {
             }
         };
 
+        /**
+         * An order the seller never answered still needs a rider.
+         *
+         * Every 30 seconds because the cap it enforces is measured in minutes:
+         * a sweep on a slower cadence would add most of its own interval to the
+         * wait, which the customer pays for.
+         */
+        const runUnacceptedOrderDispatch = async () => {
+            try {
+                const dispatched = await dispatchOrdersSellerDidNotAccept({});
+                if (dispatched > 0) {
+                    logger.warn(`Dispatched ${dispatched} order(s) the seller had not accepted in time`);
+                }
+            } catch (err) {
+                logger.error(`Unaccepted-order dispatch sweep error: ${err.message}`);
+            }
+        };
+
         const runExpire = async () => {
             try {
                 await expireExpiredOffers();
@@ -163,6 +184,7 @@ const start = async () => {
         await runSubscriptionBilling();
         await runAutoDeliver();
         await runExpiredBatchWriteOff();
+        await runUnacceptedOrderDispatch();
 
         expireOffersInterval = setInterval(runExpire, 5 * 60 * 1000);
         monthlyOfferSweepInterval = setInterval(runMonthlyOfferSweep, 60 * 60 * 1000);
@@ -171,6 +193,7 @@ const start = async () => {
         subscriptionBillingInterval = setInterval(runSubscriptionBilling, 6 * 60 * 60 * 1000);
         autoDeliverInterval = setInterval(runAutoDeliver, 15 * 60 * 1000);
         expiredBatchInterval = setInterval(runExpiredBatchWriteOff, 60 * 60 * 1000);
+        unacceptedDispatchInterval = setInterval(runUnacceptedOrderDispatch, 30 * 1000);
         // Ran once at startup only, so a dispatch that wedged an hour later
         // stayed wedged until someone restarted the process.
         stuckOrderInterval = setInterval(runStuckOrderWatchdog, 2 * 60 * 1000);
