@@ -107,6 +107,19 @@ describe('choosing which rider gets the order', () => {
         assert.equal(chosen.activeCount, 0);
     });
 
+    it('does not hand a second order to a rider who has not accepted the first', async () => {
+        // A fleet assignment is not an offer -- the order is theirs the moment
+        // it is written. Counting only accepted orders meant a rider who had
+        // not opened the app yet still read as free, so every order the shop
+        // took piled onto them while everybody else sat idle.
+        const first = await rider('Holding Hira');
+        const idle = await rider('Idle Ila', atKm(4));
+        await carrying(first._id, { dispatch: { status: 'assigned', deliveryPartnerId: first._id } });
+
+        const chosen = await pickFleetPartnerForOrder(anOrder(), STORE_DOC);
+        assert.equal(String(chosen.partnerId), String(idle._id));
+    });
+
     it('picks the nearest when both are free', async () => {
         await rider('Far Fiona', atKm(6));
         const near = await rider('Near Nita', atKm(0.5));

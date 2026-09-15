@@ -2,7 +2,8 @@ import mongoose from 'mongoose';
 
 import { FoodDeliveryPartner } from '../../delivery/models/deliveryPartner.model.js';
 import { haversineKm, parseGeoPoint } from '../../shared/geo.utils.js';
-import { getActiveDeliveriesForPartner, canPartnerTakeOrder } from './order.helpers.js';
+import { FoodOrder } from '../models/order.model.js';
+import { canPartnerTakeOrder, TERMINAL_ORDER_STATUSES } from './order.helpers.js';
 
 /**
  * Choosing a rider from the seller's own fleet.
@@ -30,6 +31,30 @@ const STALE_GPS_MS = Number(process.env.DISPATCH_STALE_GPS_MS) || 45 * 60 * 1000
 
 const isFresh = (partner) =>
     partner?.lastLocationAt && Date.now() - new Date(partner.lastLocationAt).getTime() <= STALE_GPS_MS;
+
+/**
+ * Everything a rider is holding: accepted, and also assigned-but-not-yet-tapped.
+ *
+ * getActiveDeliveriesForPartner() counts only accepted orders, which is right
+ * for the shared pool -- there 'assigned' is a pending offer that may time out
+ * and go to somebody else, so it is not yet work.
+ *
+ * A fleet assignment is not an offer. The order is already theirs the moment it
+ * is written, and counting only accepted ones meant a rider who had not opened
+ * the app yet still read as free, so the next order was handed to them too, and
+ * the next. One rider ended up holding every order the shop took while
+ * everybody else sat idle.
+ */
+async function getHeldOrdersForPartner(deliveryPartnerId) {
+    if (!deliveryPartnerId) return [];
+    return FoodOrder.find({
+        'dispatch.deliveryPartnerId': new mongoose.Types.ObjectId(String(deliveryPartnerId)),
+        'dispatch.status': { $in: ['accepted', 'assigned'] },
+        orderStatus: { $nin: TERMINAL_ORDER_STATUSES }
+    })
+        .select('_id order_id restaurantId deliveryAddress deliveryState orderStatus promise payment pricing')
+        .lean();
+}
 
 /** Riders this seller has linked, online and cleared to work. */
 export async function listAvailableFleetPartners(restaurantId) {
@@ -76,7 +101,7 @@ export async function pickFleetPartnerForOrder(order, restaurant, { excludeIds =
     for (const partner of partners) {
         if (excluded.has(String(partner._id))) continue;
 
-        const active = await getActiveDeliveriesForPartner(partner._id);
+        const active = await getHeldOrdersForPartner(partner._id);
         const distanceKm =
             store && Number.isFinite(Number(partner.lastLat)) && Number.isFinite(Number(partner.lastLng))
                 ? haversineKm(store.lat, store.lng, Number(partner.lastLat), Number(partner.lastLng))
