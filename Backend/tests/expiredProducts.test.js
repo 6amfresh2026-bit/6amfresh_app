@@ -10,6 +10,7 @@ import {
     restoreOrderStock,
     unhideCorrectedExpiry
 } from '../src/modules/food/orders/services/inventory.service.js';
+import { receiveBatch } from '../src/modules/food/orders/services/stockBatch.service.js';
 
 /**
  * Expired stock on a product that does not use batches.
@@ -85,6 +86,19 @@ describe('selling a product that has expired', () => {
         const taken = await reserveStockForItems([{ itemId: String(fresh._id), quantity: 2 }]);
         assert.equal(taken.length, 1);
         assert.equal((await FoodItem.findById(fresh._id).lean()).stockQty, 3);
+    });
+
+    it('ignores the item date on a batch-tracked product', async () => {
+        // The batches are the authority there, and the item still carries
+        // whatever date it had before batches were switched on. Reading it here
+        // made a product with a stale date and a shelf full of in-date stock
+        // completely unsellable.
+        const item = await product({ stockQty: 0, manageMultipleBatch: true, expiryDate: inDays(-30) });
+        await receiveBatch({ itemId: item._id, quantity: 10, expiryDate: inDays(20), batchNo: 'FRESH' });
+
+        const taken = await reserveStockForItems([{ itemId: String(item._id), quantity: 1 }]);
+        assert.equal(taken.length, 1, 'in-date batch stock must still be sellable');
+        await settle();
     });
 
     it('leaves a product with no expiry alone', async () => {

@@ -114,12 +114,20 @@ export async function reserveStockForItems(items = [], ctx = {}) {
     // it hands back the post-decrement document, which is what the ledger row
     // needs for its before/after columns.
     const updated = await FoodItem.findOneAndUpdate(
-      // Expired units never leave the shelf. Batch-tracked stock is guarded at
-      // allocation; a product that keeps a single expiry has only this one
-      // date, and without it the expiry was recorded, displayed, and then sold
-      // past anyway. Part of the same atomic update as the count so the check
-      // cannot be overtaken by an edit between read and write.
-      { _id: id, stockQty: { $gte: qty }, $or: [{ expiryDate: null }, { expiryDate: { $gt: now } }] },
+      // Expired units never leave the shelf. Part of the same atomic update as
+      // the count, so the check cannot be overtaken by an edit between read
+      // and write.
+      //
+      // Only for a product that keeps a single date. On a batch-tracked one
+      // the batches are the authority and allocateFefo enforces them; the item
+      // still carries whatever date it had before batches were switched on,
+      // and reading that here made a product with a stale date and a shelf
+      // full of in-date stock completely unsellable.
+      {
+        _id: id,
+        stockQty: { $gte: qty },
+        $or: [{ manageMultipleBatch: true }, { expiryDate: null }, { expiryDate: { $gt: now } }],
+      },
       { $inc: { stockQty: -qty } },
       // manageMultipleBatch rides along so the allocation below can be skipped
       // without a second lookup.
@@ -159,7 +167,7 @@ export async function reserveStockForItems(items = [], ctx = {}) {
       continue;
     }
 
-    const doc = await FoodItem.findById(id).select('name stockQty expiryDate').lean();
+    const doc = await FoodItem.findById(id).select('name stockQty expiryDate manageMultipleBatch').lean();
     if (!doc) {
       await releaseReservations(taken, ctx);
       throw new ValidationError('One or more items are no longer available');
@@ -169,7 +177,9 @@ export async function reserveStockForItems(items = [], ctx = {}) {
     // reaches the decrement above, so this is the only place its expiry is
     // ever tested. Told apart from a stockout because "out of stock" would
     // send the customer back to wait for a restock that is not coming.
-    if (doc.expiryDate && new Date(doc.expiryDate).getTime() <= now.getTime()) {
+    //
+    // Skipped for batch-tracked stock for the same reason as the filter above.
+    if (!doc.manageMultipleBatch && doc.expiryDate && new Date(doc.expiryDate).getTime() <= now.getTime()) {
       await releaseReservations(taken, ctx);
       throw new ValidationError(`${doc.name} is past its expiry date and cannot be sold`);
     }
