@@ -7,7 +7,8 @@ import { FoodOrder } from '../src/modules/food/orders/models/order.model.js';
 import {
     hideExpiredProducts,
     reserveStockForItems,
-    restoreOrderStock
+    restoreOrderStock,
+    unhideCorrectedExpiry
 } from '../src/modules/food/orders/services/inventory.service.js';
 
 /**
@@ -154,5 +155,83 @@ describe('cancelling an order that contained an expired product', () => {
         assert.equal(back.stockQty, 1, 'the units did come back');
         assert.equal(back.isAvailable, false, 'but the expired product stays off the storefront');
         await settle();
+    });
+});
+
+describe('correcting a mistyped expiry', () => {
+    /** What the sweep leaves behind: dark, and marked as ours. */
+    const hiddenByTheSweep = async (over = {}) => {
+        const item = await product({ expiryDate: inDays(-1), ...over });
+        await hideExpiredProducts({});
+        return item;
+    };
+
+    it('puts the product back when the date is pushed into the future', async () => {
+        const item = await hiddenByTheSweep();
+
+        await FoodItem.updateOne({ _id: item._id }, { $set: { expiryDate: inDays(30) } });
+        assert.equal(await unhideCorrectedExpiry(item._id), true);
+
+        const back = await FoodItem.findById(item._id).lean();
+        assert.equal(back.isAvailable, true);
+        assert.equal(back.hiddenByExpiry, false, 'the mark goes with the hide');
+    });
+
+    it('puts it back when the date is cleared altogether', async () => {
+        const item = await hiddenByTheSweep();
+        await FoodItem.updateOne({ _id: item._id }, { $set: { expiryDate: null } });
+
+        assert.equal(await unhideCorrectedExpiry(item._id), true);
+        assert.equal((await FoodItem.findById(item._id).lean()).isAvailable, true);
+    });
+
+    it('does nothing while the date is still in the past', async () => {
+        // A typo corrected to a different wrong date is still expired.
+        const item = await hiddenByTheSweep();
+        await FoodItem.updateOne({ _id: item._id }, { $set: { expiryDate: inDays(-3) } });
+
+        assert.equal(await unhideCorrectedExpiry(item._id), false);
+        assert.equal((await FoodItem.findById(item._id).lean()).isAvailable, false);
+    });
+
+    it('does not revive a product somebody switched off by hand', async () => {
+        // The seller's decision outranks a corrected date, exactly as it
+        // outranks a restock.
+        const item = await hiddenByTheSweep({ stockOffMode: 'manual' });
+        await FoodItem.updateOne({ _id: item._id }, { $set: { expiryDate: null } });
+
+        assert.equal(await unhideCorrectedExpiry(item._id), false);
+        assert.equal((await FoodItem.findById(item._id).lean()).isAvailable, false);
+    });
+
+    it('does not revive a product with nothing on the shelf', async () => {
+        const item = await hiddenByTheSweep({ stockQty: 0 });
+        await FoodItem.updateOne({ _id: item._id }, { $set: { expiryDate: null } });
+
+        assert.equal(await unhideCorrectedExpiry(item._id), false);
+        assert.equal(
+            (await FoodItem.findById(item._id).lean()).isAvailable,
+            false,
+            'it is dark for the other reason it is dark'
+        );
+    });
+
+    it('leaves alone a product that was never hidden by the sweep', async () => {
+        // Switched off by hand, never expired. Editing its expiry must not
+        // quietly put it back on sale.
+        const item = await product({ expiryDate: null, isAvailable: false });
+
+        assert.equal(await unhideCorrectedExpiry(item._id), false);
+        assert.equal((await FoodItem.findById(item._id).lean()).isAvailable, false);
+    });
+
+    it('drops the mark once the date is valid, even if somebody already switched it back on', async () => {
+        // Otherwise the mark outlives the hide, and a correction months later
+        // revives a product that is dark for a completely different reason.
+        const item = await hiddenByTheSweep();
+        await FoodItem.updateOne({ _id: item._id }, { $set: { isAvailable: true, expiryDate: null } });
+
+        await unhideCorrectedExpiry(item._id);
+        assert.equal((await FoodItem.findById(item._id).lean()).hiddenByExpiry, false);
     });
 });
