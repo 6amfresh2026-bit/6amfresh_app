@@ -47,6 +47,7 @@ const blank = () => ({
   cessEnabled: false,
   cessRate: "",
   manageMultipleBatch: false,
+  expiryDate: "",
   shortDescription: "",
   description: "",
   nutrition: [],
@@ -183,6 +184,10 @@ export default function ProductForm() {
           cessEnabled: !!f.cessEnabled,
           cessRate: s(f.cessRate),
           manageMultipleBatch: !!f.manageMultipleBatch,
+          // Sliced off the ISO string rather than round-tripped through Date:
+          // a date saved as UTC midnight reads back as the previous day in IST,
+          // which would quietly move every expiry a day earlier on every edit.
+          expiryDate: f.expiryDate ? String(f.expiryDate).slice(0, 10) : "",
           shortDescription: f.shortDescription || "",
           description: f.description || "",
           nutrition: (f.nutrition || []).map((x) => ({ name: x.name || "", value: x.value || "", unit: x.unit || "" })),
@@ -324,6 +329,10 @@ export default function ProductForm() {
     cessEnabled: form.cessEnabled,
     cessRate: form.cessEnabled ? n(form.cessRate) : null,
     manageMultipleBatch: form.manageMultipleBatch,
+    // In batch mode each intake carries its own expiry and the picker reads
+    // those, so a product-level date would be a second answer to the same
+    // question — and the one nobody acts on. Cleared rather than kept hidden.
+    expiryDate: form.manageMultipleBatch ? null : form.expiryDate || null,
     shortDescription: form.shortDescription.trim(),
     description: form.description.trim(),
     nutrition: form.nutrition.filter((x) => x.name.trim()),
@@ -522,6 +531,22 @@ export default function ProductForm() {
               Manage Multiple Batch
             </label>
           </div>
+
+          <F k="expiryDate" label="Expiry Date">
+            <input
+              type="date"
+              data-testid="product-expiry"
+              value={form.manageMultipleBatch ? "" : form.expiryDate}
+              onChange={set("expiryDate")}
+              disabled={form.manageMultipleBatch}
+              className={`${inp} disabled:bg-neutral-100 disabled:text-neutral-400`}
+            />
+            <p className="mt-1 text-xs text-neutral-500">
+              {form.manageMultipleBatch
+                ? "Each batch carries its own expiry — set it when the stock is received."
+                : "Leave blank for anything that does not expire."}
+            </p>
+          </F>
 
           <div className="md:col-span-2 xl:col-span-4">
             <Label>Short Description</Label>
