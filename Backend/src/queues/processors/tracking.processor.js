@@ -2,21 +2,31 @@ import { FoodDeliveryPartner } from '../../modules/food/delivery/models/delivery
 import { FoodOrder } from '../../modules/food/orders/models/order.model.js';
 import { logger } from '../../utils/logger.js';
 import { connectDB } from '../../config/db.js';
-import { getRedisClient } from '../../config/redis.js';
+import { getRedisClient, connectRedis } from '../../config/redis.js';
 
-let isDBConnected = false;
+let isConnected = false;
 
-const ensureDB = async () => {
-    if (isDBConnected) return;
+/**
+ * Opens what this job needs, in whichever process is running it.
+ *
+ * Both halves matter and only one was here. BullMQ brings its own Redis
+ * connection for the queue itself, which is not the app's client -- so
+ * getRedisClient() returned null in the worker process, handleHotSync took its
+ * `if (!redis) return` early exit, and every tracking job completed having
+ * written nothing at all.
+ */
+const ensureConnections = async () => {
+    if (isConnected) return;
     await connectDB();
-    isDBConnected = true;
+    if (!getRedisClient()) await connectRedis();
+    isConnected = true;
 };
 
 /**
  * Syncs the latest location from "HOT" Redis storage to "COLD" MongoDB storage.
  */
 export const processTrackingJob = async (job) => {
-    await ensureDB();
+    await ensureConnections();
     const { name, data } = job;
 
     if (name === 'sync-hot-locations') {
