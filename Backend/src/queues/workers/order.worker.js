@@ -3,6 +3,7 @@ import { Worker } from 'bullmq';
 import { config } from '../../config/env.js';
 import { logger } from '../../utils/logger.js';
 import { getBullMQConnection } from '../connection.js';
+import { connectDB } from '../../config/db.js';
 import { ORDER_QUEUE } from '../queue.constants.js';
 import { processOrderJob } from '../processors/order.processor.js';
 
@@ -11,11 +12,16 @@ const defaultJobOptions = {
     backoff: { type: 'exponential', delay: 1000 }
 };
 
-const startOrderWorker = () => {
+const startOrderWorker = async () => {
     if (!config.bullmqEnabled) {
         logger.info('BullMQ is disabled. Order worker not started.');
         return null;
     }
+    // Every order job reads and writes orders. Without this the worker connects
+    // to Redis, picks jobs up happily, and then fails each one with a Mongoose
+    // buffering timeout ten seconds later -- so dispatch retries, scheduled
+    // order activation and acceptance timeouts all silently did nothing.
+    await connectDB();
     const connection = getBullMQConnection();
     if (!connection) {
         logger.error('Order worker: Redis connection unavailable. Exiting.');
@@ -33,7 +39,7 @@ const startOrderWorker = () => {
     return worker;
 };
 
-const worker = startOrderWorker();
+const worker = await startOrderWorker();
 if (worker) {
     const shutdown = async () => {
         await worker.close();
