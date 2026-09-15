@@ -105,6 +105,10 @@ const normalizeDetailsFormFromRestaurant = (restaurant) => {
       restaurant?.estimatedDeliveryTime ??
       "",
     offer: restaurant?.offer || "",
+    deliveryRadiusKm:
+      restaurant?.deliveryRadiusKm === undefined || restaurant?.deliveryRadiusKm === null
+        ? ""
+        : String(restaurant.deliveryRadiusKm),
     // Defaults to false rather than true: a seller who predates this field has
     // no value stored, and defaulting to exempt would quietly stop billing them.
     billingExempt: restaurant?.billingExempt === true,
@@ -340,6 +344,10 @@ export default function EditRestaurant() {
         primaryContactNumber: detailsForm.primaryContactNumber,
         email: detailsForm.email,
         cuisines,
+        // Empty means no limit, same as zero. Sent every save so clearing the
+        // box actually clears the radius rather than leaving the old one.
+        deliveryRadiusKm:
+          detailsForm.deliveryRadiusKm === "" ? 0 : Number(detailsForm.deliveryRadiusKm),
         estimatedDeliveryTimeMinutes:
           detailsForm.estimatedDeliveryTimeMinutes === ""
             ? undefined
@@ -637,6 +645,23 @@ export default function EditRestaurant() {
                     value={detailsForm.estimatedDeliveryTimeMinutes}
                     onChange={(e) => setDetailsForm((p) => ({ ...p, estimatedDeliveryTimeMinutes: e.target.value }))}
                   />
+                </div>
+                <div>
+                  <Label>Delivery Radius (km)</Label>
+                  <Input
+                    type="number"
+                    min="0"
+                    max="50"
+                    step="0.5"
+                    data-testid="delivery-radius"
+                    value={detailsForm.deliveryRadiusKm}
+                    onChange={(e) => setDetailsForm((p) => ({ ...p, deliveryRadiusKm: e.target.value }))}
+                    placeholder="0"
+                  />
+                  <p className="text-[11px] text-slate-500 mt-1">
+                    How far this store delivers inside its zone. Addresses beyond it cannot order
+                    from it and it is not listed to them. 0 means no limit.
+                  </p>
                 </div>
                 <div>
                   <Label>Offer</Label>
