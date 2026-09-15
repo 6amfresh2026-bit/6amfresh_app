@@ -11,14 +11,16 @@ A **delta**, like the ones before it. The full contracts stay where they are:
 | Seller | [RESTAURANT_API_SPEC.md](RESTAURANT_API_SPEC.md) |
 | Yesterday's delta | [FLUTTER_HANDOFF_2026-09-14.md](FLUTTER_HANDOFF_2026-09-14.md) |
 
-Backend suite: **394 tests passing.** 35 commits.
+Backend suite: **410 tests passing.** 44 commits.
 
-Today splits into three unrelated pieces of work and one buried surprise:
+Today splits into four pieces of work and one buried surprise:
 
 1. **Expiry dates** — a product can now go off, and stops being sellable when it does.
 2. **Delivery radius** — an admin sets how far each store delivers.
 3. **Own-fleet dispatch** — a seller's orders go to the seller's own riders.
-4. **The background queues have never run.** §5. Read it.
+4. **Accept-first dispatch** — a rider waits for the seller, but only for three
+   minutes. §3.2, and it changes what `unassigned` means in every app.
+5. **The background queues have never run.** §5. Read it.
 
 ---
 
@@ -158,7 +160,27 @@ between strangers where somebody slow simply loses, while this rider was
 *given* the order and is expected to take it. Long enough to finish parking,
 short enough that a rider who has gone home does not hold it all evening.
 
-### 2.3 How the order reached you is now recorded
+### 2.3 The same event fires when the order dies under you
+
+`order_deassigned` is no longer only about your accept deadline. It now also
+arrives when the order is cancelled while you are holding it, which is a real
+window: a rider is dispatched three minutes in, and an order the seller never
+answers is cancelled at four.
+
+The `reason` field says which:
+
+| `reason` | What happened |
+|---|---|
+| `Not accepted in time` | You did not accept inside your window (§2.2) |
+| `The customer cancelled this order` | Customer cancelled while you were on the way |
+| `The store did not accept this order` | The shop never answered and it was auto-cancelled |
+
+Before this, two of those three told the rider nothing at all — the order
+simply vanished from the list, or worse, did not, and the rider arrived at the
+shop for an order that no longer existed. **Handle all three the same way:
+take it off the list and say why.**
+
+### 2.4 How the order reached you is now recorded
 
 `order.dispatch` gains two fields:
 
@@ -174,7 +196,7 @@ short enough that a rider who has gone home does not hold it all evening.
 Useful in the app for one thing in particular: a `fleet` or `manual` order
 should never show an acceptance countdown, and an `auto` one should.
 
-### 2.4 Who a fleet order goes to
+### 2.5 Who a fleet order goes to
 
 Only for context, since the app does not decide it:
 
@@ -202,15 +224,46 @@ The headline: **linking a rider used to cost you automatic dispatch entirely.**
 rider, and dispatch skipped the order — so owning riders made delivery slower
 than owning none.
 
-Now the seller's orders go to the seller's riders, automatically. Nothing in
-the seller app has to change for this, but the behaviour it was built around
-has: **orders will no longer sit unassigned waiting for a human.**
+Now the seller's orders go to the seller's riders, automatically — once the
+seller has accepted the order, or once the wait in §3.2 runs out.
 
-If the app nags the seller to assign a rider, or treats `unassigned` as
-"needs me", that is now the exception rather than the rule — it means every one
-of their riders is busy or offline.
+An order sitting `unassigned` therefore means one of two things now: the seller
+has not answered it yet, or every one of their riders is busy or offline. The
+first is the ordinary case for the first few minutes of an order's life.
 
-### 3.2 Manual assignment still works, unchanged
+### 3.2 A rider is no longer sent until the seller accepts
+
+**Changed after this document was first written.** A rider used to be
+dispatched the moment the customer paid, in parallel with the seller answering.
+They now wait for Accept.
+
+The reasoning: a rider sent to a shop that then declines has ridden for
+nothing, and one standing in a shop that has not started picking is worse than
+one who arrives a minute later.
+
+The cap is what stops that becoming the old failure. After
+`SELLER_ACCEPT_DISPATCH_MINUTES` — **3 by default** — a rider is sent whether or
+not anybody has tapped anything, so a seller who has left the tablet in the
+back room no longer silently holds the order until it is cancelled.
+
+What this means for the seller app:
+
+- **Accept is now the thing that starts the delivery.** It was always worth
+  prompting; it now has a direct, visible consequence.
+- An order in its first three minutes with no rider is **normal**, not stuck.
+- Manual assignment (§3.3) still works during that window and short-circuits
+  the wait entirely.
+
+Two operational notes, because they are easy to get wrong in a deployment:
+
+- **The scheduler must be running** (`npm run start:scheduler`). The fallback
+  is swept there every 30 seconds. With BullMQ disabled — which is this
+  project's own default — nothing else will ever send an unaccepted order.
+- Setting the acceptance window (`orderAcceptanceTimeMinutes`, 4 by default)
+  **below 3 makes the fallback unreachable**, because the order is
+  auto-cancelled before the rider is sent.
+
+### 3.3 Manual assignment still works, unchanged
 
 ```
 GET  /food/restaurant/delivery-fleet
@@ -223,7 +276,23 @@ Still limited to the seller's own fleet. It now records
 The fleet list carries `activeOrderCount` per rider, which is what to sort and
 grey out by.
 
-### 3.3 Expiry on products
+### 3.4 Cancelling a collected order no longer restocks it
+
+Cancellation outranks every other status, so a seller or an admin can cancel an
+order a rider picked up ten minutes ago. Every one of those paths used to put
+the units straight back on the shelf — and they are in a bag on a bike, so the
+shop believed it had cover it did not have and sold the same stock twice.
+
+A post-pickup cancellation now leaves the count alone and logs what is
+outstanding. **If the app shows stock, do not assume a cancellation returns
+it.** Returning goods is a physical act; somebody has to book them in.
+
+This was not caused by today's work — it has been quietly inflating counts on
+every post-pickup cancellation for as long as the paths have existed. Products
+showing impossible quantities are worth auditing; the fix stops new drift, it
+does not correct old.
+
+### 3.5 Expiry on products
 
 If the seller app has a product form, `expiryDate` is accepted on
 `PATCH /food/restaurant/foods/:id` — send `YYYY-MM-DD`, or `""` to clear it.
@@ -299,6 +368,7 @@ and assert real effects rather than job status:
 |---|---|---|
 | `FLEET_ACCEPT_TIMEOUT_MINUTES` | 3 | How long a named rider has to accept |
 | `FLEET_ESCALATE_AFTER_ATTEMPTS` | 6 | When an admin is told a fleet has nobody free |
+| `SELLER_ACCEPT_DISPATCH_MINUTES` | 3 | How long an order waits for Accept before a rider is sent anyway |
 
 Per-record, not env: `restaurant.deliveryRadiusKm` (0 = no limit) and
 `item.expiryDate` (null = does not expire).
@@ -315,12 +385,18 @@ Product calls, flagged so they are chosen rather than discovered:
    coupons (`endOfOfferWindow` treats midnight as *through that day*). The fix
    only makes sense applied to batch expiry as well, which shipped yesterday,
    so it is a deliberate change rather than a slip to patch quietly.
-2. **A fleet order never falls back to the shared pool.** Correct — another
+2. **A rider now waits for the seller.** This reverses a deliberate earlier
+   choice — picking and the ride to the shop used to happen in parallel, and
+   the code said so in as many words. It trades some of that speed for not
+   sending riders to orders that are about to be declined, and the three-minute
+   cap bounds the loss. Worth measuring against the promise report once there
+   is data.
+3. **A fleet order never falls back to the shared pool.** Correct — another
    shop's rider should not cover a delivery this shop staffed — but it means
    an order can wait on an admin. The alert at ~6 attempts is the safety net.
-3. **Three minutes to accept** is a guess. Worth revisiting once there is data
+4. **Three minutes to accept** is a guess. Worth revisiting once there is data
    on how long riders actually take.
-4. **The coupon list endpoint still does not carry slabs**, unchanged from
+5. **The coupon list endpoint still does not carry slabs**, unchanged from
    yesterday's §8.
 
 ## 8. Still missing
