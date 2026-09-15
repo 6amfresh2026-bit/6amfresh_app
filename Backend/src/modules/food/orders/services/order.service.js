@@ -3041,26 +3041,11 @@ export async function updateOrderStatusAdmin(orderId, orderStatus, note = "", ad
     });
 
     if (String(orderStatus).includes("cancel")) {
-        // Only if the goods are still in the shop.
-        //
-        // Cancellation outranks every other status here, so an admin can cancel
-        // an order a rider collected ten minutes ago -- and this used to put
-        // those units straight back on the shelf. They are in a bag on a bike:
-        // the shop then believes it has cover it does not have and sells the
-        // same stock again. Returning them is a physical act, and the count can
-        // only follow it, never lead it.
-        const alreadyCollected =
-            Boolean(order.deliveryState?.pickedUpAt) ||
-            ["picked_up", "reached_drop"].includes(String(from));
-
-        if (alreadyCollected) {
-            logger.warn(
-                `Order ${order.order_id || order._id} cancelled after pickup: ${order.items?.length || 0} line(s) ` +
-                    'stay out of stock until someone books them back in.',
-            );
-        } else {
-            await restoreOrderStock(order);
-        }
+        // restoreOrderStock refuses an order whose goods have already left the
+        // shop, so cancelling a collected order no longer invents its units
+        // back onto the shelf. The rule lives there because it is a fact about
+        // where the goods are, not about who is cancelling.
+        await restoreOrderStock(order);
 
         try {
             await applyCancellationRefund(order, { cancelledBy: 'admin' });

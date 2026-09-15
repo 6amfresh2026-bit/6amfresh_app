@@ -8,7 +8,8 @@ import { dispatchOrdersSellerDidNotAccept } from '../src/modules/food/orders/ser
 import {
     expireUnacceptedOrders,
     cancelOrder,
-    updateOrderStatusAdmin
+    updateOrderStatusAdmin,
+    updateOrderStatusRestaurant
 } from '../src/modules/food/orders/services/order.service.js';
 import { FoodItem } from '../src/modules/food/admin/models/food.model.js';
 
@@ -247,5 +248,34 @@ describe('cancelling an order a rider is already working', () => {
 
         const after = await FoodItem.findById(item._id).lean();
         assert.equal(after.stockQty, 7, 'nothing left the building, so the units come back');
+    });
+
+    it('does not restock a collected order when the seller cancels either', async () => {
+        // The guard was fixed in the admin path first and this one kept
+        // inventing stock, which is why it now lives in restoreOrderStock
+        // rather than at each call site.
+        const item = await FoodItem.create({
+            restaurantId: STORE._id,
+            name: 'Curd',
+            price: 30,
+            stockQty: 5
+        });
+        const order = await anOrder({
+            items: [{ itemId: item._id, name: 'Curd', price: 30, quantity: 2 }],
+            orderStatus: 'picked_up',
+            stockReservedAt: new Date(),
+            deliveryState: { pickedUpAt: new Date() },
+            dispatch: { status: 'accepted', deliveryPartnerId: someId() }
+        });
+
+        await updateOrderStatusRestaurant(
+            String(order._id),
+            String(STORE._id),
+            'cancelled_by_restaurant',
+            'out of stock',
+        );
+
+        const after = await FoodItem.findById(item._id).lean();
+        assert.equal(after.stockQty, 5, 'the seller path invented stock too');
     });
 });

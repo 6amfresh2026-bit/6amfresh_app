@@ -274,10 +274,52 @@ async function incrementStock(itemId, qty, ctx = {}) {
  * for the same order (the timeout sweep runs from both a queue job and four
  * read paths), and a double restock would quietly invent inventory.
  */
+/**
+ * Whether the goods on this order have physically left the shop.
+ *
+ * Prefers what the caller already has: every cancellation path passes a full
+ * order document. Falls back to a read for the callers that pass a stub.
+ */
+async function hasLeftTheStore(orderLike) {
+  const collectedStatuses = ['picked_up', 'reached_drop', 'delivered'];
+  if (orderLike?.deliveryState !== undefined || orderLike?.orderStatus !== undefined) {
+    return (
+      Boolean(orderLike?.deliveryState?.pickedUpAt) ||
+      collectedStatuses.includes(String(orderLike?.orderStatus || ''))
+    );
+  }
+  const doc = await FoodOrder.findById(orderLike._id).select('orderStatus deliveryState').lean();
+  return (
+    Boolean(doc?.deliveryState?.pickedUpAt) ||
+    collectedStatuses.includes(String(doc?.orderStatus || ''))
+  );
+}
+
 export async function restoreOrderStock(orderLike) {
   const orderId = orderLike?._id;
   if (!orderId) return false;
   if (!orderLike?.stockReservedAt) return false; // pre-inventory or never reserved
+
+  // Goods a rider has collected are not on the shelf, whoever is asking.
+  //
+  // Cancellation outranks every other status, so a seller or an admin can
+  // cancel an order that left the building ten minutes ago -- and each of those
+  // paths called this, so each of them put the units back. The shop then
+  // believes it has cover it does not have and sells the same stock twice.
+  //
+  // The rule belongs here rather than at the call sites: it is a fact about
+  // where the goods are, not about who is cancelling, and it was already fixed
+  // once in one of the three callers while the other two kept doing it.
+  //
+  // Nothing is claimed on this branch: returning the units is a physical act,
+  // and when somebody books them back in the count should move then.
+  if (await hasLeftTheStore(orderLike)) {
+    logger.warn(
+      `[stock] order ${orderLike.order_id || orderId} was already collected; ` +
+        'its units stay out of stock until someone books them back in.',
+    );
+    return false;
+  }
 
   const claimed = await FoodOrder.findOneAndUpdate(
     { _id: orderId, stockReservedAt: { $ne: null }, stockRestoredAt: null },
