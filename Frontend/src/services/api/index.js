@@ -651,6 +651,28 @@ export const adminAPI = {
   /** Get single restaurant by id (full details for View Details modal). */
   getRestaurantById: (id) =>
     apiClient.get(`/food/admin/restaurants/${id}`, { contextModule: "admin" }),
+
+  // ─── Seller fleets: which riders belong to which shop ───
+  getSellerFleet: (restaurantId) =>
+    apiClient.get(`/food/admin/sellers/${restaurantId}/fleet`, { contextModule: "admin" }),
+  assignRiderToSeller: (restaurantId, deliveryPartnerId) =>
+    apiClient.post(
+      `/food/admin/sellers/${restaurantId}/fleet`,
+      { deliveryPartnerId },
+      { contextModule: "admin" },
+    ),
+  removeRiderFromSeller: (restaurantId, deliveryPartnerId) =>
+    apiClient.delete(`/food/admin/sellers/${restaurantId}/fleet/${deliveryPartnerId}`, {
+      contextModule: "admin",
+    }),
+  getAssignableRiders: (orderId) =>
+    apiClient.get(`/food/admin/orders/${orderId}/assignable-riders`, { contextModule: "admin" }),
+  assignOrderToRider: (orderId, deliveryPartnerId) =>
+    apiClient.post(
+      `/food/admin/orders/${orderId}/assign-delivery`,
+      { deliveryPartnerId },
+      { contextModule: "admin" },
+    ),
   /** Get restaurant analytics for POS. */
   getRestaurantAnalytics: (id) =>
     apiClient.get(`/food/admin/restaurants/${id}/analytics`, {

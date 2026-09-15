@@ -172,6 +172,14 @@ export default function EditRestaurant() {
   const [locationForm, setLocationForm] = useState(() => normalizeLocationFormFromRestaurant(null))
   const [locationError, setLocationError] = useState("")
 
+  // Seller fleet: the riders this shop's orders are handed to automatically.
+  const [fleet, setFleet] = useState([])
+  const [spareRiders, setSpareRiders] = useState([])
+  const [fleetLoading, setFleetLoading] = useState(false)
+  const [fleetBusy, setFleetBusy] = useState("")
+  const [fleetError, setFleetError] = useState("")
+  const [riderToAdd, setRiderToAdd] = useState("")
+
   const locationSearchInputRef = useRef(null)
   const placesAutocompleteRef = useRef(null)
 
@@ -179,6 +187,57 @@ export default function EditRestaurant() {
     if (id) return id
     return normalizeRestaurantId(restaurant)
   }, [id, restaurant])
+
+  const loadFleet = useMemo(
+    () => async () => {
+      if (!restaurantId) return
+      try {
+        setFleetLoading(true)
+        setFleetError("")
+        const res = await adminAPI.getSellerFleet(restaurantId)
+        const data = res?.data?.data || {}
+        setFleet(Array.isArray(data.fleet) ? data.fleet : [])
+        setSpareRiders(Array.isArray(data.available) ? data.available : [])
+      } catch (e) {
+        setFleetError(e?.response?.data?.message || "Failed to load this seller's riders")
+      } finally {
+        setFleetLoading(false)
+      }
+    },
+    [restaurantId],
+  )
+
+  useEffect(() => {
+    loadFleet()
+  }, [loadFleet])
+
+  const handleAddRider = async () => {
+    if (!riderToAdd) return
+    try {
+      setFleetBusy(riderToAdd)
+      setFleetError("")
+      await adminAPI.assignRiderToSeller(restaurantId, riderToAdd)
+      setRiderToAdd("")
+      await loadFleet()
+    } catch (e) {
+      setFleetError(e?.response?.data?.message || "Could not add that rider")
+    } finally {
+      setFleetBusy("")
+    }
+  }
+
+  const handleRemoveRider = async (partnerId) => {
+    try {
+      setFleetBusy(partnerId)
+      setFleetError("")
+      await adminAPI.removeRiderFromSeller(restaurantId, partnerId)
+      await loadFleet()
+    } catch (e) {
+      setFleetError(e?.response?.data?.message || "Could not remove that rider")
+    } finally {
+      setFleetBusy("")
+    }
+  }
 
   useEffect(() => {
     let mounted = true
@@ -668,6 +727,89 @@ export default function EditRestaurant() {
                   <Input value={detailsForm.offer} onChange={(e) => setDetailsForm((p) => ({ ...p, offer: e.target.value }))} />
                 </div>
               </div>
+            </section>
+
+            <section className="bg-white rounded-xl border border-slate-200 p-6" data-testid="seller-fleet">
+              <div className="mb-1">
+                <h2 className="text-lg font-semibold text-slate-900">Delivery Riders</h2>
+              </div>
+              <p className="text-sm text-slate-500 mb-4">
+                Orders from this seller are handed automatically to whichever of these riders is free.
+                With nobody free the order waits for one of them rather than going to another shop&rsquo;s rider,
+                and you can always assign someone by hand from the order.
+              </p>
+
+              {fleetError ? (
+                <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+                  {fleetError}
+                </div>
+              ) : null}
+
+              <div className="flex flex-wrap items-end gap-3 mb-4">
+                <div className="min-w-[240px] flex-1">
+                  <Label>Add a rider to this seller</Label>
+                  <select
+                    data-testid="fleet-rider-select"
+                    value={riderToAdd}
+                    onChange={(e) => setRiderToAdd(e.target.value)}
+                    className="mt-1 h-10 w-full rounded-md border border-input bg-white px-3 text-sm"
+                    disabled={fleetLoading || spareRiders.length === 0}
+                  >
+                    <option value="">
+                      {spareRiders.length === 0 ? "No unassigned riders available" : "Select a rider"}
+                    </option>
+                    {spareRiders.map((r) => (
+                      <option key={r._id} value={r._id}>
+                        {r.name || "Unnamed"} &mdash; {r.phone}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <Button
+                  data-testid="fleet-add"
+                  onClick={handleAddRider}
+                  disabled={!riderToAdd || Boolean(fleetBusy)}
+                >
+                  {fleetBusy && fleetBusy === riderToAdd ? "Adding..." : "Add to fleet"}
+                </Button>
+              </div>
+
+              {fleetLoading ? (
+                <p className="text-sm text-slate-500">Loading riders...</p>
+              ) : fleet.length === 0 ? (
+                <p className="text-sm text-slate-500" data-testid="fleet-empty">
+                  No riders yet. This seller&rsquo;s orders go to the shared rider pool.
+                </p>
+              ) : (
+                <ul className="divide-y divide-slate-100 rounded-lg border border-slate-200">
+                  {fleet.map((r) => (
+                    <li
+                      key={r._id}
+                      data-testid={`fleet-row-${r._id}`}
+                      className="flex items-center justify-between gap-3 px-3 py-2"
+                    >
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-medium text-slate-900">{r.name || "Unnamed"}</p>
+                        <p className="text-xs text-slate-500">
+                          {r.phone}
+                          {" · "}
+                          {r.availabilityStatus === "online" ? "Online" : "Offline"}
+                          {" · "}
+                          {r.activeOrderCount > 0 ? `Carrying ${r.activeOrderCount}` : "Free"}
+                        </p>
+                      </div>
+                      <Button
+                        variant="outline"
+                        data-testid={`fleet-remove-${r._id}`}
+                        onClick={() => handleRemoveRider(r._id)}
+                        disabled={Boolean(fleetBusy)}
+                      >
+                        {fleetBusy === r._id ? "Removing..." : "Remove"}
+                      </Button>
+                    </li>
+                  ))}
+                </ul>
+              )}
             </section>
 
             <section className="bg-white rounded-xl border border-slate-200 p-6">
