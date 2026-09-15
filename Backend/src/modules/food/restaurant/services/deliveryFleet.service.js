@@ -89,6 +89,8 @@ export async function assignDeliveryPartnerManually(restaurantId, orderId, deliv
     if (partner.status !== 'approved') throw new ValidationError('Delivery partner not available');
 
     order.dispatch.status = 'assigned';
+    order.dispatch.assignmentMode = 'manual';
+    order.dispatch.assignedByRole = 'RESTAURANT';
     order.dispatch.deliveryPartnerId = new mongoose.Types.ObjectId(deliveryPartnerId);
     order.dispatch.assignedAt = new Date();
     order.dispatch.dispatchingAt = undefined;
