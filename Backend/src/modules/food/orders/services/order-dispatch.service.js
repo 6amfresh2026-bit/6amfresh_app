@@ -260,7 +260,15 @@ async function listNearbyOnlineDeliveryPartners(
   restaurantId,
   { maxKm = 15, limit = 25 } = {},
 ) {
-  const rId = (restaurantId?._id || restaurantId).toString();
+  // populate() leaves this null when the store row has gone, and calling
+  // toString() on that threw -- taking down the whole dispatch attempt for an
+  // order whose shop was deleted, rather than simply finding no riders for it.
+  const rawId = restaurantId?._id || restaurantId;
+  if (!rawId) {
+    logger.warn('[Dispatch] order has no resolvable restaurant; no riders can be matched.');
+    return { restaurant: null, partners: [] };
+  }
+  const rId = rawId.toString();
   const restaurant = await FoodRestaurant.findById(rId)
     .select("location")
     .lean();
@@ -339,6 +347,41 @@ async function listNearbyOnlineDeliveryPartners(
   return { partners: final };
 }
 
+/**
+ * Sends riders to orders the seller never answered.
+ *
+ * The hold inside tryAutoAssign re-queues itself, which is enough wherever the
+ * BullMQ worker runs. It is not enough here: BULLMQ_ENABLED is false in this
+ * project's own configuration, so that re-queue is a no-op and an order would
+ * hold for the seller until it was auto-cancelled -- the exact failure the cap
+ * exists to prevent. This sweep is the path that does not depend on the queue.
+ *
+ * Cheap to run often: an indexed query over a status almost nothing is in.
+ */
+export async function dispatchOrdersSellerDidNotAccept({ now = new Date() } = {}) {
+  const cutoff = new Date(now.getTime() - SELLER_ACCEPT_DISPATCH_MS);
+  const waiting = await FoodOrder.find({
+    orderStatus: 'created',
+    'dispatch.status': 'unassigned',
+    'dispatch.deliveryPartnerId': null,
+    createdAt: { $lte: cutoff },
+  })
+    .select('_id order_id')
+    .limit(50)
+    .lean();
+
+  let dispatched = 0;
+  for (const order of waiting) {
+    try {
+      await tryAutoAssign(order._id);
+      dispatched += 1;
+    } catch (err) {
+      logger.error(`Unaccepted-order dispatch failed for ${order._id}: ${err?.message || err}`);
+    }
+  }
+  return dispatched;
+}
+
 export async function getDispatchSettings() {
   return { dispatchMode: "auto" };
 }
@@ -381,6 +424,18 @@ const FLEET_ESCALATE_AFTER_ATTEMPTS = Number(process.env.FLEET_ESCALATE_AFTER_AT
  * seconds -- long enough to finish parking, short enough that a rider who has
  * gone home does not hold the order until the two-hour sweep.
  */
+/**
+ * How long an order waits for the seller to accept before a rider is sent anyway.
+ *
+ * Sits inside the seller's own acceptance window (orderAcceptanceTimeMinutes,
+ * four minutes by default) on purpose: dispatching after the order would have
+ * been auto-cancelled would send a rider to collect something that no longer
+ * exists. Shortening that setting below this one makes this fallback
+ * unreachable, which is a configuration to avoid rather than a case to handle.
+ */
+const SELLER_ACCEPT_DISPATCH_MS =
+    (Number(process.env.SELLER_ACCEPT_DISPATCH_MINUTES) || 3) * 60 * 1000;
+
 const FLEET_ACCEPT_WINDOW_MS =
     (Number(process.env.FLEET_ACCEPT_TIMEOUT_MINUTES) || 3) * 60 * 1000;
 
@@ -629,15 +684,9 @@ export async function tryAutoAssign(orderId, options = {}) {
     return null;
   }
 
-  // Quick commerce: a rider is wanted the moment the customer orders, not once
-  // the seller taps Accept. Picking and the ride to the store happen at the same
-  // time — making one wait for the other is the difference between a promise in
-  // minutes and one in half-hours.
-  //
-  // So `created` — an order the seller has not answered yet — is dispatchable.
-  // It is still a real order with a real address, and if the seller declines it
-  // the order goes terminal, which drops it out of the rider's list and frees
-  // them for other work.
+  // `created` is an order the seller has not answered yet. It stays in this
+  // list because it becomes dispatchable once the wait below runs out, not
+  // because it is dispatchable on arrival.
   //
   // `pending_payment` is deliberately absent: createOrder does not dispatch an
   // order that has not been paid for, and nor does this.
@@ -645,6 +694,38 @@ export async function tryAutoAssign(orderId, options = {}) {
   if (!DISPATCHABLE_STATUSES.includes(order.orderStatus)) {
     logger.info(`tryAutoAssign: Skip for ${orderId} (status ${order.orderStatus} not dispatchable yet).`);
     return order;
+  }
+
+  // The seller answers first, but not for ever.
+  //
+  // A rider sent to a shop that then declines the order has ridden for nothing,
+  // and a rider standing in a shop that has not started picking is worse than
+  // one who arrives a minute later. So the order waits for Accept.
+  //
+  // The cap is what stops that becoming the old failure: a seller who is busy,
+  // distracted, or has left the tablet in the back room used to hold the order
+  // until it was cancelled, and the customer heard nothing in between. After
+  // SELLER_ACCEPT_DISPATCH_MS a rider is sent whether or not anyone has tapped
+  // anything.
+  if (order.orderStatus === 'created') {
+    const waitedMs = Date.now() - new Date(order.createdAt || Date.now()).getTime();
+    if (waitedMs < SELLER_ACCEPT_DISPATCH_MS) {
+      const remaining = SELLER_ACCEPT_DISPATCH_MS - waitedMs;
+      logger.info(
+        `tryAutoAssign: holding ${orderId} for the seller to accept ` +
+          `(${Math.ceil(remaining / 1000)}s left of ${Math.round(SELLER_ACCEPT_DISPATCH_MS / 60000)} min).`,
+      );
+      await FoodOrder.updateOne({ _id: order._id }, { $unset: { 'dispatch.dispatchingAt': 1 } });
+      // Checked again a second after the wait ends rather than on the pool's
+      // 45-second cadence: waking early only to hold again is a wasted round,
+      // and waking late is time the customer pays for.
+      await requeueFleetAttempt(order, attempt, remaining + 1000);
+      return order;
+    }
+    logger.warn(
+      `tryAutoAssign: ${orderId} was not accepted within ` +
+        `${Math.round(SELLER_ACCEPT_DISPATCH_MS / 60000)} min. Dispatching without the seller.`,
+    );
   }
 
   try {
