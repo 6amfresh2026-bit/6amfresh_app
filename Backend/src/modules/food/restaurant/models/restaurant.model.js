@@ -281,6 +281,22 @@ const restaurantSchema = new mongoose.Schema(
       ref: "FoodZone",
       index: true,
     },
+    /**
+     * How far this store will deliver, in kilometres. Admin-set.
+     *
+     * The zone says which block a store serves; this says how far inside it the
+     * store will actually go, which is not the same question — a zone can be
+     * several kilometres across and a store at its edge cannot serve the far
+     * side of it in ten minutes.
+     *
+     * Deliberately not on the seller's own form: a seller shrinking their own
+     * radius quietly disappears from customers who were ordering from them, and
+     * one widening it takes on promises the fleet has to keep.
+     *
+     * 0 means no limit, which is what every store does today and what they keep
+     * doing until an admin sets a figure.
+     */
+    deliveryRadiusKm: { type: Number, default: 0, min: 0 },
     businessModel: {
       type: String,
       trim: true,
