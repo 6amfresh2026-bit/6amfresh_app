@@ -220,7 +220,13 @@ export async function getCurrentTripDelivery(deliveryPartnerId) {
     'dispatch.deliveryPartnerId': partnerId,
     'dispatch.status': 'accepted',
     orderStatus: {
-      $in: ['confirmed', 'preparing', 'ready_for_pickup', 'picked_up'],
+      // `created` belongs here now. A rider is dispatched while the seller is
+      // still answering, and the fallback sends one whether they answer or
+      // not -- so a rider can accept an order the shop has not confirmed yet.
+      // Leaving it out meant that rider had accepted a delivery and their app
+      // then showed them no current trip at all, with nothing to work from
+      // until the seller happened to press a button.
+      $in: ['created', 'confirmed', 'preparing', 'ready_for_pickup', 'picked_up'],
     },
   })
     .select(DELIVERY_ORDER_BASE_SELECT)
