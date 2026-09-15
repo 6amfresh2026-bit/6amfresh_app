@@ -18,6 +18,7 @@ import {
   notifyOwnersActionableAlert,
   notifyOwnersSafely,
   dispatchRadiusBandsKm,
+  DISPATCH_LEAD_MS,
 } from './order.helpers.js';
 import { fetchDrivingRoute } from '../utils/googleMaps.js';
 import { parseGeoPoint } from '../../shared/geo.utils.js';
@@ -364,7 +365,31 @@ export async function dispatchOrdersSellerDidNotAccept({ now = new Date() } = {}
     orderStatus: 'created',
     'dispatch.status': 'unassigned',
     'dispatch.deliveryPartnerId': null,
-    createdAt: { $lte: cutoff },
+    // Bookings are excluded here as well as guarded in tryAutoAssign: a shop
+    // taking next-day orders would otherwise have this sweep walking its whole
+    // forward book every thirty seconds to be told no each time.
+    $or: [
+      { scheduledAt: null },
+      { scheduledAt: { $lte: new Date(now.getTime() + DISPATCH_LEAD_MS) } },
+    ],
+    // The same anchor sellerSawOrderAt uses, expressed for the query: the
+    // moment the order became the seller's, not the moment it was created.
+    $expr: {
+      $lte: [
+        {
+          $ifNull: [
+            {
+              $subtract: [
+                '$acceptanceDeadlineAt',
+                { $multiply: [{ $ifNull: ['$acceptanceWindowSeconds', 240] }, 1000] },
+              ],
+            },
+            '$createdAt',
+          ],
+        },
+        cutoff,
+      ],
+    },
   })
     .select('_id order_id')
     .limit(50)
@@ -435,6 +460,26 @@ const FLEET_ESCALATE_AFTER_ATTEMPTS = Number(process.env.FLEET_ESCALATE_AFTER_AT
  */
 const SELLER_ACCEPT_DISPATCH_MS =
     (Number(process.env.SELLER_ACCEPT_DISPATCH_MINUTES) || 3) * 60 * 1000;
+
+/**
+ * When the order became the seller's to accept.
+ *
+ * Not createdAt. An order paid for online is created the moment checkout
+ * starts and only reaches the seller when the payment clears, which can be
+ * minutes later while the customer fights a bank page -- measuring from
+ * creation gave that seller no wait at all, because their three minutes had
+ * already elapsed before they ever saw the order.
+ *
+ * acceptanceDeadlineAt is stamped exactly when the order becomes theirs, on
+ * both paths, so winding it back by the window it was given is the honest
+ * anchor. Falls back to createdAt for orders written before that was stored.
+ */
+const sellerSawOrderAt = (order) => {
+    const deadline = order?.acceptanceDeadlineAt ? new Date(order.acceptanceDeadlineAt).getTime() : null;
+    const windowMs = (Number(order?.acceptanceWindowSeconds) || 240) * 1000;
+    if (deadline && Number.isFinite(deadline)) return deadline - windowMs;
+    return new Date(order?.createdAt || Date.now()).getTime();
+};
 
 const FLEET_ACCEPT_WINDOW_MS =
     (Number(process.env.FLEET_ACCEPT_TIMEOUT_MINUTES) || 3) * 60 * 1000;
@@ -696,6 +741,24 @@ export async function tryAutoAssign(orderId, options = {}) {
     return order;
   }
 
+  // A booking is not due yet, whoever is asking.
+  //
+  // createOrder already refuses to hunt a rider at midnight for a 7am round --
+  // it schedules an activation for when the window is close instead. That guard
+  // lived only at creation, so anything else reaching this function could still
+  // dispatch a booking hours early and hold a rider for the whole wait. The
+  // unaccepted-order sweep did exactly that: it reads status and age, and a
+  // booking placed eight hours ahead is `created` and old within minutes.
+  const startsIn = order.scheduledAt ? new Date(order.scheduledAt).getTime() - Date.now() : 0;
+  if (startsIn > DISPATCH_LEAD_MS) {
+    logger.info(
+      `tryAutoAssign: Skip for ${orderId} (booked for ${new Date(order.scheduledAt).toISOString()}, ` +
+        `${Math.round(startsIn / 60000)} min away).`,
+    );
+    await FoodOrder.updateOne({ _id: order._id }, { $unset: { 'dispatch.dispatchingAt': 1 } });
+    return order;
+  }
+
   // The seller answers first, but not for ever.
   //
   // A rider sent to a shop that then declines the order has ridden for nothing,
@@ -708,7 +771,7 @@ export async function tryAutoAssign(orderId, options = {}) {
   // SELLER_ACCEPT_DISPATCH_MS a rider is sent whether or not anyone has tapped
   // anything.
   if (order.orderStatus === 'created') {
-    const waitedMs = Date.now() - new Date(order.createdAt || Date.now()).getTime();
+    const waitedMs = Date.now() - sellerSawOrderAt(order);
     if (waitedMs < SELLER_ACCEPT_DISPATCH_MS) {
       const remaining = SELLER_ACCEPT_DISPATCH_MS - waitedMs;
       logger.info(

@@ -116,6 +116,38 @@ describe('an order the seller has not accepted', () => {
         assert.equal(await dispatchOrdersSellerDidNotAccept({}), 0);
     });
 
+    it('is not a booking for later, however old the order is', async () => {
+        // createOrder already refuses to hunt a rider at midnight for a 7am
+        // round. Reading status and age alone walked straight past that: a
+        // booking placed eight hours ahead is `created` and old within minutes,
+        // so it would have held a rider for the whole wait.
+        await aged(await anOrder({ scheduledAt: new Date(Date.now() + 8 * 60 * MINUTE) }), 5);
+        assert.equal(await dispatchOrdersSellerDidNotAccept({}), 0);
+    });
+
+    it('is swept once a booking is nearly due', async () => {
+        await aged(await anOrder({ scheduledAt: new Date(Date.now() + 2 * MINUTE) }), 5);
+        assert.equal(await dispatchOrdersSellerDidNotAccept({}), 1);
+    });
+
+    it('counts the wait from when the seller saw it, not from checkout', async () => {
+        // An order paid for online is created when checkout starts and only
+        // reaches the seller when the payment clears. Measuring from creation
+        // gave a seller no wait at all whenever the customer was slow paying.
+        const slowToPay = await anOrder({
+            payment: { method: 'razorpay', status: 'paid' },
+            acceptanceWindowSeconds: 240,
+            acceptanceDeadlineAt: new Date(Date.now() + 230 * 1000)
+        });
+        await aged(slowToPay, 5);
+
+        assert.equal(
+            await dispatchOrdersSellerDidNotAccept({}),
+            0,
+            'the seller has had ten seconds with this order, not five minutes',
+        );
+    });
+
     it('takes a batch at a time rather than the whole backlog at once', async () => {
         // A queue that built up during an outage should not become one burst of
         // geo queries and push batches.
