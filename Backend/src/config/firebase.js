@@ -46,8 +46,10 @@ const getServiceAccountFromEnv = () => {
 export const initializeFirebaseRealtime = () => {
     try {
         if (admin.apps.length > 0) {
-            db = admin.database();
             messaging = admin.messaging();
+            // Same ordering rule as below: asking for the database when none is
+            // configured throws, and must not take messaging down with it.
+            if (config.firebaseDatabaseUrl) db = admin.database();
             return { db, messaging };
         }
 
@@ -64,10 +66,30 @@ export const initializeFirebaseRealtime = () => {
             databaseURL: databaseURL || undefined
         });
 
-        db = admin.database();
+        // Messaging first, and never conditional on the database.
+        //
+        // admin.database() throws "Can't determine Firebase Database URL" when
+        // no URL is configured, and it used to run first -- so a project with
+        // no Realtime Database instance never reached this line. Messaging
+        // stayed null, getFirebaseMessaging() threw for every caller, and the
+        // startup log said Firebase had failed outright when the only missing
+        // piece was an optional one.
         messaging = admin.messaging();
 
-        logger.info('✅ Firebase Realtime Database Initialized Successfully');
+        if (databaseURL) {
+            db = admin.database();
+            logger.info('✅ Firebase initialized (messaging + realtime database)');
+        } else {
+            // A warning, not an error: plenty of deployments never use the
+            // realtime database, and every caller of getFirebaseDB already
+            // handles its absence. Saying "error" here sent people looking for
+            // a broken credential when push was working perfectly well.
+            logger.warn(
+                '⚠️ Firebase initialized for messaging only. No VITE_FIREBASE_DATABASE_URL set, ' +
+                    'so live rider tracking through the realtime database is off.',
+            );
+        }
+
         return { db, messaging };
     } catch (error) {
         logger.error(`❌ Firebase Initialization Error: ${error.message}`);
@@ -82,10 +104,16 @@ export const initializeFirebaseRealtime = () => {
  */
 export const getFirebaseDB = () => {
     if (!db) {
-        throw new Error('⚠️ Firebase Realtime Database not initialized. Call initializeFirebaseRealtime() first.');
+        throw new Error(
+            'Firebase Realtime Database is not configured. Create a database in the Firebase console ' +
+                'and set VITE_FIREBASE_DATABASE_URL to enable live tracking.',
+        );
     }
     return db;
 };
+
+/** Whether live tracking through the realtime database is available at all. */
+export const isFirebaseRealtimeEnabled = () => Boolean(db);
 
 /**
  * Returns the initialized Firebase Messaging instance.
