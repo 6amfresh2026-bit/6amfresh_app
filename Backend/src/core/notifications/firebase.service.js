@@ -366,8 +366,30 @@ const parseFirebaseError = async (response) => {
 
 const shouldRemoveTokenFromError = (errorJson, response) => {
     const status = response?.status;
-    const message = String(errorJson?.error?.message || '').toUpperCase();
-    return status === 404 || message.includes('UNREGISTERED') || message.includes('INVALID_ARGUMENT');
+    // FCM puts the machine-readable reason in error.status and a sentence in
+    // error.message. Reading only the message meant UNREGISTERED was caught by
+    // luck of wording while INVALID_ARGUMENT never was: the prose for a
+    // malformed token is "The registration token is not a valid FCM
+    // registration token", which contains neither code. So the pruning this
+    // function exists to trigger did not happen, and tokens that can never
+    // work again were kept and retried on every send, for ever.
+    const reason = [
+        errorJson?.error?.status,
+        errorJson?.error?.message,
+        ...(Array.isArray(errorJson?.error?.details)
+            ? errorJson.error.details.map((d) => d?.errorCode)
+            : []),
+    ]
+        .filter(Boolean)
+        .join(' ')
+        .toUpperCase();
+
+    return (
+        status === 404 ||
+        reason.includes('UNREGISTERED') ||
+        reason.includes('INVALID_ARGUMENT') ||
+        reason.includes('NOT_FOUND')
+    );
 };
 
 /** Transient FCM failures worth a retry. Anything else is permanent. */
