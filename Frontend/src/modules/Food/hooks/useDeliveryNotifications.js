@@ -442,11 +442,21 @@ export const useDeliveryNotifications = () => {
         deliveryAPI.getCurrentDelivery(),
       ]);
 
-      const currentTrip =
+      // "No trip" arrives as { activeOrder: null }, which is an object and so
+      // was truthy here -- the absence of a trip read as the presence of one,
+      // and this returned before the available-orders recovery below ever ran.
+      // A trip is only a trip if it carries an order identity, which is the
+      // same test DeliveryHomeV2 already applies to this response.
+      const currentTripRaw =
         currentTripResult.status === 'fulfilled'
           ? currentTripResult.value?.data?.data ??
             currentTripResult.value?.data ??
             null
+          : null;
+      const currentTripCandidate = currentTripRaw?.activeOrder ?? currentTripRaw;
+      const currentTrip =
+        currentTripCandidate && (currentTripCandidate._id || currentTripCandidate.orderId)
+          ? currentTripCandidate
           : null;
 
       if (currentTrip) {
