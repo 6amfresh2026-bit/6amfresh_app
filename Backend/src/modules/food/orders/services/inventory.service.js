@@ -102,6 +102,7 @@ export async function reserveStockForItems(items = [], ctx = {}) {
   if (totals.size === 0) return [];
 
   const taken = [];
+  const now = new Date();
 
   for (const [itemId, qty] of totals) {
     const id = new mongoose.Types.ObjectId(itemId);
@@ -113,7 +114,12 @@ export async function reserveStockForItems(items = [], ctx = {}) {
     // it hands back the post-decrement document, which is what the ledger row
     // needs for its before/after columns.
     const updated = await FoodItem.findOneAndUpdate(
-      { _id: id, stockQty: { $gte: qty } },
+      // Expired units never leave the shelf. Batch-tracked stock is guarded at
+      // allocation; a product that keeps a single expiry has only this one
+      // date, and without it the expiry was recorded, displayed, and then sold
+      // past anyway. Part of the same atomic update as the count so the check
+      // cannot be overtaken by an edit between read and write.
+      { _id: id, stockQty: { $gte: qty }, $or: [{ expiryDate: null }, { expiryDate: { $gt: now } }] },
       { $inc: { stockQty: -qty } },
       // manageMultipleBatch rides along so the allocation below can be skipped
       // without a second lookup.
@@ -153,11 +159,21 @@ export async function reserveStockForItems(items = [], ctx = {}) {
       continue;
     }
 
-    const doc = await FoodItem.findById(id).select('name stockQty').lean();
+    const doc = await FoodItem.findById(id).select('name stockQty expiryDate').lean();
     if (!doc) {
       await releaseReservations(taken, ctx);
       throw new ValidationError('One or more items are no longer available');
     }
+
+    // Before the untracked check, not after: an item nobody counts never
+    // reaches the decrement above, so this is the only place its expiry is
+    // ever tested. Told apart from a stockout because "out of stock" would
+    // send the customer back to wait for a restock that is not coming.
+    if (doc.expiryDate && new Date(doc.expiryDate).getTime() <= now.getTime()) {
+      await releaseReservations(taken, ctx);
+      throw new ValidationError(`${doc.name} is past its expiry date and cannot be sold`);
+    }
+
     if (doc.stockQty === null || doc.stockQty === undefined) continue; // untracked
 
     await releaseReservations(taken, ctx);
@@ -210,8 +226,19 @@ async function incrementStock(itemId, qty, ctx = {}) {
   ).lean();
   // Bring it back only if it went dark by running out. A seller who switched the
   // item off by hand set stockOffMode, and that decision outranks a restock.
+  //
+  // An expired product is not brought back by units arriving either: this runs
+  // on cancellation too, so restoring an order that happened to contain one
+  // would put it back on the storefront until the next sweep — visible, and
+  // refused at checkout.
   await FoodItem.updateOne(
-    { _id: id, stockQty: { $gt: 0 }, isAvailable: false, stockOffMode: { $in: [null, undefined] } },
+    {
+      _id: id,
+      stockQty: { $gt: 0 },
+      isAvailable: false,
+      stockOffMode: { $in: [null, undefined] },
+      $or: [{ expiryDate: null }, { expiryDate: { $gt: new Date() } }],
+    },
     { $set: { isAvailable: true } },
   );
   if (updated) {
@@ -271,4 +298,32 @@ export async function restoreOrderStock(orderLike) {
   }
 
   return true;
+}
+
+/**
+ * Takes expired products off the storefront.
+ *
+ * The reservation guard already refuses to sell them, but refusing at checkout
+ * is the wrong place to find out: the customer has picked the thing, carried
+ * it to payment and only then been told no. Hiding it keeps it out of the
+ * cart in the first place.
+ *
+ * Only products carrying their own expiry. Batch-tracked stock is handled by
+ * writeOffExpiredBatches, which removes the units themselves — here there are
+ * no units to remove, just one date that has passed, so `isAvailable` is the
+ * whole of the change and the count is left alone for whoever comes to count it.
+ */
+export async function hideExpiredProducts({ now = new Date() } = {}) {
+  const result = await FoodItem.updateMany(
+    {
+      manageMultipleBatch: { $ne: true },
+      expiryDate: { $ne: null, $lte: now },
+      isAvailable: true,
+    },
+    { $set: { isAvailable: false } },
+  );
+
+  const hidden = Number(result?.modifiedCount) || 0;
+  if (hidden > 0) logger.info(`[stock] hid ${hidden} expired product(s) from the storefront`);
+  return hidden;
 }
