@@ -21,6 +21,7 @@ import {
 } from './order.helpers.js';
 import { fetchDrivingRoute } from '../utils/googleMaps.js';
 import { parseGeoPoint } from '../../shared/geo.utils.js';
+import { pickFleetPartnerForOrder, sellerHasOwnFleet } from './fleetDispatch.service.js';
 
 /**
  * Resolve restaurant â†’ customer road distance once per dispatch broadcast.
@@ -363,22 +364,122 @@ export async function updateDispatchSettings(dispatchMode, adminId) {
  * Checked before ever touching the order/dispatch lock, so a manual-fleet
  * restaurant's orders are left untouched for the seller to assign by hand.
  */
-async function restaurantUsesManualDispatch(restaurantId) {
-  if (!restaurantId) return false;
-  const count = await FoodDeliveryPartner.countDocuments({ restaurantId });
-  return count > 0;
+/**
+ * Hands the order to one named rider from the seller's own fleet.
+ *
+ * Not an offer and not a race. The shared pool shouts at everybody and lets
+ * them compete, which is right when the riders are strangers to the shop; a
+ * seller's own rider is already theirs, so the order is simply given to them
+ * and the app is told so rather than asked.
+ *
+ * With nobody free the order stays unassigned and this re-queues itself. That
+ * is deliberate: leaking a fleet seller's order into the shared pool would put
+ * another shop's rider on a delivery this shop staffed itself. Both the seller
+ * and an admin can still assign by hand at any point, which is the release
+ * valve when the whole fleet is out.
+ */
+async function assignFromOwnFleet(order, { attempt = 1 } = {}) {
+  // Somebody de-assigned from this order is not handed it again -- that was a
+  // decision about this rider and this order, and re-picking them would undo it
+  // on the next tick.
+  const excludeIds = (order.dispatch?.offeredTo || [])
+    .filter((offer) => offer.action === 'deassigned')
+    .map((offer) => String(offer.partnerId));
+
+  const restaurant = order.restaurantId && typeof order.restaurantId === 'object'
+    ? order.restaurantId
+    : await FoodRestaurant.findById(order.restaurantId).select('location restaurantName').lean();
+
+  const chosen = await pickFleetPartnerForOrder(order, restaurant, { excludeIds });
+
+  if (!chosen) {
+    logger.info(
+      `tryAutoAssign: no free rider in ${restaurant?.restaurantName || order.restaurantId}'s own fleet ` +
+        `for order ${order._id} (attempt ${attempt}). Waiting for one rather than using the shared pool.`,
+    );
+    // The lock has to come off or every later attempt sees "already
+    // dispatching" and the order waits for a rider nobody is looking for.
+    await FoodOrder.updateOne({ _id: order._id }, { $unset: { 'dispatch.dispatchingAt': 1 } });
+    await addOrderJob(
+      {
+        action: 'DISPATCH_TIMEOUT_CHECK',
+        orderMongoId: order._id.toString(),
+        orderId: order._id.toString(),
+        attempt: attempt + 1,
+      },
+      { delay: DRIVER_ACCEPT_WINDOW_MS },
+    );
+    return order;
+  }
+
+  const partnerId = chosen.partnerId;
+  const assigned = await FoodOrder.findOneAndUpdate(
+    // Still unassigned: between the pick above and this write a rider may have
+    // accepted it, or a person may have assigned it by hand, and neither should
+    // be overwritten by a decision taken a moment earlier.
+    { _id: order._id, 'dispatch.status': { $in: ['unassigned', 'assigned'] }, 'dispatch.acceptedAt': { $exists: false } },
+    {
+      $set: {
+        'dispatch.status': 'assigned',
+        'dispatch.assignmentMode': 'fleet',
+        'dispatch.deliveryPartnerId': partnerId,
+        'dispatch.assignedAt': new Date(),
+      },
+      $unset: { 'dispatch.dispatchingAt': 1 },
+      $push: { 'dispatch.offeredTo': { partnerId, at: new Date(), action: 'offered' } },
+    },
+    { new: true },
+  );
+
+  if (!assigned) {
+    logger.info(`tryAutoAssign: order ${order._id} was taken between picking a fleet rider and assigning them.`);
+    return order;
+  }
+
+  logger.info(
+    `tryAutoAssign: order ${assigned._id} given to fleet rider ${chosen.partner?.name || partnerId} ` +
+      `(${chosen.activeCount === 0 ? 'free' : `carrying ${chosen.activeCount}`}, ` +
+      `${chosen.distanceKm === null ? 'distance unknown' : `${chosen.distanceKm.toFixed(1)} km from the store`}).`,
+  );
+
+  void notifyFleetAssignment(assigned, partnerId);
+  return assigned;
+}
+
+/**
+ * Tells the rider the order is theirs.
+ *
+ * Fire-and-forget on purpose: a rider who misses the alert still finds the
+ * order in their list, and a push failure must not undo an assignment the
+ * dispatcher has already written.
+ */
+async function notifyFleetAssignment(order, partnerId) {
+  try {
+    const payload = buildDeliverySocketPayload(order, order.restaurantId);
+    const io = getIO();
+    if (io) io.to(rooms.delivery(String(partnerId))).emit('order_assigned', payload);
+
+    await notifyOwnersActionableAlert(
+      [{ ownerType: 'DELIVERY_PARTNER', ownerId: String(partnerId) }],
+      {
+        title: 'An order has been assigned to you',
+        body: `Order #${order.order_id || order._id} is yours -- head to the store.`,
+        data: {
+          type: 'order_assigned',
+          orderId: String(order._id),
+          orderMongoId: String(order._id),
+        },
+      },
+    );
+  } catch (err) {
+    logger.warn(`Fleet assignment notice failed for order ${order._id}: ${err?.message || err}`);
+  }
 }
 
 export async function tryAutoAssign(orderId, options = {}) {
   const attempt = options.attempt || 1;
   // Small buffer above the accept window so an in-flight offer isn't reclaimed early.
   const lockTimeout = DRIVER_ACCEPT_WINDOW_MS + 5000; // 50s
-
-  const orderPreview = await FoodOrder.findById(orderId).select('restaurantId').lean();
-  if (orderPreview && await restaurantUsesManualDispatch(orderPreview.restaurantId)) {
-    logger.info(`tryAutoAssign: Skip for ${orderId} (restaurant ${orderPreview.restaurantId} uses manual-only dispatch).`);
-    return null;
-  }
 
   const order = await FoodOrder.findOneAndUpdate(
     {
@@ -423,6 +524,14 @@ export async function tryAutoAssign(orderId, options = {}) {
   }
 
   try {
+    // A seller running their own riders gets their own riders, not the shared
+    // pool. This used to be the branch that gave up: having a fleet at all made
+    // the order skip dispatch entirely and wait for somebody to assign it by
+    // hand, so owning riders made delivery slower than not owning any.
+    if (await sellerHasOwnFleet(order.restaurantId?._id || order.restaurantId)) {
+      return await assignFromOwnFleet(order, { attempt });
+    }
+
     const offeredIds = (order.dispatch?.offeredTo || []).map(o => o.partnerId.toString());
     const permanentlyExcludedIds = new Set(
       (order.dispatch?.offeredTo || [])
@@ -589,6 +698,16 @@ export async function tryAutoAssign(orderId, options = {}) {
     const io = getIO();
     const basePayload = buildDeliverySocketPayload(order, order.restaurantId);
     const payload = await enrichPayloadWithTripRoadDistance(order, basePayload);
+
+    // Recorded at the moment of the broadcast rather than when somebody accepts:
+    // this is where the order becomes a race between strangers, and by accept
+    // time a fleet or manual assignment would look identical to this one.
+    if (!order.dispatch?.assignmentMode) {
+      await FoodOrder.updateOne(
+        { _id: order._id, 'dispatch.assignmentMode': null },
+        { $set: { 'dispatch.assignmentMode': 'auto' } },
+      );
+    }
 
     // BROADCAST: Notify all eligible riders
     // tripDistanceKm = restaurant â†” customer (road); pickupDistanceKm = rider â†’ restaurant (ranking only)
