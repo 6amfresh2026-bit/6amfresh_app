@@ -1,0 +1,127 @@
+import { after, before, beforeEach, describe, it } from 'node:test';
+import assert from 'node:assert/strict';
+
+import { connectTestDb, disconnectTestDb, resetDb, someId } from './helpers/db.js';
+import { FoodOrder } from '../src/modules/food/orders/models/order.model.js';
+import { FoodRestaurant } from '../src/modules/food/restaurant/models/restaurant.model.js';
+import { dispatchOrdersSellerDidNotAccept } from '../src/modules/food/orders/services/order-dispatch.service.js';
+
+/**
+ * The seller answers first, but not for ever.
+ *
+ * A rider sent to a shop that then declines has ridden for nothing, and one
+ * standing in a shop that has not started picking is worse than one who arrives
+ * a minute later -- so the order waits for Accept. The cap is what stops that
+ * becoming the older failure, where a seller who had left the tablet in the
+ * back room held the order until it was cancelled.
+ *
+ * This covers the sweep, which is the half that does not depend on BullMQ.
+ * BULLMQ_ENABLED is false in this project's own configuration, so the re-queue
+ * inside tryAutoAssign is a no-op here and the sweep is the only thing that
+ * ever sends these orders.
+ */
+
+before(connectTestDb);
+after(disconnectTestDb);
+beforeEach(resetDb);
+
+const MINUTE = 60 * 1000;
+
+// A real store, because dispatch resolves one: an order pointing at a missing
+// restaurant exercises the deleted-shop path rather than the one under test.
+let STORE;
+beforeEach(async () => {
+    STORE = await FoodRestaurant.create({
+        restaurantName: 'Corner Store',
+        ownerName: 'Owner',
+        ownerPhone: '9000000000',
+        phone: '9000000000',
+        status: 'approved',
+        location: { type: 'Point', coordinates: [78.4867, 17.385] }
+    });
+});
+
+const anOrder = (over = {}) =>
+    FoodOrder.create({
+        userId: someId(),
+        restaurantId: STORE._id,
+        items: [{ itemId: someId(), name: 'Milk', price: 50, quantity: 1 }],
+        pricing: { subtotal: 50, total: 50 },
+        payment: { method: 'cash' },
+        deliveryAddress: {
+            street: 'x',
+            city: 'y',
+            state: 'z',
+            location: { type: 'Point', coordinates: [78.4867, 17.39] }
+        },
+        orderStatus: 'created',
+        dispatch: { status: 'unassigned', deliveryPartnerId: null },
+        ...over
+    });
+
+/**
+ * Ages an order, through the raw driver.
+ *
+ * Mongoose marks createdAt immutable when timestamps are on, so a $set through
+ * the model is dropped in silence -- the update reports success and the date
+ * does not move, which makes every assertion here pass for the wrong reason.
+ */
+const aged = async (order, minutes) => {
+    await FoodOrder.collection.updateOne(
+        { _id: order._id },
+        { $set: { createdAt: new Date(Date.now() - minutes * MINUTE) } },
+    );
+    return order;
+};
+
+describe('an order the seller has not accepted', () => {
+    it('is left alone while it is still inside the wait', async () => {
+        await aged(await anOrder(), 1);
+        assert.equal(await dispatchOrdersSellerDidNotAccept({}), 0);
+    });
+
+    it('is picked up once the wait has run out', async () => {
+        // Three minutes by default, and this one is past it.
+        await aged(await anOrder(), 4);
+        assert.equal(await dispatchOrdersSellerDidNotAccept({}), 1);
+    });
+
+    it('is left alone the moment somebody accepts it', async () => {
+        // Accepting dispatches directly, so the sweep must not double up.
+        await aged(await anOrder({ orderStatus: 'confirmed' }), 10);
+        await aged(await anOrder({ orderStatus: 'preparing' }), 10);
+        assert.equal(await dispatchOrdersSellerDidNotAccept({}), 0);
+    });
+
+    it('is left alone once it already has a rider', async () => {
+        // Including one a person assigned by hand during the wait, which is the
+        // whole point of the manual option.
+        await aged(
+            await anOrder({
+                dispatch: { status: 'assigned', deliveryPartnerId: someId(), assignmentMode: 'manual' }
+            }),
+            10,
+        );
+        assert.equal(await dispatchOrdersSellerDidNotAccept({}), 0);
+    });
+
+    it('never touches an order that was never paid for', async () => {
+        await aged(await anOrder({ orderStatus: 'pending_payment' }), 10);
+        assert.equal(await dispatchOrdersSellerDidNotAccept({}), 0);
+    });
+
+    it('never touches an order that is already over', async () => {
+        await aged(await anOrder({ orderStatus: 'cancelled_by_restaurant' }), 10);
+        await aged(await anOrder({ orderStatus: 'delivered' }), 10);
+        assert.equal(await dispatchOrdersSellerDidNotAccept({}), 0);
+    });
+
+    it('takes a batch at a time rather than the whole backlog at once', async () => {
+        // A queue that built up during an outage should not become one burst of
+        // geo queries and push batches.
+        for (let i = 0; i < 3; i += 1) await aged(await anOrder(), 5);
+        const swept = await dispatchOrdersSellerDidNotAccept({});
+        assert.ok(swept <= 50, `swept ${swept}, which is above the per-run cap`);
+        assert.equal(swept, 3);
+    });
+});
