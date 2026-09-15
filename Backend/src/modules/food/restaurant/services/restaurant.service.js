@@ -2041,7 +2041,8 @@ export const listApprovedRestaurants = async (query = {}) => {
         location: 1,
         openingTime: 1,
         closingTime: 1,
-        openDays: 1
+        openDays: 1,
+        deliveryRadiusKm: 1
     };
 
     // Use $geoNear only when geo is explicitly needed (radius filter or nearest sorting).
@@ -2076,6 +2077,22 @@ export const listApprovedRestaurants = async (query = {}) => {
             {
                 $addFields: {
                     distanceInKm: { $round: [{ $divide: ['$distanceMeters', 1000] }, 2] }
+                }
+            },
+            // A store that will not deliver this far is not a result. Listing it
+            // and refusing at checkout wastes the customer's whole shop, and the
+            // refusal arrives after they have chosen everything.
+            //
+            // Only stores an admin has given a radius: 0 and missing both mean
+            // no limit, which is every store until somebody sets one.
+            {
+                $match: {
+                    $expr: {
+                        $or: [
+                            { $not: [{ $gt: [{ $ifNull: ['$deliveryRadiusKm', 0] }, 0] }] },
+                            { $lte: ['$distanceMeters', { $multiply: ['$deliveryRadiusKm', 1000] }] }
+                        ]
+                    }
                 }
             },
             sortStage
