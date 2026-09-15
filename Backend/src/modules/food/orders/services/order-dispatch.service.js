@@ -407,6 +407,43 @@ export async function dispatchOrdersSellerDidNotAccept({ now = new Date() } = {}
   return dispatched;
 }
 
+/**
+ * Sends riders to bookings whose window has arrived.
+ *
+ * A booking deliberately does not hunt a rider when it is placed -- holding one
+ * from midnight for a 7am round is worse than useless. Something has to come
+ * back when the window is close, and the only thing that did was a delayed
+ * BullMQ job. BULLMQ_ENABLED is false in this project's own configuration, so
+ * in that deployment nothing came back at all: the customer booked a slot, no
+ * rider was ever sought, and the order was eventually auto-cancelled.
+ *
+ * Covers `confirmed` as well as `created`, which is the case the
+ * unaccepted-order sweep cannot: a seller who accepts tomorrow's order today
+ * moves it out of `created` hours before anybody should be riding anywhere.
+ */
+export async function dispatchDueBookings({ now = new Date() } = {}) {
+  const due = await FoodOrder.find({
+    orderStatus: { $in: ['created', 'confirmed'] },
+    'dispatch.status': 'unassigned',
+    'dispatch.deliveryPartnerId': null,
+    scheduledAt: { $ne: null, $lte: new Date(now.getTime() + DISPATCH_LEAD_MS) },
+  })
+    .select('_id order_id scheduledAt')
+    .limit(50)
+    .lean();
+
+  let dispatched = 0;
+  for (const order of due) {
+    try {
+      await tryAutoAssign(order._id);
+      dispatched += 1;
+    } catch (err) {
+      logger.error(`Due-booking dispatch failed for ${order._id}: ${err?.message || err}`);
+    }
+  }
+  return dispatched;
+}
+
 export async function getDispatchSettings() {
   return { dispatchMode: "auto" };
 }

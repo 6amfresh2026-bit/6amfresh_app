@@ -7,7 +7,10 @@ import { syncExpiredFssaiNotifications } from '../src/modules/food/restaurant/se
 import { runBillingCatchUp } from '../src/modules/food/restaurant/services/subscriptionBilling.service.js';
 import { writeOffExpiredBatches } from '../src/modules/food/orders/services/stockBatch.service.js';
 import { hideExpiredProducts } from '../src/modules/food/orders/services/inventory.service.js';
-import { dispatchOrdersSellerDidNotAccept } from '../src/modules/food/orders/services/order-dispatch.service.js';
+import {
+    dispatchOrdersSellerDidNotAccept,
+    dispatchDueBookings
+} from '../src/modules/food/orders/services/order-dispatch.service.js';
 import { FoodSettings } from '../src/modules/food/orders/models/order.model.js';
 import { logger } from '../src/utils/logger.js';
 import os from 'os';
@@ -167,6 +170,17 @@ const start = async () => {
                 }
             } catch (err) {
                 logger.error(`Unaccepted-order dispatch sweep error: ${err.message}`);
+            }
+            try {
+                // Separately caught: a booking nobody rides for is its own
+                // failure, and it must not be hidden by the sweep above
+                // throwing first.
+                const booked = await dispatchDueBookings({});
+                if (booked > 0) {
+                    logger.info(`Dispatched ${booked} booking(s) whose window has arrived`);
+                }
+            } catch (err) {
+                logger.error(`Due-booking dispatch sweep error: ${err.message}`);
             }
         };
 
