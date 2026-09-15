@@ -3959,6 +3959,7 @@ function serializeAdminFoodRow(f, restaurantMap, brandMap, unitMap = new Map()) 
         cessEnabled: f.cessEnabled === true,
         cessRate: f.cessRate ?? null,
         manageMultipleBatch: f.manageMultipleBatch === true,
+        expiryDate: f.expiryDate || null,
         nutrition: f.nutrition || [],
         netWeight: f.netWeight ?? null,
         netWeightUnitId: f.netWeightUnitId || null,
@@ -4245,6 +4246,16 @@ function buildAdminCatalogFields(body = {}) {
         if (!mongoose.Types.ObjectId.isValid(String(value))) throw new ValidationError('Invalid reference id');
         return new mongoose.Types.ObjectId(String(value));
     };
+    // An unparseable date becomes Invalid Date, which Mongoose casts to null --
+    // so the admin would be told the save worked and the expiry would simply
+    // have vanished. Reject it instead.
+    const date = (value, label) => {
+        if (value === undefined) return undefined;
+        if (value === null || value === '') return null;
+        const parsed = new Date(value);
+        if (Number.isNaN(parsed.getTime())) throw new ValidationError(`${label} is invalid`);
+        return parsed;
+    };
 
     let additionalUnitIds;
     if (body.additionalUnitIds !== undefined) {
@@ -4294,6 +4305,7 @@ function buildAdminCatalogFields(body = {}) {
         cessEnabled: bool(body.cessEnabled),
         cessRate: num(body.cessRate, { max: 100 }),
         manageMultipleBatch: bool(body.manageMultipleBatch),
+        expiryDate: date(body.expiryDate, 'Expiry date'),
         shortDescription: str(body.shortDescription),
         nutrition,
         netWeight: num(body.netWeight),
