@@ -373,6 +373,18 @@ export async function updateDispatchSettings(dispatchMode, adminId) {
 const FLEET_ESCALATE_AFTER_ATTEMPTS = Number(process.env.FLEET_ESCALATE_AFTER_ATTEMPTS) || 6;
 
 /**
+ * How long a named rider has to accept before the order goes back to the fleet.
+ *
+ * Much longer than the shared pool's 45 seconds, and for a different reason:
+ * the pool is a race between strangers where somebody slow simply loses, while
+ * this rider has been given the order and is expected to take it. Minutes, not
+ * seconds -- long enough to finish parking, short enough that a rider who has
+ * gone home does not hold the order until the two-hour sweep.
+ */
+const FLEET_ACCEPT_WINDOW_MS =
+    (Number(process.env.FLEET_ACCEPT_TIMEOUT_MINUTES) || 3) * 60 * 1000;
+
+/**
  * Hands the order to one named rider from the seller's own fleet.
  *
  * Not an offer and not a race. The shared pool shouts at everybody and lets
@@ -387,16 +399,54 @@ const FLEET_ESCALATE_AFTER_ATTEMPTS = Number(process.env.FLEET_ESCALATE_AFTER_AT
  * valve when the whole fleet is out.
  */
 async function assignFromOwnFleet(order, { attempt = 1 } = {}) {
-  // Somebody de-assigned from this order is not handed it again -- that was a
-  // decision about this rider and this order, and re-picking them would undo it
-  // on the next tick.
-  const excludeIds = (order.dispatch?.offeredTo || [])
-    .filter((offer) => offer.action === 'deassigned')
-    .map((offer) => String(offer.partnerId));
-
   const restaurant = order.restaurantId && typeof order.restaurantId === 'object'
     ? order.restaurantId
     : await FoodRestaurant.findById(order.restaurantId).select('location restaurantName').lean();
+
+  // An order already sitting with one of their riders is theirs until the
+  // accept window runs out. Re-picking inside it would take the order off
+  // somebody who is walking to their bike.
+  const holder = order.dispatch?.deliveryPartnerId;
+  if (holder && !order.dispatch?.acceptedAt && order.dispatch?.status === 'assigned') {
+    const waitedMs = Date.now() - new Date(order.dispatch.assignedAt || Date.now()).getTime();
+
+    if (waitedMs < FLEET_ACCEPT_WINDOW_MS) {
+      await FoodOrder.updateOne({ _id: order._id }, { $unset: { 'dispatch.dispatchingAt': 1 } });
+      await requeueFleetAttempt(order, attempt);
+      return order;
+    }
+
+    // Past it. A rider who has not answered in minutes is not on their way,
+    // and the order has to go back to the fleet rather than wait on somebody
+    // who has gone home -- which, before this, it did until the undispatched
+    // sweep cancelled it two hours later.
+    logger.warn(
+      `Fleet rider ${holder} did not accept order ${order._id} within ` +
+        `${Math.round(FLEET_ACCEPT_WINDOW_MS / 60000)} min. Releasing it back to the fleet.`,
+    );
+    await FoodOrder.updateOne(
+      { _id: order._id, 'dispatch.acceptedAt': { $exists: false } },
+      {
+        $set: { 'dispatch.status': 'unassigned', 'dispatch.deliveryPartnerId': null },
+        $unset: { 'dispatch.assignedAt': 1 },
+        $push: { 'dispatch.offeredTo': { partnerId: holder, at: new Date(), action: 'timeout' } },
+      },
+    );
+    void notifyFleetRelease(order, holder);
+    // The in-memory copy is now stale in exactly the field the pick reads.
+    order.dispatch.offeredTo = [
+      ...(order.dispatch.offeredTo || []),
+      { partnerId: holder, at: new Date(), action: 'timeout' },
+    ];
+  }
+
+  // Somebody de-assigned from this order is not handed it again -- that was a
+  // decision about this rider and this order, and re-picking them would undo it
+  // on the next tick. A rider who let the window lapse is skipped for the same
+  // reason: offering it back to them would rebuild the stall we just cleared.
+  const excludeIds = (order.dispatch?.offeredTo || [])
+    .filter((offer) => offer.action === 'deassigned' || offer.action === 'timeout')
+    .map((offer) => String(offer.partnerId));
 
   const chosen = await pickFleetPartnerForOrder(order, restaurant, { excludeIds });
 
@@ -429,15 +479,7 @@ async function assignFromOwnFleet(order, { attempt = 1 } = {}) {
         logger.warn(`Fleet escalation notice failed for order ${order._id}: ${err?.message || err}`);
       }
     }
-    await addOrderJob(
-      {
-        action: 'DISPATCH_TIMEOUT_CHECK',
-        orderMongoId: order._id.toString(),
-        orderId: order._id.toString(),
-        attempt: attempt + 1,
-      },
-      { delay: DRIVER_ACCEPT_WINDOW_MS },
-    );
+    await requeueFleetAttempt(order, attempt);
     return order;
   }
 
@@ -472,7 +514,60 @@ async function assignFromOwnFleet(order, { attempt = 1 } = {}) {
   );
 
   void notifyFleetAssignment(assigned, partnerId);
+
+  // Come back when their window runs out. Without this nothing ever revisits
+  // the order: the pool re-queues because it is still hunting, but a successful
+  // fleet assignment ends the hunt, so the accept deadline had nobody to
+  // enforce it and a rider who never tapped kept the order indefinitely.
+  await requeueFleetAttempt(assigned, attempt, FLEET_ACCEPT_WINDOW_MS + 1000, partnerId);
   return assigned;
+}
+
+/**
+ * Comes back to look again, on the pool's cadence unless told otherwise.
+ *
+ * `partnerId` matters: processDispatchTimeout only releases an order when it is
+ * told which rider was sitting on it. A job without one is consumed, matches
+ * nothing, and does nothing at all -- which is how the accept deadline first
+ * failed to fire.
+ */
+async function requeueFleetAttempt(order, attempt, delay = DRIVER_ACCEPT_WINDOW_MS, partnerId = null) {
+  await addOrderJob(
+    {
+      action: 'DISPATCH_TIMEOUT_CHECK',
+      orderMongoId: order._id.toString(),
+      orderId: order._id.toString(),
+      attempt: attempt + 1,
+      ...(partnerId ? { partnerId: String(partnerId) } : {}),
+    },
+    { delay },
+  );
+}
+
+/**
+ * Tells a rider an order they never accepted is no longer theirs.
+ *
+ * Without it the order simply vanishes from their list, which reads as a bug
+ * to the rider and as a missing order to anyone they ask about it.
+ */
+async function notifyFleetRelease(order, partnerId) {
+  try {
+    const io = getIO();
+    const payload = {
+      orderId: String(order._id),
+      orderMongoId: String(order._id),
+      order_id: order.order_id || '',
+      reason: 'Not accepted in time',
+    };
+    if (io) io.to(rooms.delivery(String(partnerId))).emit('order_deassigned', payload);
+    await notifyOwnersSafely([{ ownerType: 'DELIVERY_PARTNER', ownerId: String(partnerId) }], {
+      title: 'Order released',
+      body: `Order #${order.order_id || order._id} was not accepted in time and has gone back to the store.`,
+      data: { type: 'order_deassigned', orderId: String(order._id) },
+    });
+  } catch (err) {
+    logger.warn(`Fleet release notice failed for order ${order._id}: ${err?.message || err}`);
+  }
 }
 
 /**
