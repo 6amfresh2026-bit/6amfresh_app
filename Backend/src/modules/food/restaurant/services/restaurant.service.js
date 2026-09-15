@@ -429,6 +429,79 @@ const escapeRegex = (value) => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$
 
 const normalizeCuisine = (value) => String(value || '').trim().slice(0, 80);
 
+/**
+ * Metres from a fixed point to each store, as an aggregation expression.
+ *
+ * Haversine, the same formula haversineKm uses, so a distance shown in a
+ * listing and a distance charged for on the same pair of points agree.
+ *
+ * Null for a store that cannot be placed — no coordinates, a malformed pair, or
+ * the [0, 0] placeholder that onboarding leaves behind, which is in the Gulf of
+ * Guinea and would otherwise measure as thousands of kilometres and be filtered
+ * out of every listing.
+ */
+function buildDistanceExpression(lat, lng) {
+    const EARTH_RADIUS_M = 6371000;
+    const coords = '$location.coordinates';
+    const storeLng = { $arrayElemAt: [coords, 0] };
+    const storeLat = { $arrayElemAt: [coords, 1] };
+
+    const locatable = {
+        $and: [
+            { $isArray: coords },
+            { $eq: [{ $size: { $ifNull: [coords, []] } }, 2] },
+            // isNumber, not a type check against double: a whole-number
+            // longitude is stored as an int and would read as unlocatable.
+            { $isNumber: storeLat },
+            { $isNumber: storeLng },
+            // Not both zero: that is the placeholder, not a location.
+            { $gt: [{ $add: [{ $abs: storeLat }, { $abs: storeLng }] }, 0.000001] }
+        ]
+    };
+
+    const haversine = {
+        $let: {
+            vars: {
+                halfDLat: { $divide: [{ $degreesToRadians: { $subtract: [storeLat, lat] } }, 2] },
+                halfDLng: { $divide: [{ $degreesToRadians: { $subtract: [storeLng, lng] } }, 2] },
+                lat1: { $degreesToRadians: lat },
+                lat2: { $degreesToRadians: storeLat }
+            },
+            in: {
+                $multiply: [
+                    2 * EARTH_RADIUS_M,
+                    {
+                        $asin: {
+                            // Rounding can push the root a hair above 1 for a
+                            // near-antipodal pair, and $asin of that is an error
+                            // that would fail the whole listing.
+                            $min: [
+                                1,
+                                {
+                                    $sqrt: {
+                                        $add: [
+                                            { $pow: [{ $sin: '$$halfDLat' }, 2] },
+                                            {
+                                                $multiply: [
+                                                    { $cos: '$$lat1' },
+                                                    { $cos: '$$lat2' },
+                                                    { $pow: [{ $sin: '$$halfDLng' }, 2] }
+                                                ]
+                                            }
+                                        ]
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                ]
+            }
+        }
+    };
+
+    return { $cond: [locatable, haversine, null] };
+}
+
 const parseSortBy = (value) => {
     const v = String(value || '').trim();
     const allowed = new Set(['nearest', 'rating', 'newest', 'deliveryTime', 'price-low', 'price-high', 'rating-high', 'rating-low']);
@@ -2045,40 +2118,65 @@ export const listApprovedRestaurants = async (query = {}) => {
         deliveryRadiusKm: 1
     };
 
-    // Use $geoNear only when geo is explicitly needed (radius filter or nearest sorting).
-    // This avoids accidentally hiding restaurants that do not have coordinates yet.
-    const wantsGeo = (radiusKm !== null) || sortBy === 'nearest';
-    if (lat !== null && lng !== null && wantsGeo) {
-        const geoNear = {
-            $geoNear: {
-                near: { type: 'Point', coordinates: [lng, lat] },
-                distanceField: 'distanceMeters',
-                spherical: true,
-                query: filter
-            }
-        };
-        if (radiusKm !== null) {
-            geoNear.$geoNear.maxDistance = Math.max(0.1, radiusKm) * 1000;
-        }
+    // Distance is measured whenever we know where the customer is, not only when
+    // the client asks to sort or filter by it. A store's own delivery radius has
+    // to be applied to every listing, or a customer outside it browses a shop
+    // that will refuse them at checkout.
+    //
+    // Computed rather than taken from $geoNear on purpose. $geoNear silently
+    // drops documents with no coordinates, which would hide every store that has
+    // not finished onboarding -- the exact thing the old "only when explicitly
+    // needed" guard existed to avoid. Here an unlocatable store measures as null
+    // and is judged by none of the distance rules, so it stays listed.
+    const wantsGeo = lat !== null && lng !== null;
+    if (wantsGeo) {
+        const distanceMeters = buildDistanceExpression(lat, lng);
+        // Below a threshold the distance rules cannot judge a store, so they all
+        // have to skip it rather than treat unknown as zero or as infinity.
+        const measured = { $ne: ['$distanceMeters', null] };
+        const withinClientRadius =
+            radiusKm === null
+                ? null
+                : {
+                      $match: {
+                          $expr: {
+                              $or: [
+                                  { $not: [measured] },
+                                  { $lte: ['$distanceMeters', Math.max(0.1, radiusKm) * 1000] }
+                              ]
+                          }
+                      }
+                  };
 
         const sortStage = (() => {
-            if (sortBy === 'rating' || sortBy === 'rating-high') return { $sort: { rating: -1, distanceMeters: 1 } };
-            if (sortBy === 'rating-low') return { $sort: { rating: 1, distanceMeters: 1 } };
-            if (sortBy === 'price-low') return { $sort: { featuredPrice: 1, distanceMeters: 1 } };
-            if (sortBy === 'price-high') return { $sort: { featuredPrice: -1, distanceMeters: 1 } };
+            if (sortBy === 'rating' || sortBy === 'rating-high') return { $sort: { rating: -1, distanceSortKey: 1 } };
+            if (sortBy === 'rating-low') return { $sort: { rating: 1, distanceSortKey: 1 } };
+            if (sortBy === 'price-low') return { $sort: { featuredPrice: 1, distanceSortKey: 1 } };
+            if (sortBy === 'price-high') return { $sort: { featuredPrice: -1, distanceSortKey: 1 } };
             if (sortBy === 'newest') return { $sort: { createdAt: -1 } };
-            if (sortBy === 'deliveryTime') return { $sort: { estimatedDeliveryTimeMinutes: 1, distanceMeters: 1 } };
+            if (sortBy === 'deliveryTime') return { $sort: { estimatedDeliveryTimeMinutes: 1, distanceSortKey: 1 } };
             // nearest (default)
-            return { $sort: { distanceMeters: 1 } };
+            return { $sort: { distanceSortKey: 1 } };
         })();
 
         const basePipeline = [
-            geoNear,
+            { $match: filter },
+            { $addFields: { distanceMeters } },
             {
                 $addFields: {
-                    distanceInKm: { $round: [{ $divide: ['$distanceMeters', 1000] }, 2] }
+                    distanceInKm: {
+                        $cond: [
+                            { $eq: ['$distanceMeters', null] },
+                            null,
+                            { $round: [{ $divide: ['$distanceMeters', 1000] }, 2] }
+                        ]
+                    },
+                    // Nulls sort before numbers in Mongo, which would put every
+                    // store with no coordinates at the top of "nearest".
+                    distanceSortKey: { $ifNull: ['$distanceMeters', Number.MAX_SAFE_INTEGER] }
                 }
             },
+            ...(withinClientRadius ? [withinClientRadius] : []),
             // A store that will not deliver this far is not a result. Listing it
             // and refusing at checkout wastes the customer's whole shop, and the
             // refusal arrives after they have chosen everything.
@@ -2089,6 +2187,7 @@ export const listApprovedRestaurants = async (query = {}) => {
                 $match: {
                     $expr: {
                         $or: [
+                            { $not: [measured] },
                             { $not: [{ $gt: [{ $ifNull: ['$deliveryRadiusKm', 0] }, 0] }] },
                             { $lte: ['$distanceMeters', { $multiply: ['$deliveryRadiusKm', 1000] }] }
                         ]
