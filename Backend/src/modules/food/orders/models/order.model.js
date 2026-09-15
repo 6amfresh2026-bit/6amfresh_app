@@ -295,6 +295,24 @@ const posSchema = new mongoose.Schema(
 const dispatchSchema = new mongoose.Schema(
     {
         modeAtCreation: { type: String, enum: ['auto'], default: 'auto' },
+        /**
+         * How this order reached the rider it has.
+         *
+         * 'fleet' is handed straight to one named rider from the seller's own
+         * fleet; 'auto' is offered to every eligible rider in the shared pool
+         * and raced; 'manual' is a person choosing. Worth recording because
+         * they fail differently — a fleet order with nobody free waits, and a
+         * pool order with nobody free was shouted at an empty room — and from
+         * the order alone the two were indistinguishable.
+         */
+        assignmentMode: {
+            type: String,
+            enum: ['auto', 'fleet', 'manual'],
+            default: null,
+            index: true
+        },
+        /** Set when a person assigned it, so ops can tell who overrode what. */
+        assignedByRole: { type: String, enum: ['ADMIN', 'RESTAURANT'], default: null },
         status: {
             type: String,
             enum: ['unassigned', 'assigned', 'accepted', 'rejected', 'cancelled'],
