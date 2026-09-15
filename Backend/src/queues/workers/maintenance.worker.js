@@ -3,6 +3,7 @@ import { Worker, Queue } from 'bullmq';
 import { config } from '../../config/env.js';
 import { logger } from '../../utils/logger.js';
 import { getBullMQConnection } from '../connection.js';
+import { connectDB } from '../../config/db.js';
 import { MAINTENANCE_QUEUE } from '../queue.constants.js';
 import { processMaintenanceJob } from '../processors/maintenance.processor.js';
 
@@ -12,6 +13,11 @@ const startMaintenanceWorker = async () => {
         return null;
     }
 
+    // This processor reads and writes through Mongoose. Without a connection
+    // the worker starts happily, picks jobs up, and then fails each one ten
+    // seconds later with a buffering timeout -- a queue that looks healthy and
+    // does nothing.
+    await connectDB();
     const connection = getBullMQConnection();
     if (!connection) {
         logger.error('Maintenance worker: Redis connection unavailable. Exiting.');
