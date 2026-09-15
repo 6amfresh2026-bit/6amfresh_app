@@ -365,6 +365,14 @@ export async function updateDispatchSettings(dispatchMode, adminId) {
  * restaurant's orders are left untouched for the seller to assign by hand.
  */
 /**
+ * Attempts before an admin is told a seller's fleet has nobody free.
+ *
+ * Matches the shared pool's own escalation point, so a stuck order surfaces at
+ * the same age however it was being dispatched.
+ */
+const FLEET_ESCALATE_AFTER_ATTEMPTS = Number(process.env.FLEET_ESCALATE_AFTER_ATTEMPTS) || 6;
+
+/**
  * Hands the order to one named rider from the seller's own fleet.
  *
  * Not an offer and not a race. The shared pool shouts at everybody and lets
@@ -400,6 +408,27 @@ async function assignFromOwnFleet(order, { attempt = 1 } = {}) {
     // The lock has to come off or every later attempt sees "already
     // dispatching" and the order waits for a rider nobody is looking for.
     await FoodOrder.updateOne({ _id: order._id }, { $unset: { 'dispatch.dispatchingAt': 1 } });
+
+    // The shared pool escalates to an admin after a few failed rounds, and a
+    // fleet order that nobody can take is exactly as stuck -- more so, since it
+    // is not even being offered to anyone else. Without this it re-queued
+    // silently until the undispatched sweep cancelled it two hours later, and
+    // the first anyone heard was the cancellation.
+    if (attempt === FLEET_ESCALATE_AFTER_ATTEMPTS) {
+      logger.error(
+        `[CRITICAL] Order ${order._id} has had no free rider in ${restaurant?.restaurantName || 'the seller'}'s ` +
+          `own fleet for ${attempt} attempts. Someone has to assign it by hand.`,
+      );
+      try {
+        await notifyOwnersSafely([{ ownerType: 'ADMIN', ownerId: 'GLOBAL' }], {
+          title: 'No rider free in a seller fleet',
+          body: `Order #${order.order_id || order._id} is waiting: every rider at ${restaurant?.restaurantName || 'this seller'} is busy or offline. Assign one by hand.`,
+          data: { type: 'admin_alert_unassigned', orderId: order._id.toString() },
+        });
+      } catch (err) {
+        logger.warn(`Fleet escalation notice failed for order ${order._id}: ${err?.message || err}`);
+      }
+    }
     await addOrderJob(
       {
         action: 'DISPATCH_TIMEOUT_CHECK',
