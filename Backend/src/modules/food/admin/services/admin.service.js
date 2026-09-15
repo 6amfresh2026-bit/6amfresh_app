@@ -23,6 +23,7 @@ import { FoodOffer } from '../models/offer.model.js';
 import { FoodOfferUsage } from '../models/offerUsage.model.js';
 import { DeliveryBonusTransaction } from '../models/deliveryBonusTransaction.model.js';
 import { FoodEarningAddon } from '../models/earningAddon.model.js';
+import { unhideCorrectedExpiry } from '../../orders/services/inventory.service.js';
 import { FoodEarningAddonHistory } from '../models/earningAddonHistory.model.js';
 import { FoodRestaurantCommission } from '../models/restaurantCommission.model.js';
 import { FoodDeliveryCommissionRule } from '../models/deliveryCommissionRule.model.js';
@@ -4377,6 +4378,10 @@ export async function updateFood(id, body) {
         doc.categoryName = categoryName;
     }
     await doc.save();
+    // A mistyped expiry takes the product off the storefront within the hour;
+    // correcting it has to bring the product back, or the fix does nothing the
+    // admin can see and nothing explains why it is still dark.
+    if (body.expiryDate !== undefined) await unhideCorrectedExpiry(doc._id);
     return doc.toObject();
 }
 

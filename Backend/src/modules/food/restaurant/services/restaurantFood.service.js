@@ -16,6 +16,7 @@ import {
     categoryAllowsFoodType,
     GLOBAL_CATEGORY_FILTER
 } from '../../shared/categoryWorkflow.js';
+import { unhideCorrectedExpiry } from '../../orders/services/inventory.service.js';
 
 const toStr = (v) => (v != null ? String(v).trim() : '');
 const APPROVED_CATEGORY_FILTER = [
@@ -575,6 +576,10 @@ export async function updateRestaurantFood(restaurantId, foodId, body = {}) {
         },
         { new: true }
     ).lean();
+
+    // Same correction the admin panel gets: a seller who fixes a mistyped
+    // expiry must see the product come back, not stay dark with no explanation.
+    if (updated && body.expiryDate !== undefined) await unhideCorrectedExpiry(updated._id);
 
     if (updated && shouldResubmitForApproval) {
         try {
