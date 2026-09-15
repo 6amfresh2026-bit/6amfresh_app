@@ -1846,6 +1846,16 @@ export async function cancelOrder(orderId, userId, reason) {
 
   await restoreOrderStock(order);
 
+  // Whoever was riding for this needs releasing before anything else. A rider
+  // is dispatched while the order is still `created`, which is exactly the
+  // status a customer may still cancel from -- so cancelling at three and a
+  // half minutes cancels an order somebody is already on their way to collect.
+  const strandedRiderId = order.dispatch?.deliveryPartnerId || null;
+  if (strandedRiderId) {
+    order.dispatch.status = "cancelled";
+    order.dispatch.deliveryPartnerId = null;
+  }
+
   const paymentMethod = String(order.payment?.method || "cash").toLowerCase();
   const paymentStatus = String(order.payment?.status || "cod_pending").toLowerCase();
   try {
@@ -1918,9 +1928,34 @@ export async function cancelOrder(orderId, userId, reason) {
       };
       io.to(rooms.user(userId)).emit("order_status_update", payload);
       io.to(rooms.restaurant(order.restaurantId)).emit("order_status_update", payload);
+      // The same event the rider app already handles for a release, so a rider
+      // heading to the shop is turned around rather than finding out there.
+      if (strandedRiderId) {
+        io.to(rooms.delivery(String(strandedRiderId))).emit("order_deassigned", {
+          orderId: String(order._id),
+          orderMongoId: String(order._id),
+          order_id: order.order_id || "",
+          reason: "The customer cancelled this order",
+        });
+      }
     }
   } catch (err) {
     logger.warn(`cancelOrder socket emit failed: ${err?.message || err}`);
+  }
+
+  if (strandedRiderId) {
+    try {
+      await notifyOwnersSafely(
+        [{ ownerType: "DELIVERY_PARTNER", ownerId: String(strandedRiderId) }],
+        {
+          title: "Order cancelled",
+          body: `Order #${order.order_id || order._id} was cancelled by the customer. Do not collect it.`,
+          data: { type: "order_deassigned", orderId: String(order._id) },
+        },
+      );
+    } catch (err) {
+      logger.warn(`cancelOrder rider notice failed for ${order._id}: ${err?.message || err}`);
+    }
   }
 
   return normalizeOrderForClient(order);
@@ -3006,7 +3041,27 @@ export async function updateOrderStatusAdmin(orderId, orderStatus, note = "", ad
     });
 
     if (String(orderStatus).includes("cancel")) {
-        await restoreOrderStock(order);
+        // Only if the goods are still in the shop.
+        //
+        // Cancellation outranks every other status here, so an admin can cancel
+        // an order a rider collected ten minutes ago -- and this used to put
+        // those units straight back on the shelf. They are in a bag on a bike:
+        // the shop then believes it has cover it does not have and sells the
+        // same stock again. Returning them is a physical act, and the count can
+        // only follow it, never lead it.
+        const alreadyCollected =
+            Boolean(order.deliveryState?.pickedUpAt) ||
+            ["picked_up", "reached_drop"].includes(String(from));
+
+        if (alreadyCollected) {
+            logger.warn(
+                `Order ${order.order_id || order._id} cancelled after pickup: ${order.items?.length || 0} line(s) ` +
+                    'stay out of stock until someone books them back in.',
+            );
+        } else {
+            await restoreOrderStock(order);
+        }
+
         try {
             await applyCancellationRefund(order, { cancelledBy: 'admin' });
         } catch (err) {

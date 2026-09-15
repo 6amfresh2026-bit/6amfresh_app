@@ -5,7 +5,12 @@ import { connectTestDb, disconnectTestDb, resetDb, someId } from './helpers/db.j
 import { FoodOrder } from '../src/modules/food/orders/models/order.model.js';
 import { FoodRestaurant } from '../src/modules/food/restaurant/models/restaurant.model.js';
 import { dispatchOrdersSellerDidNotAccept } from '../src/modules/food/orders/services/order-dispatch.service.js';
-import { expireUnacceptedOrders } from '../src/modules/food/orders/services/order.service.js';
+import {
+    expireUnacceptedOrders,
+    cancelOrder,
+    updateOrderStatusAdmin
+} from '../src/modules/food/orders/services/order.service.js';
+import { FoodItem } from '../src/modules/food/admin/models/food.model.js';
 
 /**
  * The seller answers first, but not for ever.
@@ -179,5 +184,68 @@ describe('an order cancelled while a rider was already holding it', () => {
         assert.equal(after.orderStatus, 'cancelled_by_restaurant');
         assert.equal(after.dispatch.deliveryPartnerId, null, 'the rider must not still be holding it');
         assert.equal(after.dispatch.status, 'cancelled');
+    });
+});
+
+describe('cancelling an order a rider is already working', () => {
+    it('releases the rider when the customer cancels', async () => {
+        // A rider is dispatched while the order is still `created`, which is
+        // exactly the status a customer may still cancel from.
+        const riderId = someId();
+        const userId = someId();
+        const order = await anOrder({
+            userId,
+            dispatch: { status: 'assigned', deliveryPartnerId: riderId, assignmentMode: 'fleet' }
+        });
+
+        await cancelOrder(String(order._id), String(userId), 'changed my mind');
+
+        const after = await FoodOrder.findById(order._id).lean();
+        assert.equal(after.orderStatus, 'cancelled_by_user');
+        assert.equal(after.dispatch.deliveryPartnerId, null);
+        assert.equal(after.dispatch.status, 'cancelled');
+    });
+
+    it('does not put collected goods back on the shelf', async () => {
+        // Cancellation outranks every other status, so an admin can cancel an
+        // order a rider collected ten minutes ago. Those units are in a bag on
+        // a bike; restocking them sells the same goods twice.
+        const item = await FoodItem.create({
+            restaurantId: STORE._id,
+            name: 'Milk',
+            price: 50,
+            stockQty: 5
+        });
+        const order = await anOrder({
+            items: [{ itemId: item._id, name: 'Milk', price: 50, quantity: 2 }],
+            orderStatus: 'picked_up',
+            stockReservedAt: new Date(),
+            deliveryState: { pickedUpAt: new Date() },
+            dispatch: { status: 'accepted', deliveryPartnerId: someId() }
+        });
+
+        await updateOrderStatusAdmin(String(order._id), 'cancelled_by_admin', 'test', someId());
+
+        const after = await FoodItem.findById(item._id).lean();
+        assert.equal(after.stockQty, 5, 'goods on a bike are not back on the shelf');
+    });
+
+    it('does restock an order that never left the shop', async () => {
+        const item = await FoodItem.create({
+            restaurantId: STORE._id,
+            name: 'Bread',
+            price: 40,
+            stockQty: 5
+        });
+        const order = await anOrder({
+            items: [{ itemId: item._id, name: 'Bread', price: 40, quantity: 2 }],
+            orderStatus: 'confirmed',
+            stockReservedAt: new Date()
+        });
+
+        await updateOrderStatusAdmin(String(order._id), 'cancelled_by_admin', 'test', someId());
+
+        const after = await FoodItem.findById(item._id).lean();
+        assert.equal(after.stockQty, 7, 'nothing left the building, so the units come back');
     });
 });
