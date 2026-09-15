@@ -278,4 +278,28 @@ describe('cancelling an order a rider is already working', () => {
         const after = await FoodItem.findById(item._id).lean();
         assert.equal(after.stockQty, 5, 'the seller path invented stock too');
     });
+
+    it('treats an admin-marked pickup as collected, with no deliveryState to read', async () => {
+        // The rider app writes deliveryState.pickedUpAt; an admin moving the
+        // order by hand writes only the status, and the cancellation paths
+        // overwrite that status before the stock guard runs. With only those
+        // two signals the guard failed open and restocked goods on a bike.
+        const item = await FoodItem.create({
+            restaurantId: STORE._id,
+            name: 'Ghee',
+            price: 90,
+            stockQty: 5
+        });
+        const order = await anOrder({
+            items: [{ itemId: item._id, name: 'Ghee', price: 90, quantity: 2 }],
+            orderStatus: 'picked_up',
+            stockReservedAt: new Date(),
+            dispatch: { status: 'accepted', deliveryPartnerId: someId() }
+        });
+
+        await updateOrderStatusAdmin(String(order._id), 'cancelled_by_admin', 'test', someId());
+
+        const after = await FoodItem.findById(item._id).lean();
+        assert.equal(after.stockQty, 5);
+    });
 });

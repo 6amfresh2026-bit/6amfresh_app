@@ -274,25 +274,46 @@ async function incrementStock(itemId, qty, ctx = {}) {
  * for the same order (the timeout sweep runs from both a queue job and four
  * read paths), and a double restock would quietly invent inventory.
  */
+const COLLECTED_STATUSES = ['picked_up', 'reached_drop', 'delivered'];
+
 /**
  * Whether the goods on this order have physically left the shop.
  *
- * Prefers what the caller already has: every cancellation path passes a full
- * order document. Falls back to a read for the callers that pass a stub.
+ * Three signals, because no one of them holds on its own:
+ *
+ *  - `deliveryState.pickedUpAt`, which the rider app writes at pickup. Missing
+ *    whenever an admin moved the order to picked_up by hand, since that path
+ *    only sets the status.
+ *  - the current status, which is useless to the cancellation callers: they set
+ *    orderStatus to cancelled_* before calling this, so by the time it runs the
+ *    order no longer says it was collected.
+ *  - the status history, which survives both. An admin override records the
+ *    transition even when it records nothing else, and pushStatusHistory has
+ *    already run by the time these callers reach here.
+ *
+ * Checking only the first two restocked goods on a bike whenever pickup had not
+ * been recorded through the rider app.
  */
 async function hasLeftTheStore(orderLike) {
-  const collectedStatuses = ['picked_up', 'reached_drop', 'delivered'];
-  if (orderLike?.deliveryState !== undefined || orderLike?.orderStatus !== undefined) {
-    return (
-      Boolean(orderLike?.deliveryState?.pickedUpAt) ||
-      collectedStatuses.includes(String(orderLike?.orderStatus || ''))
-    );
-  }
-  const doc = await FoodOrder.findById(orderLike._id).select('orderStatus deliveryState').lean();
-  return (
-    Boolean(doc?.deliveryState?.pickedUpAt) ||
-    collectedStatuses.includes(String(doc?.orderStatus || ''))
-  );
+  const collected = (source) =>
+    Boolean(source?.deliveryState?.pickedUpAt) ||
+    COLLECTED_STATUSES.includes(String(source?.orderStatus || '')) ||
+    (Array.isArray(source?.statusHistory) &&
+      source.statusHistory.some(
+        (entry) =>
+          COLLECTED_STATUSES.includes(String(entry?.from || '')) ||
+          COLLECTED_STATUSES.includes(String(entry?.to || '')),
+      ));
+
+  if (collected(orderLike)) return true;
+
+  // A caller that passed a stub, or one whose document predates any of these
+  // signals, still gets a straight answer.
+  if (orderLike?.statusHistory !== undefined) return false;
+  const doc = await FoodOrder.findById(orderLike._id)
+    .select('orderStatus deliveryState statusHistory')
+    .lean();
+  return collected(doc);
 }
 
 export async function restoreOrderStock(orderLike) {
