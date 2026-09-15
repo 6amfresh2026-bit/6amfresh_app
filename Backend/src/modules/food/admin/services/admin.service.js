@@ -3070,6 +3070,23 @@ export async function deleteUnregisteredRestaurant(id) {
     return deleted;
 }
 
+/**
+ * How far a store delivers, as the admin typed it.
+ *
+ * Empty and null mean no limit, the same as zero, so clearing the box actually
+ * clears the radius instead of being read as "not sent, leave it alone".
+ */
+function parseDeliveryRadiusKm(raw) {
+    if (raw === null || raw === '') return 0;
+    const km = toFiniteNumber(raw);
+    if (km === null) throw new ValidationError('Delivery radius must be a number');
+    if (km < 0) throw new ValidationError('Delivery radius cannot be negative');
+    // Past this a "radius" is not describing a quick-commerce store, and the
+    // figure is far more likely to be metres typed into a kilometre field.
+    if (km > 50) throw new ValidationError('Delivery radius cannot be more than 50 km');
+    return km;
+}
+
 export async function updateRestaurantById(id, body = {}) {
     if (!id || !mongoose.Types.ObjectId.isValid(id)) return null;
     const doc = await FoodRestaurant.findById(id);
@@ -3094,6 +3111,17 @@ export async function updateRestaurantById(id, body = {}) {
 
     if (body.pureVegRestaurant !== undefined) {
         doc.pureVegRestaurant = parseBooleanLike(body.pureVegRestaurant, 'pureVegRestaurant');
+    }
+
+    // Admin-only, like auto-accept below: a seller shrinking their own radius
+    // quietly disappears from customers who were ordering from them, and one
+    // widening it takes on promises the fleet has to keep.
+    //
+    // Accepted here as well as on the location save because the location form
+    // cannot be submitted without re-picking the address from the map, and
+    // changing how far a store delivers is not a reason to re-enter where it is.
+    if (body.deliveryRadiusKm !== undefined) {
+        doc.deliveryRadiusKm = parseDeliveryRadiusKm(body.deliveryRadiusKm);
     }
 
     // Admin-only on purpose: a seller cannot grant themselves auto-accept.
@@ -3310,6 +3338,12 @@ export async function updateRestaurantLocation(id, body = {}) {
         } else {
             doc.zoneId = new mongoose.Types.ObjectId(zoneId);
         }
+    }
+
+    // Sits with the zone because it answers the other half of the same
+    // question: the zone is which block, this is how far across it.
+    if (body.deliveryRadiusKm !== undefined) {
+        doc.deliveryRadiusKm = parseDeliveryRadiusKm(body.deliveryRadiusKm);
     }
 
     await doc.save();
