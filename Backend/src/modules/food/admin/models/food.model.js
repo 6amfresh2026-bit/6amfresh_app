@@ -124,6 +124,17 @@ const foodSchema = new mongoose.Schema(
             enum: ['manual', 'specific-time', 'next-business-day', 'custom-date-time'],
             default: undefined
         },
+        /**
+         * Set only by the expired-product sweep, cleared only when the expiry
+         * stops being in the past.
+         *
+         * `isAvailable: false` does not say why, and the reasons want different
+         * treatment: a corrected expiry date should put the product back on the
+         * storefront, but it must not revive one a seller switched off by hand
+         * or one that is simply out of stock. Recording which hide was ours is
+         * the only way to reverse exactly that one.
+         */
+        hiddenByExpiry: { type: Boolean, default: false },
         // ───────────── ERP product master (vasy-style "Create New") ─────────────
         // Every field below is optional with a null/empty default, so the documents
         // that exist today keep validating and keep selling untouched.

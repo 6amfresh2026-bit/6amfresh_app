@@ -320,10 +320,56 @@ export async function hideExpiredProducts({ now = new Date() } = {}) {
       expiryDate: { $ne: null, $lte: now },
       isAvailable: true,
     },
-    { $set: { isAvailable: false } },
+    // Marked as ours. `isAvailable: false` does not say who set it, and a
+    // corrected expiry must revive only the products this sweep hid — never
+    // one a seller switched off by hand or one that is out of stock.
+    { $set: { isAvailable: false, hiddenByExpiry: true } },
   );
 
   const hidden = Number(result?.modifiedCount) || 0;
   if (hidden > 0) logger.info(`[stock] hid ${hidden} expired product(s) from the storefront`);
   return hidden;
+}
+
+/**
+ * Puts a product back after its expiry date is corrected.
+ *
+ * A mistyped date takes the product off the storefront within the hour, and
+ * without this the fix does nothing visible: the admin corrects the date, the
+ * product stays dark, and nothing on the screen explains why. Reversing our own
+ * hide is safe; reviving anything else is not, so this restores exactly the
+ * products carrying the sweep's mark and leaves every other dark product alone.
+ *
+ * Call it after writing an expiry. It is a no-op for a product that was never
+ * hidden, which is the ordinary case.
+ */
+export async function unhideCorrectedExpiry(itemId) {
+  if (!itemId || !mongoose.Types.ObjectId.isValid(String(itemId))) return false;
+  const id = new mongoose.Types.ObjectId(String(itemId));
+  const now = new Date();
+  const expiryIsFine = [{ expiryDate: null }, { expiryDate: { $gt: now } }];
+
+  const restored = await FoodItem.updateOne(
+    {
+      _id: id,
+      hiddenByExpiry: true,
+      isAvailable: false,
+      // A hand switch-off outranks a corrected date, exactly as it outranks a
+      // restock, and a product with nothing on the shelf stays hidden for the
+      // other reason it is hidden.
+      stockOffMode: { $in: [null, undefined] },
+      $and: [{ $or: expiryIsFine }, { $or: [{ stockQty: null }, { stockQty: { $gt: 0 } }] }],
+    },
+    { $set: { isAvailable: true, hiddenByExpiry: false } },
+  );
+
+  // The mark outlives the hide when somebody switches the product back on by
+  // hand first. Left standing it would let a later correction revive a product
+  // that by then is dark for a completely different reason.
+  await FoodItem.updateOne(
+    { _id: id, hiddenByExpiry: true, $or: expiryIsFine },
+    { $set: { hiddenByExpiry: false } },
+  );
+
+  return (Number(restored?.modifiedCount) || 0) > 0;
 }
