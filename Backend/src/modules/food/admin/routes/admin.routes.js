@@ -602,6 +602,33 @@ router.patch(
     requireAdminPermission('order_management', 'edit'),
     adminController.deassignAndResendOrder
 );
+// Manual assignment, the escalation path when a seller's own fleet is out.
+router.get(
+    '/orders/:orderId/assignable-riders',
+    requireAdminPermission('order_management', 'view'),
+    adminController.getAssignableRiders
+);
+router.post(
+    '/orders/:orderId/assign-delivery',
+    requireAdminPermission('order_management', 'edit'),
+    adminController.assignOrderToRider
+);
+// Seller-wise rider management: who belongs to which shop.
+router.get(
+    '/sellers/:restaurantId/fleet',
+    requireAdminPermission('restaurant_management', 'view'),
+    adminController.getSellerFleet
+);
+router.post(
+    '/sellers/:restaurantId/fleet',
+    requireAdminPermission('restaurant_management', 'edit'),
+    adminController.assignRiderToSeller
+);
+router.delete(
+    '/sellers/:restaurantId/fleet/:deliveryPartnerId',
+    requireAdminPermission('restaurant_management', 'edit'),
+    adminController.removeRiderFromSeller
+);
 router.post(
     '/orders/:orderId/resend-notification',
     requireAdminPermission('order_management', 'edit'),

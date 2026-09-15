@@ -1,6 +1,7 @@
 import mongoose from 'mongoose';
 import * as adminService from '../services/admin.service.js';
 import * as featureSettingsService from '../services/featureSettings.service.js';
+import * as adminFleetService from '../services/adminFleet.service.js';
 import { validateCategoryListQuery, validateCategoryRejectDto, validateCategoryUpsertDto } from '../validators/category.validator.js';
 import { validateCreateOfferDto, validateUpdateOfferCartVisibilityDto } from '../validators/offer.validator.js';
 import { validateAddDeliveryBonusDto } from '../validators/deliveryBonus.validator.js';
@@ -1944,6 +1945,62 @@ export async function updateFeatureSetting(req, res, next) {
             return res.status(404).json({ success: false, message: 'Feature not found' });
         }
         res.status(200).json({ success: true, message: 'Feature setting updated successfully', data });
+    } catch (error) {
+        next(error);
+    }
+}
+
+// ----- Seller fleets: which riders belong to which shop -----
+export async function getSellerFleet(req, res, next) {
+    try {
+        const data = await adminFleetService.listSellerFleet(req.params.restaurantId);
+        res.status(200).json({ success: true, message: 'Seller fleet fetched successfully', data });
+    } catch (error) {
+        next(error);
+    }
+}
+
+export async function assignRiderToSeller(req, res, next) {
+    try {
+        const data = await adminFleetService.assignRiderToSeller(
+            req.params.restaurantId,
+            req.body?.deliveryPartnerId
+        );
+        res.status(200).json({ success: true, message: 'Rider added to this seller', data });
+    } catch (error) {
+        next(error);
+    }
+}
+
+export async function removeRiderFromSeller(req, res, next) {
+    try {
+        const data = await adminFleetService.removeRiderFromSeller(
+            req.params.restaurantId,
+            req.params.deliveryPartnerId
+        );
+        res.status(200).json({ success: true, message: 'Rider removed from this seller', data });
+    } catch (error) {
+        next(error);
+    }
+}
+
+export async function getAssignableRiders(req, res, next) {
+    try {
+        const data = await adminFleetService.listAssignableRiders(req.params.orderId);
+        res.status(200).json({ success: true, message: 'Riders fetched successfully', data });
+    } catch (error) {
+        next(error);
+    }
+}
+
+export async function assignOrderToRider(req, res, next) {
+    try {
+        const data = await adminFleetService.adminAssignOrderToRider(
+            req.params.orderId,
+            req.body?.deliveryPartnerId,
+            req.user?.userId
+        );
+        res.status(200).json({ success: true, message: 'Delivery partner assigned successfully', data });
     } catch (error) {
         next(error);
     }
