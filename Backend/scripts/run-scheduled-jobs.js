@@ -6,6 +6,7 @@ import { expireExpiredOffers, renewMonthlyOffers, notifyUpcomingMonthlyOffers } 
 import { syncExpiredFssaiNotifications } from '../src/modules/food/restaurant/services/fssaiExpiry.service.js';
 import { runBillingCatchUp } from '../src/modules/food/restaurant/services/subscriptionBilling.service.js';
 import { writeOffExpiredBatches } from '../src/modules/food/orders/services/stockBatch.service.js';
+import { hideExpiredProducts } from '../src/modules/food/orders/services/inventory.service.js';
 import { logger } from '../src/utils/logger.js';
 
 let expireOffersInterval = null;
@@ -97,6 +98,16 @@ const start = async () => {
                 if (written > 0) logger.warn(`Wrote off ${written} expired stock batch(es)`);
             } catch (err) {
                 logger.error(`Expired batch sweep error: ${err.message}`);
+            }
+            try {
+                // The other half of the same job: a product carrying its own
+                // expiry has no batches to write off, just a date that has
+                // passed. Separately caught so a failure in one sweep does not
+                // leave the other unrun.
+                const hidden = await hideExpiredProducts({});
+                if (hidden > 0) logger.warn(`Hid ${hidden} expired product(s) from the storefront`);
+            } catch (err) {
+                logger.error(`Expired product sweep error: ${err.message}`);
             }
         };
 
