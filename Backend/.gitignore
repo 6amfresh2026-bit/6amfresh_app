@@ -8,3 +8,9 @@ coverage/
 /uploads/
 # Deploy webhook mutex (see src/routes/deploy.routes.js)
 .deploy.lock/
+
+# Firebase service account and anything else secret-shaped.
+# Never commit these: the private key grants admin access to the project.
+/secrets/
+*service-account*.json
+*serviceAccountKey*.json
