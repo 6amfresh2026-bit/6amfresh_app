@@ -302,7 +302,15 @@ export default function EditRestaurant() {
     }
   }, [])
 
+  // Re-run once the form is actually on screen.
+  //
+  // The whole form sits behind `loading`, so on mount this effect ran before
+  // the search input existed, took the early return, and with an empty
+  // dependency list never ran again -- Places autocomplete was never wired up
+  // on this page at all. That is why the location form could only be saved by
+  // picking an address from a dropdown that never appeared.
   useEffect(() => {
+    if (loading) return
     if (!locationSearchInputRef.current) return
     if (placesAutocompleteRef.current) return
 
@@ -374,7 +382,7 @@ export default function EditRestaurant() {
       cancelled = true
       placesAutocompleteRef.current = null
     }
-  }, [])
+  }, [loading, restaurantId])
 
   const currentZoneLabel = useMemo(() => {
     const zid = normalizeZoneId(locationForm.zoneId)
