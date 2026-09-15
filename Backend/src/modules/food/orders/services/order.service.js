@@ -10,6 +10,7 @@ import { FoodZone } from '../../admin/models/zone.model.js';
 import { ValidationError, ForbiddenError, NotFoundError } from '../../../../core/auth/errors.js';
 import { reserveStockForItems, releaseReservations, restoreOrderStock } from './inventory.service.js';
 import { findZoneForPoint, readAddressPoint } from '../../shared/zoneServiceability.js';
+import { parseGeoPoint } from '../../shared/geo.utils.js';
 import { buildPaginationOptions, buildPaginatedResult } from '../../../../utils/helpers.js';
 import { FoodOffer } from '../../admin/models/offer.model.js';
 import { FoodOfferUsage } from '../../admin/models/offerUsage.model.js';
@@ -261,7 +262,38 @@ async function resolveServiceableZone(restaurant, deliveryAddress) {
     throw new ValidationError('This seller does not deliver to the selected address');
   }
 
+  assertWithinSellerRadius(restaurant, point);
+
   return zone;
+}
+
+/**
+ * The other half of serviceability: how far into its block a store will go.
+ *
+ * A zone can be several kilometres across, and a store at one edge of it cannot
+ * serve the far side on a quick-commerce promise. The zone alone let it try.
+ *
+ * Silent for the stores that have no radius set, which is all of them until an
+ * admin chooses one.
+ */
+export function assertWithinSellerRadius(restaurant, addressPoint) {
+  const radiusKm = Number(restaurant?.deliveryRadiusKm) || 0;
+  if (radiusKm <= 0) return;
+
+  const store = parseGeoPoint(restaurant);
+  // A store with no coordinates cannot be measured from. Refusing every order
+  // it takes would punish the customer for the store's missing setup, and the
+  // zone check above has already placed the address inside its block.
+  if (!store) return;
+
+  const km = haversineKm(store.lat, store.lng, addressPoint.lat, addressPoint.lng);
+  if (!Number.isFinite(km) || km <= radiusKm) return;
+
+  // The figure matters: "outside the delivery area" reads as a bug to somebody
+  // standing just past the line, and tells support nothing.
+  throw new ValidationError(
+    `This store delivers within ${radiusKm} km. That address is about ${km.toFixed(1)} km away.`,
+  );
 }
 
 async function expireStalePendingPaymentOrders() {
