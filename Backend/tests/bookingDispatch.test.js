@@ -5,6 +5,7 @@ import { connectTestDb, disconnectTestDb, resetDb, someId } from './helpers/db.j
 import { FoodOrder } from '../src/modules/food/orders/models/order.model.js';
 import { FoodRestaurant } from '../src/modules/food/restaurant/models/restaurant.model.js';
 import { dispatchDueBookings } from '../src/modules/food/orders/services/order-dispatch.service.js';
+import { FoodDeliveryPartner } from '../src/modules/food/delivery/models/deliveryPartner.model.js';
 
 /**
  * Bookings, and when a rider is finally sought for one.
@@ -120,5 +121,37 @@ describe('what the booking sweep must never touch', () => {
             await aBooking({ scheduledAt: new Date(Date.now() + 5 * MINUTE) });
         }
         assert.equal(await dispatchDueBookings({}), 3);
+    });
+
+    it('gives a booking its dispatch lead instead of waiting for the window', async () => {
+        // A booking's acceptance deadline is the window itself, so deriving
+        // "when the seller saw it" from that put the wait in the future and
+        // held the order until the window opened -- a rider sought at 7am for
+        // a 7am round rather than setting off before it. The seller has had
+        // the booking since it was placed.
+        // A rider of the seller's own, so "held" and "dispatched" are
+        // distinguishable: with nobody to send, both look like `unassigned`.
+        await FoodDeliveryPartner.create({
+            name: 'Fleet Rider',
+            phone: '9123456780',
+            status: 'approved',
+            availabilityStatus: 'online',
+            restaurantId: STORE._id,
+            lastLat: 17.385,
+            lastLng: 78.4867,
+            lastLocationAt: new Date()
+        });
+
+        const placedAnHourAgo = await aBooking({ scheduledAt: new Date(Date.now() + 5 * MINUTE) });
+        await FoodOrder.collection.updateOne(
+            { _id: placedAnHourAgo._id },
+            { $set: { createdAt: new Date(Date.now() - HOUR), acceptanceDeadlineAt: new Date(Date.now() + 5 * MINUTE) } },
+        );
+
+        assert.equal(await dispatchDueBookings({}), 1);
+
+        const after = await FoodOrder.findById(placedAnHourAgo._id).select('dispatch').lean();
+        assert.equal(after.dispatch.status, 'assigned', 'the rider hunt should have started before the window');
+        assert.equal(after.dispatch.assignmentMode, 'fleet');
     });
 });

@@ -512,6 +512,14 @@ const SELLER_ACCEPT_DISPATCH_MS =
  * anchor. Falls back to createdAt for orders written before that was stored.
  */
 const sellerSawOrderAt = (order) => {
+    // A booking is the exception, because its acceptance deadline is the window
+    // itself rather than a few minutes from now -- so winding that back would
+    // put "when the seller saw it" in the future and hold the order until the
+    // window opened. That defeats the dispatch lead entirely: the rider would
+    // be sought at 7am for a 7am round instead of setting off before it. The
+    // seller has genuinely had a booking since it was placed.
+    if (order?.scheduledAt) return new Date(order?.createdAt || Date.now()).getTime();
+
     const deadline = order?.acceptanceDeadlineAt ? new Date(order.acceptanceDeadlineAt).getTime() : null;
     const windowMs = (Number(order?.acceptanceWindowSeconds) || 240) * 1000;
     if (deadline && Number.isFinite(deadline)) return deadline - windowMs;
