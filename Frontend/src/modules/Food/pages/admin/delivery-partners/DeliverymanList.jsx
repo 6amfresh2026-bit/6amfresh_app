@@ -1,5 +1,6 @@
 import { useState, useMemo, useEffect } from "react"
-import { Search, Download, ChevronDown, Eye, User, Star, ArrowUpDown, Settings, FileText, FileSpreadsheet, Loader2, Check, Columns, ExternalLink, Calendar, MapPin, CreditCard, Mail, Phone, Bike, FileCheck, Pencil, Save, Trash2, X, AlertTriangle } from "lucide-react"
+import { Link } from "react-router-dom"
+import { Search, Download, ChevronDown, Eye, History, Filter, User, Star, ArrowUpDown, Settings, FileText, FileSpreadsheet, Loader2, Check, Columns, ExternalLink, Calendar, MapPin, CreditCard, Mail, Phone, Bike, FileCheck, Pencil, Save, Trash2, X, AlertTriangle } from "lucide-react"
 import { adminAPI } from "@food/api"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@food/components/ui/dropdown-menu"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@food/components/ui/dialog"
@@ -15,6 +16,19 @@ const formatCurrency = (amount) => {
 
 export default function DeliverymanList() {
   const [searchQuery, setSearchQuery] = useState("")
+  // Server-side, alongside the search: the list is the whole approved fleet,
+  // and scanning it for "who is online in Hyderabad and can actually be
+  // reached" was a manual read of every row.
+  const [filters, setFilters] = useState({
+    availability: "",
+    zone: "",
+    vehicleType: "",
+    fleet: "",
+    reachable: "",
+  })
+  const [filterOptions, setFilterOptions] = useState({ zones: [], vehicleTypes: [] })
+  const [sellers, setSellers] = useState([])
+  const [filtersOpen, setFiltersOpen] = useState(false)
   const [deliverymen, setDeliverymen] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
@@ -81,6 +95,10 @@ export default function DeliverymanList() {
         params.search = searchQuery.trim()
       }
 
+      Object.entries(filters).forEach(([key, value]) => {
+        if (value) params[key] = value
+      })
+
       const [partnersResponse, walletRowsResult] = await Promise.allSettled([
         adminAPI.getDeliveryPartners(params),
         fetchAllWalletRows(searchQuery.trim()),
@@ -88,6 +106,8 @@ export default function DeliverymanList() {
 
       if (partnersResponse.status === "fulfilled" && partnersResponse.value?.data?.success) {
         const partners = partnersResponse.value.data.data.deliveryPartners || []
+        const options = partnersResponse.value.data.data.filterOptions
+        if (options) setFilterOptions(options)
         const walletRows = walletRowsResult.status === "fulfilled" ? walletRowsResult.value || [] : []
 
         const walletMap = new Map(
@@ -144,6 +164,18 @@ availableCashLimit: wallet?.availableCashLimit || 0,
     fetchDeliverymen()
   }, [])
 
+  useEffect(() => {
+    ;(async () => {
+      try {
+        const res = await adminAPI.getRestaurants({ limit: 1000 })
+        const list = res?.data?.data?.restaurants || res?.data?.restaurants || []
+        setSellers(Array.isArray(list) ? list : [])
+      } catch {
+        // The fleet filter falls back to its own-fleet/pool options.
+      }
+    })()
+  }, [])
+
   // Debounced search effect
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -152,7 +184,17 @@ availableCashLimit: wallet?.availableCashLimit || 0,
 
     return () => clearTimeout(timer)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchQuery])
+  }, [searchQuery, filters])
+
+  const activeFilterCount = Object.values(filters).filter(Boolean).length
+
+  const setFilter = (key, value) => setFilters((prev) => ({ ...prev, [key]: value }))
+
+  const clearFilters = () =>
+    setFilters({ availability: "", zone: "", vehicleType: "", fleet: "", reachable: "" })
+
+  const selectClass =
+    "h-10 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-400"
 
   const filteredDeliverymen = useMemo(() => {
     // Backend already handles search, but we can do client-side filtering if needed
@@ -489,6 +531,23 @@ availableCashLimit: deliveryman.availableCashLimit || 0,
               </div>
 
               <button
+                onClick={() => setFiltersOpen((v) => !v)}
+                className={`px-4 py-2.5 text-sm font-medium rounded-lg border flex items-center gap-2 transition-all ${
+                  activeFilterCount > 0
+                    ? "border-blue-500 bg-blue-50 text-blue-700"
+                    : "border-slate-300 bg-white hover:bg-slate-50 text-slate-700"
+                }`}
+                title="Filters"
+              >
+                <Filter className="w-4 h-4" />
+                <span className="font-bold">Filters</span>
+                {activeFilterCount > 0 && (
+                  <span className="rounded-full bg-blue-600 px-1.5 text-xs font-semibold text-white">
+                    {activeFilterCount}
+                  </span>
+                )}
+              </button>
+              <button
                 onClick={handleExportPDF}
                 className="px-4 py-2.5 text-sm font-medium rounded-lg border border-slate-300 bg-white hover:bg-slate-50 text-slate-700 flex items-center gap-2 transition-all"
                 title="Export as PDF"
@@ -512,6 +571,111 @@ availableCashLimit: deliveryman.availableCashLimit || 0,
               </button>
             </div>
           </div>
+
+          {filtersOpen && (
+            <div className="mb-4 rounded-lg border border-slate-200 bg-slate-50 p-4">
+              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+                <div>
+                  <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    Availability
+                  </label>
+                  <select
+                    value={filters.availability}
+                    onChange={(e) => setFilter("availability", e.target.value)}
+                    className={selectClass}
+                  >
+                    <option value="">Any</option>
+                    <option value="online">Online</option>
+                    <option value="offline">Offline</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    Zone
+                  </label>
+                  <select
+                    value={filters.zone}
+                    onChange={(e) => setFilter("zone", e.target.value)}
+                    className={selectClass}
+                  >
+                    <option value="">Any zone</option>
+                    {filterOptions.zones.map((z) => (
+                      <option key={z} value={z}>
+                        {z}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    Vehicle
+                  </label>
+                  <select
+                    value={filters.vehicleType}
+                    onChange={(e) => setFilter("vehicleType", e.target.value)}
+                    className={selectClass}
+                  >
+                    <option value="">Any vehicle</option>
+                    {filterOptions.vehicleTypes.map((v) => (
+                      <option key={v} value={v}>
+                        {v}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    Fleet
+                  </label>
+                  <select
+                    value={filters.fleet}
+                    onChange={(e) => setFilter("fleet", e.target.value)}
+                    className={selectClass}
+                  >
+                    <option value="">Any fleet</option>
+                    <option value="pool">Shared pool</option>
+                    <option value="owned">Any seller&apos;s own fleet</option>
+                    {sellers.map((r) => (
+                      <option key={String(r._id)} value={String(r._id)}>
+                        {r.restaurantName || r.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  {/* A rider with no push token cannot be offered an order
+                      however online they look. Filterable so that failure can
+                      be found, not just noticed. */}
+                  <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    Reachable
+                  </label>
+                  <select
+                    value={filters.reachable}
+                    onChange={(e) => setFilter("reachable", e.target.value)}
+                    className={selectClass}
+                  >
+                    <option value="">Any</option>
+                    <option value="yes">Can receive orders</option>
+                    <option value="no">No push token</option>
+                  </select>
+                </div>
+              </div>
+
+              {activeFilterCount > 0 && (
+                <button
+                  type="button"
+                  onClick={clearFilters}
+                  className="mt-3 text-sm font-medium text-blue-600 underline"
+                >
+                  Clear {activeFilterCount} filter{activeFilterCount > 1 ? "s" : ""}
+                </button>
+              )}
+            </div>
+          )}
 
           <div className="mb-4">
             <div className="flex items-center gap-2">
@@ -817,6 +981,16 @@ availableCashLimit: deliveryman.availableCashLimit || 0,
                               >
                                 <Eye className="w-4 h-4" />
                               </button>
+                              {/* Straight to this rider's deliveries rather than
+                                  the history page's own rider filter, which is
+                                  a second lookup for something already known. */}
+                              <Link
+                                to={`/admin/store/delivery-partners/history?riderId=${String(dm._id)}`}
+                                className="p-1.5 rounded bg-blue-50 text-blue-600 hover:bg-blue-100 transition-colors"
+                                title="Delivery History"
+                              >
+                                <History className="w-4 h-4" />
+                              </Link>
                               <button
                                 onClick={() => handleDelete(dm)}
                                 disabled={deletingDeliveryId === String(dm._id)}

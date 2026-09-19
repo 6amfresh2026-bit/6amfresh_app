@@ -425,6 +425,11 @@ export const adminAPI = {
   getSubAdminPermissionCatalog: () =>
     apiClient.get("/food/admin/sub-admins/permission-catalog", { contextModule: "admin" }),
   /** List approved delivery partners (Deliveryman List page) */
+  getDeliveryHistory: (params) =>
+    apiClient.get("/food/admin/delivery/history", {
+      params,
+      contextModule: "admin",
+    }),
   getDeliveryPartners: (params) =>
     apiClient.get("/food/admin/delivery/partners", {
       params,

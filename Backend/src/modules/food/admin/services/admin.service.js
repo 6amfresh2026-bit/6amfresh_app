@@ -5380,6 +5380,8 @@ async function getBulkDeliveryPartnerStats(partnerIds) {
 // ----- Delivery partners (approved list) -----
 export async function getDeliveryPartners(query) {
     const { page = 1, limit = 1000, search } = query;
+    // Pending and rejected riders have their own screen (New Join Request);
+    // this list is the working fleet.
     const filter = { status: 'approved' };
     if (search && typeof search === 'string' && search.trim()) {
         const term = search.trim();
@@ -5389,6 +5391,57 @@ export async function getDeliveryPartners(query) {
             { email: { $regex: term, $options: 'i' } },
             { city: { $regex: term, $options: 'i' } },
             { state: { $regex: term, $options: 'i' } }
+        ];
+    }
+
+    const availability = String(query.availability || '').trim().toLowerCase();
+    if (availability === 'online' || availability === 'offline') {
+        filter.availabilityStatus = availability;
+    }
+
+    const zone = String(query.zone || '').trim();
+    if (zone) {
+        // The list shows city-or-state as "zone", so the filter has to accept
+        // either; matching only city would hide riders who have no city set.
+        filter.$and = [
+            ...(filter.$and || []),
+            { $or: [{ city: zone }, { state: zone }] }
+        ];
+    }
+
+    const vehicleType = String(query.vehicleType || '').trim();
+    if (vehicleType) {
+        filter.vehicleType = vehicleType;
+    }
+
+    const fleet = String(query.fleet || '').trim();
+    if (fleet === 'pool') {
+        // No restaurantId means the shared auto-dispatch pool.
+        filter.restaurantId = null;
+    } else if (fleet === 'owned') {
+        filter.restaurantId = { $ne: null };
+    } else if (mongoose.Types.ObjectId.isValid(fleet)) {
+        filter.restaurantId = new mongoose.Types.ObjectId(fleet);
+    }
+
+    /**
+     * Whether dispatch can actually reach this rider.
+     *
+     * A rider with no push token is invisible to dispatch however online they
+     * look, and that is the failure this list exists to catch early, so it is
+     * worth filtering on and not just displaying.
+     */
+    const reachable = String(query.reachable || '').trim().toLowerCase();
+    if (reachable === 'yes' || reachable === 'no') {
+        const hasToken = {
+            $or: [
+                { fcmTokenMobile: { $exists: true, $not: { $size: 0 } } },
+                { fcmTokens: { $exists: true, $not: { $size: 0 } } }
+            ]
+        };
+        filter.$and = [
+            ...(filter.$and || []),
+            reachable === 'yes' ? hasToken : { $nor: [hasToken] }
         ];
     }
 
@@ -5459,8 +5512,24 @@ export async function getDeliveryPartners(query) {
         };
     });
 
+    // Drawn from every approved rider rather than the filtered set, so
+    // choosing one value does not empty the other dropdowns and strand the
+    // person mid-filter.
+    const [cities, states, vehicleTypes] = await Promise.all([
+        FoodDeliveryPartner.distinct('city', { status: 'approved' }),
+        FoodDeliveryPartner.distinct('state', { status: 'approved' }),
+        FoodDeliveryPartner.distinct('vehicleType', { status: 'approved' })
+    ]);
+
+    const clean = (values) =>
+        [...new Set(values.map((v) => String(v || '').trim()).filter(Boolean))].sort();
+
     return {
         deliveryPartners,
+        filterOptions: {
+            zones: clean([...cities, ...states]),
+            vehicleTypes: clean(vehicleTypes)
+        },
         pagination: {
             page: Number(page) || 1,
             limit: limitNum,
@@ -6048,6 +6117,313 @@ export async function checkEarningAddonCompletions(deliveryPartnerId, _force = f
     }
 
     return { completionsFound: globalCompletions };
+}
+
+/**
+ * Who carried which goods to whom, and when.
+ *
+ * The panel could already answer "how much has this rider earned" and "where
+ * is this rider now", but not "what did they actually hand over, to which
+ * customer, at what time" -- the one question a delivery dispute or a missing
+ * item turns into. Everything needed was already on the order; nothing read it
+ * back in that shape.
+ *
+ * Driven off `deliveryState.deliveredAt` rather than `createdAt`, because this
+ * is a record of deliveries, not of orders: an order placed before midnight and
+ * delivered after it belongs to the day it was handed over.
+ *
+ * Item lines report what was ordered and what was actually delivered
+ * separately. A short-picked line has a lower `fulfilledQuantity`, and
+ * collapsing the two would erase exactly the evidence a dispute needs.
+ */
+export async function listDeliveryHistory(query = {}) {
+    const page = Math.max(1, Number(query.page) || 1);
+    const limit = Math.min(100, Math.max(1, Number(query.limit) || 20));
+    const skip = (page - 1) * limit;
+
+    // A rider is the point of this record, so an order cancelled before anyone
+    // was sent for it is not delivery history -- it is order history.
+    const filter = { 'dispatch.deliveryPartnerId': { $ne: null } };
+
+    const outcome = String(query.outcome || 'all').trim().toLowerCase();
+    if (outcome === 'delivered') {
+        filter.orderStatus = 'delivered';
+    } else if (outcome === 'cancelled') {
+        filter.orderStatus = { $in: CANCELLED_ORDER_STATUSES };
+    } else if (outcome === 'returned') {
+        // There is no 'returned' order status in this system, and inventing one
+        // would be a guess. What does exist, and is what the question really
+        // means, is stock that left the store on a rider and came back: the
+        // order was cancelled after pickup.
+        filter.orderStatus = { $in: CANCELLED_ORDER_STATUSES };
+        filter['deliveryState.pickedUpAt'] = { $ne: null };
+    } else {
+        filter.orderStatus = { $in: ['delivered', ...CANCELLED_ORDER_STATUSES] };
+    }
+
+    if (query.deliveryPartnerId && mongoose.Types.ObjectId.isValid(query.deliveryPartnerId)) {
+        filter['dispatch.deliveryPartnerId'] = new mongoose.Types.ObjectId(query.deliveryPartnerId);
+    }
+
+    if (query.restaurantId && mongoose.Types.ObjectId.isValid(query.restaurantId)) {
+        filter.restaurantId = new mongoose.Types.ObjectId(query.restaurantId);
+    }
+
+    const outcomeAtRange = {};
+    if (query.from) {
+        const from = new Date(query.from);
+        if (!Number.isNaN(from.getTime())) {
+            from.setHours(0, 0, 0, 0);
+            outcomeAtRange.$gte = from;
+        }
+    }
+    if (query.to) {
+        const to = new Date(query.to);
+        if (!Number.isNaN(to.getTime())) {
+            to.setHours(23, 59, 59, 999);
+            outcomeAtRange.$lte = to;
+        }
+    }
+
+    const search = String(query.search || '').trim();
+    if (search) {
+        // Escaped rather than interpolated: a customer searching for "2+1" or
+        // a product called "Rice (5kg)" must not become a regex.
+        const escaped = search.split('').map((ch) => ('\\^$.|?*+()[]{}'.includes(ch) ? '\\' + ch : ch)).join('');
+        const regex = new RegExp(escaped, 'i');
+        // Product name is in here deliberately: "who got the milk that went bad"
+        // is the same question from the other end.
+        filter.$or = [
+            { orderId: regex },
+            { customerName: regex },
+            { customerPhone: regex },
+            { 'items.name': regex }
+        ];
+    }
+
+    /**
+     * When this delivery ended, whatever way it ended.
+     *
+     * A delivered order has `deliveryState.deliveredAt`. A cancelled one has
+     * nothing of the sort -- there is no cancelledAt field anywhere in this
+     * schema -- so the moment has to be recovered from the status history entry
+     * that moved it into a cancelled state. `updatedAt` is not a substitute: a
+     * refund processed days later bumps it, and the history would then claim
+     * the order was cancelled on the day it was refunded.
+     *
+     * Computed in the pipeline rather than after the fetch because the whole
+     * list is sorted and paged by it.
+     */
+    const withOutcomeAt = [
+        { $match: filter },
+        {
+            $addFields: {
+                outcomeAt: {
+                    $ifNull: [
+                        '$deliveryState.deliveredAt',
+                        {
+                            $max: {
+                                $map: {
+                                    input: {
+                                        $filter: {
+                                            input: { $ifNull: ['$statusHistory', []] },
+                                            as: 'h',
+                                            cond: { $in: ['$$h.to', CANCELLED_ORDER_STATUSES] }
+                                        }
+                                    },
+                                    as: 'h',
+                                    in: '$$h.at'
+                                }
+                            }
+                        }
+                    ]
+                }
+            }
+        }
+    ];
+
+    if (outcomeAtRange.$gte || outcomeAtRange.$lte) {
+        withOutcomeAt.push({ $match: { outcomeAt: outcomeAtRange } });
+    }
+
+    const [pageIds, countResult] = await Promise.all([
+        FoodOrder.aggregate([
+            ...withOutcomeAt,
+            // Orders whose cancellation left no trace sort last rather than
+            // vanishing: they are still deliveries that happened.
+            { $sort: { outcomeAt: -1, createdAt: -1 } },
+            { $skip: skip },
+            { $limit: limit },
+            { $project: { _id: 1, outcomeAt: 1 } }
+        ]),
+        FoodOrder.aggregate([...withOutcomeAt, { $count: 'total' }])
+    ]);
+
+    const total = countResult?.[0]?.total || 0;
+    const orderIds = pageIds.map((row) => row._id);
+    const outcomeAtById = new Map(pageIds.map((row) => [String(row._id), row.outcomeAt || null]));
+
+    // A second read so the populates stay declarative; hand-writing three
+    // $lookups into the pipeline buys nothing here.
+    const fetched = await FoodOrder.find({ _id: { $in: orderIds } })
+        .select(
+            'orderId orderStatus createdAt customerName customerPhone items pricing payment ' +
+            'deliveryAddress deliveryState dispatch restaurantId userId riderEarning statusHistory'
+        )
+        .populate({ path: 'dispatch.deliveryPartnerId', select: 'name phone vehicleNumber' })
+        .populate({ path: 'restaurantId', select: 'restaurantName name' })
+        // The denormalised customerName is empty on most historic orders --
+        // it was added later -- and a delivery record that cannot say who
+        // received the goods answers none of the questions it exists for.
+        .populate({ path: 'userId', select: 'name phone' })
+        .lean();
+
+    // $in does not preserve order, and the pipeline's sort is the whole point.
+    const fetchedById = new Map(fetched.map((doc) => [String(doc._id), doc]));
+    const orders = orderIds.map((id) => fetchedById.get(String(id))).filter(Boolean);
+
+    const rows = orders.map((order) => {
+        const partner = order?.dispatch?.deliveryPartnerId || null;
+        const pickedUpAt = order?.deliveryState?.pickedUpAt || null;
+        const deliveredAtValue = order?.deliveryState?.deliveredAt || null;
+        const assignedAt = order?.dispatch?.assignedAt || null;
+
+        const minutesBetween = (a, b) =>
+            a && b ? Math.max(0, Math.round((new Date(b) - new Date(a)) / 60000)) : null;
+
+        const wasCancelled = CANCELLED_ORDER_STATUSES.includes(order.orderStatus);
+        // Cancelled after the rider had the goods: the stock physically came
+        // back. Cancelled before pickup and it never left the shelf.
+        const outcomeLabel = !wasCancelled
+            ? 'delivered'
+            : pickedUpAt
+                ? 'returned'
+                : 'cancelled';
+
+        const cancelEntry = wasCancelled
+            ? (order.statusHistory || [])
+                .filter((entry) => CANCELLED_ORDER_STATUSES.includes(entry?.to))
+                .sort((a, b) => new Date(b?.at || 0) - new Date(a?.at || 0))[0] || null
+            : null;
+
+        const items = (order.items || []).map((item) => {
+            // A line that predates short-picking has no fulfilledQuantity at
+            // all, and that means "all of it" -- not "none of it".
+            const ordered = Number(item.quantity) || 0;
+            // Nothing was handed over on a cancelled order, whatever the
+            // picker had put in the bag.
+            const delivered = wasCancelled
+                ? 0
+                : item.fulfilledQuantity === null || item.fulfilledQuantity === undefined
+                    ? ordered
+                    : Number(item.fulfilledQuantity) || 0;
+            return {
+                name: item.name || '',
+                variantName: item.variantName || '',
+                unitPrice: Number(item.price) || 0,
+                orderedQuantity: ordered,
+                deliveredQuantity: delivered,
+                // Short-picking means the shop came up short of an order that
+                // still went out. A cancelled order delivers nothing by
+                // definition, and flagging every line on it as short-picked
+                // would bury the real ones.
+                shortPicked: !wasCancelled && delivered < ordered,
+                lineTotal: (Number(item.price) || 0) * delivered
+            };
+        });
+
+        const address = order?.deliveryAddress || {};
+        const addressLine = [
+            address.flatNumber,
+            address.colonyName,
+            address.street,
+            address.city,
+            address.state,
+            address.zipCode
+        ]
+            .map((part) => String(part || '').trim())
+            .filter(Boolean)
+            .join(', ');
+
+        const account = order?.userId && typeof order.userId === 'object' ? order.userId : null;
+        const customerName =
+            order.customerName || address.fullName || address.name || account?.name || '';
+        const customerPhone = order.customerPhone || address.phone || account?.phone || '';
+
+        const isCash = String(order?.payment?.method || '').toLowerCase() === 'cash';
+
+        return {
+            orderId: order.orderId || String(order._id),
+            orderObjectId: String(order._id),
+            orderStatus: order.orderStatus || '',
+            rider: partner
+                ? {
+                    id: String(partner._id),
+                    name: partner.name || '',
+                    phone: partner.phone || '',
+                    vehicleNumber: partner.vehicleNumber || ''
+                }
+                : null,
+            customer: {
+                name: customerName,
+                phone: customerPhone,
+                address: addressLine
+            },
+            seller: order?.restaurantId?.restaurantName || order?.restaurantId?.name || '',
+            outcome: outcomeLabel,
+            cancellation: cancelEntry
+                ? {
+                    at: cancelEntry.at || null,
+                    byRole: cancelEntry.byRole || null,
+                    note: cancelEntry.note || ''
+                }
+                : null,
+            items,
+            // What was ordered, not what arrived, is the useful count on a
+            // cancelled row -- "0 items" says nothing about what came back.
+            itemCount: wasCancelled
+                ? items.reduce((sum, line) => sum + line.orderedQuantity, 0)
+                : items.reduce((sum, line) => sum + line.deliveredQuantity, 0),
+            shortPickedLines: items.filter((line) => line.shortPicked).length,
+            timeline: {
+                placedAt: order.createdAt || null,
+                assignedAt,
+                pickedUpAt,
+                deliveredAt: deliveredAtValue,
+                endedAt: outcomeAtById.get(String(order._id)) || deliveredAtValue,
+                minutesToPickup: minutesBetween(assignedAt, pickedUpAt),
+                minutesOnRoad: minutesBetween(pickedUpAt, deliveredAtValue),
+                minutesTotal: minutesBetween(
+                    order.createdAt,
+                    outcomeAtById.get(String(order._id)) || deliveredAtValue
+                )
+            },
+            assignment: {
+                mode: order?.dispatch?.assignmentMode || 'auto',
+                byRole: order?.dispatch?.assignedByRole || null
+            },
+            payment: {
+                method: order?.payment?.method || '',
+                orderTotal: Number(order?.pricing?.total) || 0,
+                // Only a cash order puts money in the rider's pocket, and that
+                // is the number a cash reconciliation actually needs. A
+                // cancelled order collected nothing, so counting its total
+                // would overstate every rider's cash on hand.
+                cashCollected: isCash && !wasCancelled ? Number(order?.pricing?.total) || 0 : 0
+            },
+            riderEarning: Number(order?.riderEarning ?? order?.pricing?.deliveryFee ?? 0) || 0
+        };
+    });
+
+    return {
+        deliveries: rows,
+        pagination: {
+            page,
+            limit,
+            total,
+            pages: Math.ceil(total / limit) || 1
+        }
+    };
 }
 
 export async function getDeliveryPartnerById(id) {

@@ -20,7 +20,6 @@ export const ADMIN_PERMISSION_SECTIONS = [
 ];
 
 const PATH_PREFIX_TO_SECTION = [
-  { prefix: "/admin/store/point-of-sale", section: "point_of_sale" },
   { prefix: "/admin/store/fee-settings", section: "delivery_management" },
   { prefix: "/admin/store/delivery-cash-limit", section: "delivery_management" },
   { prefix: "/admin/store/cash-limit-settlement", section: "delivery_management" },
@@ -131,7 +130,6 @@ export function canCurrentAdminAction(action = "view", pathname = "") {
 export function findFirstAllowedAdminPath(adminUser) {
   const sectionHomePath = {
     dashboard: "/admin/store",
-    point_of_sale: "/admin/store/point-of-sale",
     food_management: "/admin/store/food-approval",
     restaurant_management: "/admin/store/sellers",
     order_management: "/admin/store/orders/all",

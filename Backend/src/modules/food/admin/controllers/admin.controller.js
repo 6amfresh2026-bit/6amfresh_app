@@ -1568,6 +1568,19 @@ export async function getContactMessages(req, res, next) {
     }
 }
 
+export async function getDeliveryHistory(req, res, next) {
+    try {
+        const data = await adminService.listDeliveryHistory(req.query);
+        res.status(200).json({
+            success: true,
+            message: 'Delivery history fetched successfully',
+            data
+        });
+    } catch (error) {
+        next(error);
+    }
+}
+
 export async function getDeliveryPartnerById(req, res, next) {
     try {
         const delivery = await adminService.getDeliveryPartnerById(req.params.id);

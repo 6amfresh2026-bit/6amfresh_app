@@ -7,9 +7,9 @@ import Loader from "@food/components/Loader";
 import { getCurrentUser } from "@food/utils/auth";
 import { canAccessFeatureSettings, canAccessSuperPowers } from "@food/utils/adminPermissions";
 import { adminAPI } from "@/services/api";
+import { applyModulePowerScanning, loadBusinessSettings } from "@food/utils/businessSettings";
 
 const AdminHome = lazy(() => import("@food/pages/admin/AdminHome"));
-const PointOfSale = lazy(() => import("@food/pages/admin/PointOfSale"));
 const AdminProfile = lazy(() => import("@food/pages/admin/AdminProfile"));
 const AdminSettings = lazy(() => import("@food/pages/admin/AdminSettings"));
 const NewRefundRequests = lazy(() => import("@food/pages/admin/refunds/NewRefundRequests"));
@@ -86,6 +86,7 @@ const JoinRequest = lazy(() => import("@food/pages/admin/delivery-partners/JoinR
 const AddDeliveryman = lazy(() => import("@food/pages/admin/delivery-partners/AddDeliveryman"));
 const DeliverymanList = lazy(() => import("@food/pages/admin/delivery-partners/DeliverymanList"));
 const DeliveryLiveTracking = lazy(() => import("@food/pages/admin/delivery-partners/DeliveryLiveTracking"));
+const DeliveryHistory = lazy(() => import("@food/pages/admin/delivery-partners/DeliveryHistory"));
 const DeliverymanReviews = lazy(() => import("@food/pages/admin/delivery-partners/DeliverymanReviews"));
 const DeliverymanBonus = lazy(() => import("@food/pages/admin/delivery-partners/DeliverymanBonus"));
 const EarningAddon = lazy(() => import("@food/pages/admin/delivery-partners/EarningAddon"));
@@ -230,6 +231,51 @@ function LegacyFoodPathRedirect() {
 }
 
 export default function AdminRouter() {
+  /**
+   * Paints the admin panel in the configured brand colour.
+   *
+   * The rest of the app gets this from PublicAppConfigProvider, but /admin
+   * sits outside it, so until now only the login screen ever applied a theme
+   * -- every screen behind it fell back to whatever hex its components had
+   * hardcoded. Same call the login page makes, hoisted to cover all of them.
+   */
+  useEffect(() => {
+    let cancelled = false;
+
+    const applyBranding = async () => {
+      try {
+        const settings = await loadBusinessSettings();
+        if (!cancelled) applyModulePowerScanning("user", settings);
+      } catch {
+        // A panel in last month's colours still works; a blank one does not.
+      }
+    };
+
+    applyBranding();
+
+    const handleSettingsUpdate = () => {
+      void loadBusinessSettings({ force: true }).then((settings) => {
+        if (!cancelled) applyModulePowerScanning("user", settings);
+      });
+    };
+
+    window.addEventListener("businessSettingsUpdated", handleSettingsUpdate);
+    return () => {
+      cancelled = true;
+      window.removeEventListener("businessSettingsUpdated", handleSettingsUpdate);
+    };
+  }, []);
+
+  /**
+   * Marks the document as the admin panel, which is what scopes the brand
+   * colour scale in global.css. On <html> rather than a wrapper so that
+   * modals, dropdowns and toasts portalled to <body> inherit it too.
+   */
+  useEffect(() => {
+    document.documentElement.classList.add("admin-theme");
+    return () => document.documentElement.classList.remove("admin-theme");
+  }, []);
+
   // Safely enforce light mode for the Admin app to prevent User dark mode bleeding
   useEffect(() => {
     document.documentElement.classList.remove("dark");
@@ -264,7 +310,6 @@ export default function AdminRouter() {
           <Route path="food/*" element={<LegacyFoodPathRedirect />} />
           <Route path="store/*">
             <Route index element={<AdminHome />} />
-            <Route path="point-of-sale" element={<PointOfSale />} />
             <Route path="profile" element={<AdminProfile />} />
             <Route path="settings" element={<AdminSettings />} />
             
@@ -380,6 +425,7 @@ export default function AdminRouter() {
             <Route path="delivery-order-reassignment-requests" element={<OrderReassignmentRequests />} />
             <Route path="delivery-partners" element={<DeliverymanList />} />
             <Route path="delivery-partners/add" element={<AddDeliveryman />} />
+            <Route path="delivery-partners/history" element={<DeliveryHistory />} />
             <Route path="delivery-partners/live-tracking" element={<DeliveryLiveTracking />} />
             <Route path="delivery-partners/join-request" element={<JoinRequest />} />
             <Route path="delivery-partners/reviews" element={<DeliverymanReviews />} />
@@ -447,6 +493,13 @@ export default function AdminRouter() {
             <Route path="hero-banner-management" element={<LandingPageManagement />} />
             {/* <Route path="dining-management" element={<DiningManagement />} /> */}
             {/* <Route path="dining-list" element={<DiningList />} /> */}
+            {/*
+              A path under /admin/store that matches nothing used to render the
+              sidebar and navbar around an empty page, so a removed screen or a
+              stale bookmark looked like the panel had broken. The outer "*"
+              never caught these because the parent route already matched.
+            */}
+            <Route path="*" element={<Navigate to="/admin/store" replace />} />
           </Route>
 
           {/* TAXI ADMIN - Placeholder for future implementation */}

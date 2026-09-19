@@ -43,12 +43,6 @@ export const adminSidebarMenu = [
     items: [
       {
         type: "link",
-        label: "Point of Sale",
-        path: "/admin/store/point-of-sale",
-        icon: "CreditCard",
-      },
-      {
-        type: "link",
         label: "Product Approval",
         path: "/admin/store/food-approval",
         icon: "CheckCircle2",
@@ -114,6 +108,7 @@ export const adminSidebarMenu = [
           { label: "New Join Request", path: "/admin/store/delivery-partners/join-request" },
           { label: "Deliveryman List", path: "/admin/store/delivery-partners" },
           { label: "Live Tracking", path: "/admin/store/delivery-partners/live-tracking" },
+          { label: "Delivery History", path: "/admin/store/delivery-partners/history" },
           { label: "Deliveryman Reviews", path: "/admin/store/delivery-partners/reviews" },
           { label: "Bonus", path: "/admin/store/delivery-partners/bonus" },
           { label: "Earning Addon", path: "/admin/store/delivery-partners/earning-addon" },

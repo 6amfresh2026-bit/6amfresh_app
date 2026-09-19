@@ -516,6 +516,9 @@ router.patch(
     requireAdminPermission('delivery_management', 'edit'),
     adminController.deassignAndResendOrderEmergencyRequest
 );
+// Before '/delivery/:id', or ':id' swallows it and looks up a partner called
+// "history". Covered by the router.use('/delivery', ...) view guard above.
+router.get('/delivery/history', adminController.getDeliveryHistory);
 router.get('/delivery/partners', adminController.getDeliveryPartners);
 router.get('/delivery/:id', adminController.getDeliveryPartnerById);
 router.patch('/delivery/:id/approve', adminController.approveDeliveryPartner);
