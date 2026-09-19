@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react"
+import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react"
 import { useNavigate, useParams } from "react-router-dom"
 import { Loader2, Settings2, Trash2 } from "lucide-react"
 import { toast } from "sonner"
@@ -22,6 +22,14 @@ import { adminAPI, uploadAPI } from "@food/api"
  * One field the reference does not have: Store. Every product here belongs to a
  * seller, and the API refuses a product without one, so it sits first.
  */
+
+/**
+ * Sentinel value for the dropdown row that opens the Add Category modal.
+ *
+ * Deliberately not something that could ever be an ObjectId, so it cannot
+ * collide with a real category and get saved as one.
+ */
+const ADD_NEW = "__add_new__"
 
 const TAX_RATES = [0, 5, 12, 18, 28]
 const PRODUCT_TYPES = ["Finished", "Raw Material", "Semi Finished", "Service", "Consumable"]
@@ -78,9 +86,18 @@ const n = (v) => (v === "" || v === null || v === undefined ? null : Number(v))
 const s = (v) => (v === null || v === undefined ? "" : String(v))
 const fmt = (v) => (Number.isFinite(v) ? String(Math.round(v * 100) / 100) : "")
 
+/**
+ * A field's caption, reserving two lines whether or not it needs them.
+ *
+ * Grid cells in a row are the same height but their contents start at the top,
+ * so a caption that wraps -- "Item Code/Barcode" alongside its (Auto Generate)
+ * checkbox does, at four columns -- pushed that one input a line below its
+ * neighbours. Fixing the height and sitting the caption on its floor lines the
+ * inputs up across the row regardless of how long any one caption is.
+ */
 const Label = ({ children, required, right }) => (
-  <div className="mb-1 flex items-center justify-between">
-    <span className="text-sm font-semibold text-neutral-800">
+  <div className="mb-1 flex items-end justify-between gap-2 sm:min-h-10">
+    <span className="text-sm font-semibold leading-5 text-neutral-800">
       {children}
       {required && <span className="text-rose-500">*</span>}
     </span>
@@ -89,6 +106,28 @@ const Label = ({ children, required, right }) => (
 )
 const inp = "h-10 w-full rounded border border-neutral-300 bg-white px-3 text-sm outline-none focus:border-sky-500 disabled:bg-neutral-100"
 const Err = ({ children }) => (children ? <p className="mt-1 text-xs text-rose-600">{children}</p> : null)
+
+/**
+ * The validation errors, handed to F without threading them through 33 call
+ * sites.
+ *
+ * F has to live out here. Defined inside the form it was a fresh component
+ * type on every render, so React tore down and rebuilt each field's subtree
+ * rather than updating it -- and a remounted <input> is not the focused one,
+ * which is why a product name could only ever be typed one letter at a time.
+ */
+const FieldErrorsContext = createContext({})
+
+const F = ({ k, label, required, children, right }) => {
+  const errors = useContext(FieldErrorsContext)
+  return (
+    <div>
+      <Label required={required} right={right}>{label}</Label>
+      {children}
+      <Err>{errors[k]}</Err>
+    </div>
+  )
+}
 
 /** ₹-prefixed numeric input, as the reference draws discount and margin fields. */
 const Rupee = ({ value, onChange, disabled }) => (
@@ -120,26 +159,34 @@ export default function ProductForm() {
     setErrors((er) => ({ ...er, [k]: undefined }))
   }
 
+  // Its own function because the Add Category modal has to pull the list again
+  // to show what it just created.
+  const loadCategories = useCallback(async () => {
+    const c = await adminAPI.getCategories({ limit: 1000 })
+    const cats = c?.data?.data?.categories || c?.data?.data || []
+    const list = Array.isArray(cats) ? cats : []
+    setCategories(list)
+    return list
+  }, [])
+
   // ── lookups ──
   useEffect(() => {
     ;(async () => {
       try {
-        const [r, c, b, u] = await Promise.all([
+        const [r, , b, u] = await Promise.all([
           adminAPI.getRestaurants({ limit: 1000 }),
-          adminAPI.getCategories({ limit: 1000 }),
+          loadCategories(),
           adminAPI.getBrands({ limit: 200, isActive: "true" }),
           adminAPI.getUnits({ limit: 200, isActive: "true" }),
         ])
         setStores(r?.data?.data?.restaurants || r?.data?.restaurants || [])
-        const cats = c?.data?.data?.categories || c?.data?.data || []
-        setCategories(Array.isArray(cats) ? cats : [])
         setBrands(b?.data?.data?.brands || [])
         setUnits(u?.data?.data?.units || [])
       } catch {
         toast.error("Could not load dropdown data")
       }
     })()
-  }, [])
+  }, [loadCategories])
 
   // ── auto item code (create only) ──
   useEffect(() => {
@@ -230,6 +277,57 @@ export default function ProductForm() {
   const topBrands = useMemo(() => brands.filter((b) => !b.parentId), [brands])
   const subBrands = useMemo(() => brands.filter((b) => b.parentId === form.brandId), [brands, form.brandId])
   const unitById = useMemo(() => new Map(units.map((u) => [u.id, u])), [units])
+
+  // ── add a category without leaving the product ──
+  const [catModal, setCatModal] = useState(null)
+  const [savingCat, setSavingCat] = useState(false)
+
+  const openCatModal = () =>
+    setCatModal({ name: "", parentId: "", foodTypeScope: "Both", error: "" })
+
+  const saveNewCategory = async () => {
+    const name = catModal.name.trim()
+    if (!name) {
+      setCatModal((m) => ({ ...m, error: "Enter a category name" }))
+      return
+    }
+    setSavingCat(true)
+    try {
+      const res = await adminAPI.createCategory({
+        name,
+        parentId: catModal.parentId || undefined,
+        foodTypeScope: catModal.foodTypeScope,
+        zoneId: "global",
+        isActive: true,
+      })
+      const created = res?.data?.data?.category || res?.data?.data
+      const list = await loadCategories()
+      // Prefer the id the API returned; fall back to finding it by name, since
+      // an admin who cannot see their new category in the dropdown has no idea
+      // whether it saved.
+      const match =
+        (created && (created._id || created.id) && String(created._id || created.id)) ||
+        (list.find((c) => c.name === name) ? catId(list.find((c) => c.name === name)) : "")
+
+      if (match) {
+        setForm((f) =>
+          catModal.parentId
+            ? { ...f, categoryId: catModal.parentId, subCategoryId: match }
+            : { ...f, categoryId: match, subCategoryId: "" },
+        )
+        setErrors((er) => ({ ...er, categoryId: undefined }))
+      }
+      toast.success("Category created")
+      setCatModal(null)
+    } catch (error) {
+      setCatModal((m) => ({
+        ...m,
+        error: error?.response?.data?.message || "Could not create the category",
+      }))
+    } finally {
+      setSavingCat(false)
+    }
+  }
 
   // ── pricing arithmetic, the way the reference fills the greyed fields ──
   const recompute = useCallback((f) => {
@@ -388,15 +486,8 @@ export default function ProductForm() {
     return <div className="grid min-h-[50vh] place-items-center"><Loader2 className="h-6 w-6 animate-spin text-neutral-400" /></div>
   }
 
-  const F = ({ k, label, required, children, right }) => (
-    <div>
-      <Label required={required} right={right}>{label}</Label>
-      {children}
-      <Err>{errors[k]}</Err>
-    </div>
-  )
-
   return (
+    <FieldErrorsContext.Provider value={errors}>
     <div className="p-4 sm:p-6">
       <div className="mb-4 flex items-center gap-2 text-lg">
         <span className="font-semibold text-neutral-900">Product</span>
@@ -445,9 +536,21 @@ export default function ProductForm() {
           </F>
 
           <F k="categoryId" label="Category" required>
-            <select value={form.categoryId} onChange={(e) => { set("categoryId")(e); setForm((f) => ({ ...f, categoryId: e.target.value, subCategoryId: "" })) }} className={inp}>
+            <select
+              value={form.categoryId}
+              onChange={(e) => {
+                // The last entry is an action, not a category. Returning
+                // without touching form leaves the select showing whatever was
+                // picked before, because its value is still form.categoryId.
+                if (e.target.value === ADD_NEW) { openCatModal(); return }
+                set("categoryId")(e)
+                setForm((f) => ({ ...f, categoryId: e.target.value, subCategoryId: "" }))
+              }}
+              className={inp}
+            >
               <option value="">Select Category</option>
               {topCategories.map((c) => <option key={catId(c)} value={catId(c)}>{c.name}</option>)}
+              <option value={ADD_NEW}>+ Add New Category</option>
             </select>
           </F>
           <F k="subCategoryId" label="Sub Category">
@@ -651,6 +754,60 @@ export default function ProductForm() {
           )}
         </div>
       </div>
+
+      {catModal && (
+        <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4" onMouseDown={() => !savingCat && setCatModal(null)}>
+          <div className="w-full max-w-md rounded-lg bg-white p-5 shadow-xl" onMouseDown={(e) => e.stopPropagation()}>
+            <h3 className="mb-4 text-base font-semibold text-neutral-900">Add Category</h3>
+
+            <div className="space-y-3">
+              <div>
+                <Label required>Category Name</Label>
+                <input
+                  autoFocus
+                  value={catModal.name}
+                  onChange={(e) => setCatModal((m) => ({ ...m, name: e.target.value, error: "" }))}
+                  onKeyDown={(e) => { if (e.key === "Enter") saveNewCategory() }}
+                  placeholder="e.g. Dairy"
+                  className={inp}
+                />
+              </div>
+
+              <div>
+                <Label>Parent Category</Label>
+                <select value={catModal.parentId} onChange={(e) => setCatModal((m) => ({ ...m, parentId: e.target.value }))} className={inp}>
+                  <option value="">None — this is a top-level category</option>
+                  {topCategories.map((c) => <option key={catId(c)} value={catId(c)}>{c.name}</option>)}
+                </select>
+                {/* Picking a parent is what makes this a sub-category, so the
+                    same modal covers both dropdowns above. */}
+                <p className="mt-1 text-xs text-neutral-500">Pick one to create a sub-category instead.</p>
+              </div>
+
+              <div>
+                <Label>Food Type</Label>
+                <select value={catModal.foodTypeScope} onChange={(e) => setCatModal((m) => ({ ...m, foodTypeScope: e.target.value }))} className={inp}>
+                  <option value="Both">Both</option>
+                  <option value="Veg">Veg</option>
+                  <option value="Non-Veg">Non-Veg</option>
+                </select>
+              </div>
+
+              <Err>{catModal.error}</Err>
+            </div>
+
+            <div className="mt-5 flex justify-end gap-2">
+              <button type="button" onClick={() => setCatModal(null)} disabled={savingCat} className="rounded border border-neutral-300 px-4 py-2 text-sm text-neutral-700 disabled:opacity-60">
+                Cancel
+              </button>
+              <button type="button" onClick={saveNewCategory} disabled={savingCat} className="inline-flex items-center gap-2 rounded bg-sky-500 px-5 py-2 text-sm font-medium text-white hover:bg-sky-600 disabled:opacity-60">
+                {savingCat && <Loader2 className="h-4 w-4 animate-spin" />} Save
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
+    </FieldErrorsContext.Provider>
   )
 }
