@@ -40,7 +40,7 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@food/components/ui/popover";
-import quickSpicyLogo from "@food/assets/6am-fresh-logo.svg";
+import brandLogo from "@food/assets/6am-fresh-brand.png";
 import { adminAPI } from "@food/api";
 import { clearModuleAuth } from "@food/utils/auth";
 import { getCachedSettings, loadBusinessSettings } from "@food/utils/businessSettings";
@@ -280,27 +280,23 @@ export default function AdminNavbar({ onMenuClick }) {
             </button>
             {/* Logo */}
             <div className="flex items-center gap-2">
-              <div className="w-24 h-12 rounded-lg bg-white flex items-center justify-center ring-neutral-200">
-                {businessSettings?.logo?.url ? (
-                  <img
-                    src={businessSettings.logo.url}
-                    alt={businessSettings.companyName || "Company"}
-                    className="w-24 h-10 object-contain"
-                    loading="lazy"
-                    onError={(e) => {
-                      // Fallback to default logo if company logo fails to load
-                      e.target.src = quickSpicyLogo;
-                    }}
-                  />
-                ) : (
-                  businessSettings?.companyName ? (
-                    <span className="text-sm font-semibold text-neutral-700 px-2 truncate">
-                      {businessSettings.companyName}
-                    </span>
-                  ) : (
-                    <img src={quickSpicyLogo} alt={businessSettings?.companyName || "Company"} className="w-24 h-10 object-contain" loading="lazy" />
-                  )
-                )}
+              {/*
+                Same rule as the sidebar: the bundled wordmark is the default,
+                and an uploaded logo overrides it. The company name was being
+                drawn as text whenever no logo had been uploaded, which is why
+                the two halves of the panel never showed the same brand.
+              */}
+              <div className="h-12 flex items-center justify-start">
+                <img
+                  src={businessSettings?.logo?.url || brandLogo}
+                  alt={businessSettings?.companyName || "6AM Fresh"}
+                  className="h-10 w-auto max-w-[10rem] object-contain object-left"
+                  onError={(e) => {
+                    if (e.target.src !== brandLogo) {
+                      e.target.src = brandLogo;
+                    }
+                  }}
+                />
               </div>
             </div>
           </div>

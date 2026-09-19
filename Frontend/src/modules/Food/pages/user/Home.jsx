@@ -103,7 +103,7 @@ import {
   DropdownMenuTrigger,
 } from "@food/components/ui/dropdown-menu";
 import { useDeliveryLocation } from "@food/context/DeliveryLocationContext";
-import quickSpicyLogo from "@food/assets/6am-fresh-logo.svg";
+import quickSpicyLogo from "@food/assets/6am-fresh-brand.png";
 import offerImage from "@food/assets/offerimage.png";
 import api, { restaurantAPI, adminAPI } from "@food/api";
 import { usePublicAppConfig } from "@food/context/PublicAppConfigContext";

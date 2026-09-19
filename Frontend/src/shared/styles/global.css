@@ -171,3 +171,69 @@
   z-index: 999999 !important;
   pointer-events: auto !important;
 }
+
+/**
+ * The admin panel's blues, re-pointed at the configured brand colour.
+ *
+ * The panel was built with Tailwind's blue and sky scales hardcoded across 135
+ * files -- close to two thousand utility classes -- so recolouring it by
+ * editing markup was never going to be safe or reviewable. Tailwind v4 compiles
+ * `bg-blue-600` to `background-color: var(--color-blue-600)`, and a scoped
+ * redefinition of those variables cascades to every one of them at once, hover
+ * shades, rings and gradients included.
+ *
+ * The scale is derived rather than fixed: 600 is the brand colour itself,
+ * lighter steps mix toward white and darker steps toward black, so a
+ * `hover:bg-blue-700` still darkens and a `bg-blue-50` chip stays a tint.
+ * Change the brand colour in admin settings and this follows it.
+ *
+ * Scoped to .admin-theme, which AdminRouter puts on <html>, because the seller
+ * and rider modules have brand colours of their own and their blues are not
+ * this panel's blues.
+ */
+.admin-theme {
+  --brand: var(--module-theme-color, #47b8ae);
+
+  --color-blue-50: color-mix(in srgb, var(--brand) 8%, #fff);
+  --color-blue-100: color-mix(in srgb, var(--brand) 16%, #fff);
+  --color-blue-200: color-mix(in srgb, var(--brand) 30%, #fff);
+  --color-blue-300: color-mix(in srgb, var(--brand) 48%, #fff);
+  --color-blue-400: color-mix(in srgb, var(--brand) 72%, #fff);
+  --color-blue-500: color-mix(in srgb, var(--brand) 88%, #fff);
+  --color-blue-600: var(--brand);
+  --color-blue-700: color-mix(in srgb, var(--brand) 84%, #000);
+  --color-blue-800: color-mix(in srgb, var(--brand) 70%, #000);
+  --color-blue-900: color-mix(in srgb, var(--brand) 58%, #000);
+  --color-blue-950: color-mix(in srgb, var(--brand) 44%, #000);
+
+  --color-sky-50: var(--color-blue-50);
+  --color-sky-100: var(--color-blue-100);
+  --color-sky-200: var(--color-blue-200);
+  --color-sky-300: var(--color-blue-300);
+  --color-sky-400: var(--color-blue-400);
+  --color-sky-500: var(--color-blue-500);
+  --color-sky-600: var(--color-blue-600);
+  --color-sky-700: var(--color-blue-700);
+  --color-sky-800: var(--color-blue-800);
+  --color-sky-900: var(--color-blue-900);
+  --color-sky-950: var(--color-blue-950);
+
+  /*
+    The panel's other brand accent: the old pink, still sitting under active
+    menu items and their pills. Mapped alongside the blues so the sidebar and
+    the content area agree. `rose` is deliberately left alone -- it marks
+    validation errors and destructive actions, and those must not read as
+    the brand.
+  */
+  --color-pink-50: var(--color-blue-50);
+  --color-pink-100: var(--color-blue-100);
+  --color-pink-200: var(--color-blue-200);
+  --color-pink-300: var(--color-blue-300);
+  --color-pink-400: var(--color-blue-400);
+  --color-pink-500: var(--color-blue-500);
+  --color-pink-600: var(--color-blue-600);
+  --color-pink-700: var(--color-blue-700);
+  --color-pink-800: var(--color-blue-800);
+  --color-pink-900: var(--color-blue-900);
+  --color-pink-950: var(--color-blue-950);
+}

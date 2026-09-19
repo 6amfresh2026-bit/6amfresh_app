@@ -15,7 +15,7 @@ import {
   Info,
 } from "lucide-react"
 
-const THEME = "#FA0272"
+const THEME = "var(--module-theme-color, #47B8AE)"
 const GST_RATE = 0.18
 
 const formatMoney = (value) =>

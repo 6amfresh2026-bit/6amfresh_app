@@ -7,7 +7,7 @@ import { Input } from "@food/components/ui/input"
 import { authAPI } from "@food/api"
 import { motion } from "framer-motion"
 import loginBanner from "@food/assets/loginbanner.png"
-import logoImg from "@food/assets/6am-fresh-logo.svg"
+import logoImg from "@food/assets/6am-fresh-icon.png"
 const debugLog = (...args) => { }
 const debugWarn = (...args) => { }
 const debugError = (...args) => { }

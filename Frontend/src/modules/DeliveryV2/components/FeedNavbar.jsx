@@ -7,6 +7,7 @@ import { toast } from "sonner";
 import { deliveryAPI } from "@food/api";
 import { useCompanyName } from "@food/hooks/useCompanyName";
 import { getCachedSettings, getModuleLogoUrl, loadBusinessSettings } from "@food/utils/businessSettings";
+import brandLogo from "@food/assets/6am-fresh-brand.png";
 const debugLog = (...args) => {}
 const debugWarn = (...args) => {}
 const debugError = (...args) => {}
@@ -410,9 +411,21 @@ export default function FeedNavbar({ className = "" }) {
     <div className={`bg-white px-4 py-3 flex items-center justify-between sticky top-0 z-50 border-b border-gray-200 ${className}`}>
         {/* Logo and Online/Offline Toggle */}
       <div className="flex items-center gap-3">
-        {logoUrl && (
-          <img src={logoUrl} alt="Logo" className="h-8 w-auto object-contain" />
-        )}
+        {/*
+          The rider app showed no logo at all until a logo was uploaded in
+          business settings, so in a fresh deployment the header was nameless.
+          The bundled wordmark is the default here as it is everywhere else.
+        */}
+        <img
+          src={logoUrl || brandLogo}
+          alt="6AM Fresh"
+          className="h-8 w-auto object-contain"
+          onError={(e) => {
+            if (e.target.src !== brandLogo) {
+              e.target.src = brandLogo;
+            }
+          }}
+        />
         <div className="relative" style={{ zIndex: 100 }}>
           <button
             onClick={handleToggle}

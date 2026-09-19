@@ -55,7 +55,7 @@ import { adminAPI } from "@food/api"
 import { getCachedSettings, loadBusinessSettings } from "@food/utils/businessSettings"
 import { canAccessFeatureSettings, canAccessSuperPowers } from "@food/utils/adminPermissions"
 import { canAdminAccess, isSuperAdmin, resolvePermissionSectionByPath } from "@food/utils/adminRbac"
-import quickSpicyLogo from "@food/assets/6am-fresh-logo.svg"
+import brandLogo from "@food/assets/6am-fresh-brand.png"
 const debugLog = (...args) => {}
 const debugWarn = (...args) => {}
 const debugError = (...args) => {}
@@ -135,7 +135,6 @@ const SIDEBAR_LABEL_BY_PATH = buildLabelDictionary(adminSidebarMenu)
 // this app doesn't have.
 const MORE_TOOLS = [
   { label: "Chat", icon: MessageSquare, path: "/admin/store/support-tickets" },
-  { label: "POS", icon: CreditCard, path: "/admin/store/point-of-sale" },
   { label: "Subscr.", icon: RefreshCw, path: "/admin/store/sellers/subscription-settings" },
 ]
 
@@ -897,47 +896,45 @@ export default function AdminSidebar({ isOpen = false, onClose, onCollapseChange
           <div className="flex items-center justify-between mb-3">
             {!isCollapsed && (
               <div className="flex items-center gap-2 animate-[slideIn_0.3s_ease-out]">
-                <div className="w-24 h-12 rounded-lg flex items-center justify-center shadow-black/20">
-                  {logoUrl ? (
-                    <img
-                      src={logoUrl || quickSpicyLogo}
-                      alt={companyName || "Company"}
-                      className="w-24 h-10 object-contain"
-                      loading="lazy"
-                      onError={(e) => {
-                        if (e.target.src !== quickSpicyLogo) {
-                          e.target.src = quickSpicyLogo
-                        }
-                      }}
-                    />
-                  ) : companyName ? (
-                    <span className="text-xs font-semibold text-white px-2 truncate">
-                      {companyName}
-                    </span>
-                  ) : (
-                    <img src={quickSpicyLogo} alt="Company" className="w-24 h-10 object-contain" loading="lazy" />
-                  )}
+                {/*
+                  The bundled wordmark is the default, not a last resort. This
+                  used to fall through to the company name rendered in
+                  text-white on a white sidebar, so with no logo uploaded the
+                  header simply looked empty.
+                */}
+                <div className="h-12 flex items-center justify-start">
+                  <img
+                    src={logoUrl || brandLogo}
+                    alt={companyName || "6AM Fresh"}
+                    className="h-11 w-auto max-w-[11rem] object-contain object-left"
+                    onError={(e) => {
+                      if (e.target.src !== brandLogo) {
+                        e.target.src = brandLogo
+                      }
+                    }}
+                  />
                 </div>
               </div>
             )}
             {isCollapsed && (
               <div className="w-full flex items-center justify-center">
-                <div className="w-10 h-10 rounded-lg bg-gray-50 flex items-center justify-center shadow-sm ring-1 ring-gray-200">
-                  {logoUrl || companyName ? (
-                    <img
-                      src={logoUrl || quickSpicyLogo}
-                      alt={companyName || "Company"}
-                      className="w-10 h-10 object-contain"
-                      loading="lazy"
-                      onError={(e) => {
-                        if (e.target.src !== quickSpicyLogo) {
-                          e.target.src = quickSpicyLogo
-                        }
-                      }}
-                    />
-                  ) : (
-                    <img src={quickSpicyLogo} alt="Company" className="w-10 h-10 object-contain" loading="lazy" />
-                  )}
+                {/*
+                  A wordmark in an 80px rail is never going to be readable; the
+                  most it can do is stay recognisable. Given the whole rail's
+                  width rather than a 40px square so the colours and the leaf
+                  still read as the brand.
+                */}
+                <div className="w-14 h-10 rounded-lg flex items-center justify-center">
+                  <img
+                    src={logoUrl || brandLogo}
+                    alt={companyName || "6AM Fresh"}
+                    className="w-14 h-9 object-contain"
+                    onError={(e) => {
+                      if (e.target.src !== brandLogo) {
+                        e.target.src = brandLogo
+                      }
+                    }}
+                  />
                 </div>
               </div>
             )}

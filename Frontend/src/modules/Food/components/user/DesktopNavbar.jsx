@@ -10,7 +10,7 @@ import { useLocationSelector, useSearchOverlay } from "./UserLayout"
 import { useProfile } from "@food/context/ProfileContext"
 import { FaLocationDot } from "react-icons/fa6"
 import { AnimatePresence, motion } from "framer-motion"
-import quickSpicyLogo from "@food/assets/6am-fresh-logo.svg"
+import quickSpicyLogo from "@food/assets/6am-fresh-brand.png"
 import { getCachedSettings, loadBusinessSettings } from "@food/utils/businessSettings"
 import { clearHomeScrollState } from "@food/utils/homeScrollRestore"
 const debugLog = (...args) => {}

@@ -38,7 +38,7 @@ const businessSettingsSchema = new mongoose.Schema(
         },
         powerScanning: {
             user: {
-                themeColor: { type: String, default: '#FA0272' },
+                themeColor: { type: String, default: '#47B8AE' },
                 fontFamily: { type: String, default: 'Poppins' }
             },
             restaurant: {

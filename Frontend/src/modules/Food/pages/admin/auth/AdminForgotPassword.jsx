@@ -6,7 +6,7 @@ import { Input } from "@food/components/ui/input"
 import { Label } from "@food/components/ui/label"
 import AdminAuthHero from "@food/components/admin/auth/AdminAuthHero"
 import { ArrowLeft, Shield, Eye, EyeOff, Loader2 } from "lucide-react"
-import quickSpicyLogo from "@food/assets/6am-fresh-logo.svg"
+import quickSpicyLogo from "@food/assets/6am-fresh-icon.png"
 import { adminAPI } from "@food/api"
 import { useCompanyName } from "@food/hooks/useCompanyName"
 import {
@@ -15,7 +15,7 @@ import {
   getModulePowerScanning,
 } from "@food/utils/businessSettings"
 
-const THEME = "#FA0272"
+const THEME = "#47B8AE"
 
 const STEP_META = {
   1: { title: "Forgot password", subtitle: "Enter your email to receive a verification code" },
@@ -298,7 +298,7 @@ export default function AdminForgotPassword() {
                   <img
                     src={logoUrl || quickSpicyLogo}
                     alt={`${companyName} logo`}
-                    className="h-full w-full scale-[1.65] object-contain"
+                    className="h-full w-full object-contain p-1"
                     loading="lazy"
                     onError={(e) => {
                       if (e.target.src !== quickSpicyLogo) {

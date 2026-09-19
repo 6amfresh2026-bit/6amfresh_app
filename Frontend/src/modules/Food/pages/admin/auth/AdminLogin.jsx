@@ -14,7 +14,7 @@ import { Input } from "@food/components/ui/input"
 import { Label } from "@food/components/ui/label"
 import AdminAuthHero from "@food/components/admin/auth/AdminAuthHero"
 import { Eye, EyeOff, Shield, Loader2 } from "lucide-react"
-import quickSpicyLogo from "@food/assets/6am-fresh-logo.svg"
+import quickSpicyLogo from "@food/assets/6am-fresh-icon.png"
 
 const debugLog = (...args) => {}
 const debugWarn = (...args) => {}
@@ -186,7 +186,7 @@ export default function AdminLogin() {
                   <img
                     src={logoUrl}
                     alt={`${companyName} logo`}
-                    className="h-full w-full scale-[1.65] object-contain"
+                    className="h-full w-full object-contain p-1"
                     loading="lazy"
                     onError={(e) => {
                       if (e.target.src !== quickSpicyLogo) {

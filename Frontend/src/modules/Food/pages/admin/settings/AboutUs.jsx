@@ -234,7 +234,7 @@ export default function AboutUs() {
                 id="logo"
                 value={aboutData.logo}
                 onChange={(e) => setAboutData(prev => ({ ...prev, logo: e.target.value }))}
-                placeholder="https://example.com/6am-fresh-logo.svg"
+                placeholder="https://example.com/logo.png"
                 className="mt-1"
               />
             </div>
