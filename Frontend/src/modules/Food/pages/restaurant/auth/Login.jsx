@@ -11,7 +11,7 @@ import RestaurantPartnerHero from "@food/components/restaurant/auth/RestaurantPa
 import quickSpicyLogo from "@food/assets/6am-fresh-icon.png"
 
 const DEFAULT_COUNTRY_CODE = "+91"
-const THEME = "#FA0272"
+const THEME = "#2563EB"
 
 export default function RestaurantLogin() {
   const companyName = useCompanyName()

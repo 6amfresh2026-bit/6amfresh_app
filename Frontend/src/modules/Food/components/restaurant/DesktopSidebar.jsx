@@ -20,6 +20,7 @@ import {
 } from "lucide-react"
 import { restaurantAPI } from "@food/api"
 import { getCompanyName, getModuleLogoUrl, getCachedSettings, loadBusinessSettings } from "@food/utils/businessSettings"
+import brandIcon from "@food/assets/6am-fresh-icon.png"
 import { logoutRestaurantSession } from "@food/utils/restaurantLogout"
 
 const BASE = "/seller"
@@ -275,12 +276,23 @@ export default function DesktopSidebar() {
     <aside className="hidden md:flex flex-col w-64 h-screen fixed left-0 top-0 bg-white border-r border-gray-100 shadow-[2px_0_10px_rgba(0,0,0,0.02)] z-50">
       <div className="p-5">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-green-50 flex items-center justify-center shrink-0 overflow-hidden">
-            {logoUrl ? (
-              <img src={logoUrl} alt="Logo" className="w-full h-full object-cover rounded-xl" />
-            ) : (
-              <Store className="w-5 h-5 text-green-600" />
-            )}
+          {/*
+            The bundled mark is the default rather than a green store glyph:
+            with no logo uploaded the panel showed a colour that belongs to
+            neither the brand nor this module's theme. object-contain, because
+            cover crops a mark that carries its own padding.
+          */}
+          <div className="w-10 h-10 rounded-xl bg-gray-50 flex items-center justify-center shrink-0 overflow-hidden">
+            <img
+              src={logoUrl || brandIcon}
+              alt={restaurantName || "6AM Fresh"}
+              className="w-full h-full object-contain rounded-xl p-0.5"
+              onError={(e) => {
+                if (e.target.src !== brandIcon) {
+                  e.target.src = brandIcon
+                }
+              }}
+            />
           </div>
           <div className="flex flex-col min-w-0">
             <span className="font-bold text-gray-900 text-sm truncate">{restaurantName}</span>

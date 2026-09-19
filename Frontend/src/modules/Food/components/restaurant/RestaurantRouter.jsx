@@ -4,7 +4,7 @@ import ProtectedRoute from "@food/components/ProtectedRoute"
 import AuthRedirect from "@food/components/AuthRedirect"
 import Loader from "@food/components/Loader"
 import RestaurantLayout from "@food/components/restaurant/RestaurantLayout"
-import { applyModuleBranding, getCachedSettings, loadBusinessSettings } from "@food/utils/businessSettings"
+import { applyModuleBranding, applyModulePowerScanning, getCachedSettings, loadBusinessSettings } from "@food/utils/businessSettings"
 
 const LayoutWrapper = () => (
   <RestaurantLayout>
@@ -78,14 +78,26 @@ export default function RestaurantRouter() {
     };
   }, []);
 
+  /**
+   * The seller panel's own colour, which it never actually wore.
+   *
+   * applyModuleBranding only swaps the favicon and the page title.
+   * applyModulePowerScanning is the one that sets --module-theme-color and
+   * injects the stylesheet remapping the legacy brand hexes onto it, and
+   * nothing here called it -- so the panel ignored its configured colour and
+   * showed whatever hex each screen had hardcoded. Half of them had the
+   * customer app's pink rather than the seller blue.
+   */
   useEffect(() => {
     const applyBranding = async () => {
       const cached = getCachedSettings()
       if (cached) {
         applyModuleBranding("restaurant", cached)
+        applyModulePowerScanning("restaurant", cached)
       } else {
         const settings = await loadBusinessSettings()
         applyModuleBranding("restaurant", settings)
+        applyModulePowerScanning("restaurant", settings)
       }
     }
 

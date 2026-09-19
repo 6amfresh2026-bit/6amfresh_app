@@ -14,7 +14,7 @@ import { loadBusinessSettings, getModuleLogoUrl } from "@food/utils/businessSett
 import RestaurantPartnerHero from "@food/components/restaurant/auth/RestaurantPartnerHero"
 import quickSpicyLogo from "@food/assets/6am-fresh-icon.png"
 
-const THEME = "#FA0272"
+const THEME = "#2563EB"
 
 export default function RestaurantOTP() {
   const companyName = useCompanyName()

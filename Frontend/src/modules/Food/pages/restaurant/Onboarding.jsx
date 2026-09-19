@@ -45,7 +45,7 @@ import {
   chipClass,
 } from "@food/components/restaurant/onboardingStyles"
 
-const RESTAURANT_THEME = "#FA0272"
+const RESTAURANT_THEME = "#2563EB"
 
 const formatMoney = (value) =>
   `₹${Number(value || 0).toLocaleString("en-IN", { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`

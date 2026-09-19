@@ -1,6 +1,18 @@
-export const RESTAURANT_BRAND = "#FA0272"
-export const RESTAURANT_BRAND_RGB = "250,2,114"
-export const RESTAURANT_BRAND_HOVER = "#D90263"
+/**
+ * The seller panel's brand colour.
+ *
+ * These are read into inline styles and concatenated with alpha suffixes, so
+ * they have to be literal hex rather than var(--module-theme-color). They are
+ * kept in step with the seller module's configured theme colour by hand; the
+ * class-based usages elsewhere follow it automatically through the override
+ * stylesheet.
+ *
+ * They used to be the customer app's pink, which is why half this panel was
+ * one brand and half the other.
+ */
+export const RESTAURANT_BRAND = "#2563EB"
+export const RESTAURANT_BRAND_RGB = "37,99,235"
+export const RESTAURANT_BRAND_HOVER = "#1D4ED8"
 
 export const ONBOARDING_FONT =
   "'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
