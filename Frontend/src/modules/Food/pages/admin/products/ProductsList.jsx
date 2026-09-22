@@ -21,6 +21,12 @@ import { canCurrentAdminAction } from "@food/utils/adminRbac"
  * opening each product.
  */
 
+const STOCK_BADGE = {
+  low: "bg-amber-100 text-amber-800",
+  critical: "bg-orange-100 text-orange-900",
+  out: "bg-rose-100 text-rose-800",
+}
+
 const PAGE_SIZES = [10, 25, 50, 100]
 const money = (n) => (n === null || n === undefined || n === "" ? "" : Number(n).toFixed(1))
 
@@ -395,7 +401,27 @@ export default function ProductsList() {
                           className="w-20 rounded border border-sky-400 px-2 py-1 text-sm"
                         />
                       ) : (
-                        row.stockQty === null || row.stockQty === undefined ? "0.00" : Number(row.stockQty).toFixed(2)
+                        <div className="flex flex-col gap-1">
+                          <span>
+                            {row.stockQty === null || row.stockQty === undefined
+                              ? "0.00"
+                              : Number(row.stockQty).toFixed(2)}
+                          </span>
+                          {/* The badge carries the number as well as the word:
+                              "Low stock" alone says nothing about what to
+                              reorder. Computed on the server so this cell can
+                              never disagree with the stock screen. */}
+                          {row.stockBadge?.needsAttention && (
+                            <span
+                              className={`inline-flex w-fit items-center gap-1 rounded px-1.5 py-0.5 text-[11px] font-semibold ${
+                                STOCK_BADGE[row.stockBadge.tier] || STOCK_BADGE.low
+                              }`}
+                            >
+                              ⚠️ {row.stockBadge.label}
+                              {row.stockBadge.tier !== "out" && ` · ${row.stockBadge.remaining} left`}
+                            </span>
+                          )}
+                        </div>
                       )}
                     </td>
                     <td className="px-3 py-3">

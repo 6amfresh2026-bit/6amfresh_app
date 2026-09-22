@@ -11,6 +11,7 @@ import { FoodStockVerification } from '../../orders/models/stockVerification.mod
 import { recordMovement } from '../../orders/services/stockLedger.service.js';
 import { nextSequence } from '../models/counter.model.js';
 import { NotFoundError, ValidationError } from '../../../../core/auth/errors.js';
+import { stockTier, DEFAULT_STOCK_THRESHOLDS } from '../../shared/stockTiers.js';
 
 /**
  * Admin stock screens: the Stocks list (what is on the shelf, with manual
@@ -36,13 +37,14 @@ const oid = (v, label) => {
 const rx = (term) => new RegExp(String(term).trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
 const actorOf = (user) => ({ role: user?.role || 'ADMIN', id: user?.userId ? oid(user.userId, 'user') : null, name: user?.name || '' });
 
-/** in_stock / low / out / untracked, from the item's own threshold. */
-const stockStatus = (f) => {
-    if (f.stockQty === null || f.stockQty === undefined) return 'untracked';
-    if (Number(f.stockQty) <= 0) return 'out';
-    if (f.lowStockThreshold !== null && f.lowStockThreshold !== undefined && Number(f.stockQty) <= Number(f.lowStockThreshold)) return 'low';
-    return 'in_stock';
-};
+/**
+ * untracked / out / critical / low / in_stock.
+ *
+ * Delegates to the shared tier logic so this screen cannot drift from the
+ * storefront card and the alerting, which is what happens the moment the
+ * comparison is written out twice.
+ */
+const stockStatus = (f, outlet = null) => stockTier(f, outlet);
 
 // ───────────────────────────── Stocks list ─────────────────────────────
 
@@ -65,14 +67,20 @@ export async function listStocks(query = {}) {
         $switch: {
             branches: [
                 { case: { $eq: ['$stockQty', null] }, then: 'untracked' },
-                { case: { $lte: ['$stockQty', 0] }, then: 'out' },
-                { case: { $and: [{ $ne: ['$lowStockThreshold', null] }, { $lte: ['$stockQty', '$lowStockThreshold'] }] }, then: 'low' },
+                // Platform defaults only: the outlet's own thresholds cannot be
+                // reached here without a $lookup per row. This exists so the
+                // status *filter* can run in the database; the served rows are
+                // re-classified below with the outlet in hand, so what the
+                // screen displays is always the outlet-aware answer.
+                { case: { $lte: ['$stockQty', { $ifNull: ['$outOfStockThreshold', DEFAULT_STOCK_THRESHOLDS.out] }] }, then: 'out' },
+                { case: { $lte: ['$stockQty', { $ifNull: ['$criticalStockThreshold', DEFAULT_STOCK_THRESHOLDS.critical] }] }, then: 'critical' },
+                { case: { $lte: ['$stockQty', { $ifNull: ['$lowStockThreshold', DEFAULT_STOCK_THRESHOLDS.low] }] }, then: 'low' },
             ],
             default: 'in_stock'
         }
     };
     const pipeline = [{ $match: match }, { $addFields: { stockStatus: statusExpr } }];
-    if (query.status && ['in_stock', 'low', 'out', 'untracked'].includes(query.status)) {
+    if (query.status && ['in_stock', 'low', 'critical', 'out', 'untracked'].includes(query.status)) {
         pipeline.push({ $match: { stockStatus: query.status } });
     }
 
@@ -93,7 +101,7 @@ export async function listStocks(query = {}) {
     const categoryIds = [...new Set([...ids('categoryId'), ...ids('subCategoryId')])];
     const brandIds = [...new Set([...ids('brandId'), ...ids('subBrandId')])];
     const [restaurants, departments, categories, brands, units, lastMoves] = await Promise.all([
-        ids('restaurantId').length ? FoodRestaurant.find({ _id: { $in: ids('restaurantId') } }).select('restaurantName').lean() : [],
+        ids('restaurantId').length ? FoodRestaurant.find({ _id: { $in: ids('restaurantId') } }).select('restaurantName stockThresholds').lean() : [],
         ids('departmentId').length ? FoodDepartment.find({ _id: { $in: ids('departmentId') } }).select('name').lean() : [],
         categoryIds.length ? FoodCategory.find({ _id: { $in: categoryIds } }).select('name').lean() : [],
         brandIds.length ? FoodBrand.find({ _id: { $in: brandIds } }).select('name').lean() : [],
@@ -107,6 +115,9 @@ export async function listStocks(query = {}) {
             : []
     ]);
     const rMap = new Map(restaurants.map((r) => [String(r._id), r.restaurantName]));
+    // The outlet itself, so a row is classified against the thresholds its
+    // shop configured rather than the platform defaults.
+    const outletMap = new Map(restaurants.map((r) => [String(r._id), r]));
     const dMap = new Map(departments.map((d) => [String(d._id), d.name]));
     const cMap = new Map(categories.map((c) => [String(c._id), c.name]));
     const bMap = new Map(brands.map((b) => [String(b._id), b.name]));
@@ -134,7 +145,7 @@ export async function listStocks(query = {}) {
             testingQty: f.testingQty ?? 0,
             stockQty: f.stockQty ?? null,
             lowStockThreshold: f.lowStockThreshold ?? null,
-            status: f.stockStatus || stockStatus(f),
+            status: stockStatus(f, outletMap.get(String(f.restaurantId)) || null),
             isAvailable: f.isAvailable !== false,
             lastMovementAt: mMap.get(String(f._id))?.at || null,
             lastMovementType: mMap.get(String(f._id))?.type || ''

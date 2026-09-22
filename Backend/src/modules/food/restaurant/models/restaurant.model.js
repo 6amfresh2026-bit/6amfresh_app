@@ -297,6 +297,19 @@ const restaurantSchema = new mongoose.Schema(
      * doing until an admin sets a figure.
      */
     deliveryRadiusKm: { type: Number, default: 0, min: 0 },
+    /**
+     * Stock thresholds for every product in this outlet that has not set its
+     * own.
+     *
+     * Configured once here rather than on each SKU, because a shop with
+     * thousands of lines is never going to fill in three numbers per line, and
+     * a feature nobody can afford to switch on is not a feature.
+     */
+    stockThresholds: {
+        low: { type: Number, default: 10, min: 0 },
+        critical: { type: Number, default: 3, min: 0 },
+        out: { type: Number, default: 0, min: 0 }
+    },
     businessModel: {
       type: String,
       trim: true,

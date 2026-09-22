@@ -98,8 +98,34 @@ const foodSchema = new mongoose.Schema(
          * order, so the two numbers stay independent.
          */
         testingQty: { type: Number, default: 0, min: 0 },
-        /** Below this, the item is flagged to the seller. `null` disables the flag. */
+        /**
+         * Stock tiers, in descending order of comfort.
+         *
+         * `null` on any of these means "inherit the outlet's default", which is
+         * how a shop with four thousand SKUs configures this once rather than
+         * four thousand times. A number set here overrides the outlet.
+         *
+         * Below `lowStockThreshold` the item is flagged; below
+         * `criticalStockThreshold` it is flagged louder, because those are the
+         * ones somebody has to act on today; at or below `outOfStockThreshold`
+         * it is treated as gone. That last one is configurable rather than
+         * fixed at zero because a shop that must never promise its last unit
+         * sets it to 1, and hard-coding zero made that impossible.
+         */
         lowStockThreshold: { type: Number, default: null, min: 0 },
+        criticalStockThreshold: { type: Number, default: null, min: 0 },
+        outOfStockThreshold: { type: Number, default: null, min: 0 },
+        /**
+         * The tier this item was last seen in, and when it was last announced.
+         *
+         * Kept so an alert fires when stock *crosses* into a tier rather than
+         * every time anything reads the row: without it a busy shop would send
+         * the same "low stock" notice on every order all day.
+         */
+        stockAlert: {
+            lastTier: { type: String, enum: ['in_stock', 'low', 'critical', 'out'], default: null },
+            lastNotifiedAt: { type: Date, default: null }
+        },
         /** Cap per single order, so one buyer cannot clear the shelf. `null` = uncapped. */
         maxQtyPerOrder: { type: Number, default: null, min: 1 },
         /**

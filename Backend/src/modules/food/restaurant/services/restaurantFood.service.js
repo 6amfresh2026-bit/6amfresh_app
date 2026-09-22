@@ -17,6 +17,7 @@ import {
     GLOBAL_CATEGORY_FILTER
 } from '../../shared/categoryWorkflow.js';
 import { unhideCorrectedExpiry } from '../../orders/services/inventory.service.js';
+import { stockBadge } from '../../shared/stockTiers.js';
 
 const toStr = (v) => (v != null ? String(v).trim() : '');
 const APPROVED_CATEGORY_FILTER = [
@@ -212,6 +213,10 @@ const buildAvailabilityUpdate = (body = {}) => {
 
     const lowStockThreshold = parseStockNumber(body.lowStockThreshold);
     if (lowStockThreshold !== undefined) update.lowStockThreshold = lowStockThreshold;
+    const criticalStockThreshold = parseStockNumber(body.criticalStockThreshold);
+    if (criticalStockThreshold !== undefined) update.criticalStockThreshold = criticalStockThreshold;
+    const outOfStockThreshold = parseStockNumber(body.outOfStockThreshold);
+    if (outOfStockThreshold !== undefined) update.outOfStockThreshold = outOfStockThreshold;
 
     const maxQtyPerOrder = parseStockNumber(body.maxQtyPerOrder, { min: 1 });
     if (maxQtyPerOrder !== undefined) update.maxQtyPerOrder = maxQtyPerOrder;
@@ -415,18 +420,31 @@ export async function updateRestaurantFoodStock(restaurantId, entries = []) {
 export async function listLowStockFoods(restaurantId) {
     const context = await getRestaurantContext(restaurantId);
 
+    // Every stock-tracked item, not only the ones carrying their own threshold.
+    // Requiring lowStockThreshold to be set meant a shop that configured its
+    // thresholds once at the outlet -- the way this is meant to be used -- saw
+    // an empty low-stock screen, because none of its products had a threshold
+    // of their own.
+    const outlet = await FoodRestaurant.findById(context.restaurantId)
+        .select('stockThresholds')
+        .lean();
+
     const items = await FoodItem.find({
         restaurantId: context.restaurantId,
-        stockQty: { $ne: null },
-        lowStockThreshold: { $ne: null }
+        stockQty: { $ne: null }
     })
-        .select('_id name brand packSize image stockQty lowStockThreshold isAvailable')
+        .select('_id name brand packSize image stockQty isAvailable '
+            + 'lowStockThreshold criticalStockThreshold outOfStockThreshold')
         .lean();
 
     // Compared in code rather than in the query: Mongo cannot compare two fields
     // of the same document in a plain find, and a seller's catalogue is small
     // enough that filtering here is cheaper than an aggregation pipeline.
-    const low = items.filter((item) => Number(item.stockQty) <= Number(item.lowStockThreshold));
+    const low = items
+        .map((item) => ({ ...item, stockBadge: stockBadge(item, outlet) }))
+        .filter((item) => item.stockBadge.needsAttention);
+    // Worst first: out of stock, then critical, then low, and within a tier the
+    // smallest count. A seller opens this to decide what to reorder now.
     low.sort((a, b) => Number(a.stockQty) - Number(b.stockQty));
 
     return { items: low, total: low.length };
@@ -467,6 +485,8 @@ export async function createRestaurantFood(restaurantId, body = {}) {
         // who never enters a count keeps the old always-in-stock behaviour.
         stockQty: parseStockNumber(body.stockQty) ?? undefined,
         lowStockThreshold: parseStockNumber(body.lowStockThreshold) ?? undefined,
+        criticalStockThreshold: parseStockNumber(body.criticalStockThreshold) ?? undefined,
+        outOfStockThreshold: parseStockNumber(body.outOfStockThreshold) ?? undefined,
         maxQtyPerOrder: parseStockNumber(body.maxQtyPerOrder, { min: 1 }) ?? undefined,
         ...catalogFields,
         isRecommended: body.isRecommended === true,

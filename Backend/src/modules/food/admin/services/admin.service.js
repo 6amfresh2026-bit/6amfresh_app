@@ -66,6 +66,7 @@ import {
     serializeFoodVariants
 } from './foodVariant.service.js';
 import { resolveDiscountSplit } from '../../shared/discountSplit.util.js';
+import { stockBadge } from '../../shared/stockTiers.js';
 import {
     isRestaurantEarnedOrder,
     computeRestaurantOrderShare,
@@ -3076,6 +3077,31 @@ export async function deleteUnregisteredRestaurant(id) {
  * Empty and null mean no limit, the same as zero, so clearing the box actually
  * clears the radius instead of being read as "not sent, leave it alone".
  */
+/**
+ * The outlet's default stock tiers.
+ *
+ * Each field is optional: a form that sends only `low` must not wipe the other
+ * two. Clamped so the tiers cannot cross, because a critical line above the low
+ * line classifies nothing as critical and everything below low as critical at
+ * the same time.
+ */
+function parseStockThresholds(input, existing = {}) {
+    const current = {
+        low: existing?.low ?? 10,
+        critical: existing?.critical ?? 3,
+        out: existing?.out ?? 0,
+    };
+    const pick = (key) => {
+        const raw = input?.[key];
+        if (raw === undefined || raw === null || raw === '') return current[key];
+        const n = Number(raw);
+        return Number.isFinite(n) && n >= 0 ? Math.floor(n) : current[key];
+    };
+    const low = pick('low');
+    const critical = Math.min(pick('critical'), low);
+    return { low, critical, out: Math.min(pick('out'), critical) };
+}
+
 function parseDeliveryRadiusKm(raw) {
     if (raw === null || raw === '') return 0;
     const km = toFiniteNumber(raw);
@@ -3122,6 +3148,14 @@ export async function updateRestaurantById(id, body = {}) {
     // changing how far a store delivers is not a reason to re-enter where it is.
     if (body.deliveryRadiusKm !== undefined) {
         doc.deliveryRadiusKm = parseDeliveryRadiusKm(body.deliveryRadiusKm);
+    }
+
+    // The default stock tiers for every product in this outlet that has not set
+    // its own. This is the only way a shop with thousands of lines configures
+    // the low-stock feature at all, so it is editable from the same form as the
+    // rest of the outlet's settings rather than hidden behind the API.
+    if (body.stockThresholds !== undefined) {
+        doc.stockThresholds = parseStockThresholds(body.stockThresholds, doc.stockThresholds);
     }
 
     // Admin-only on purpose: a seller cannot grant themselves auto-accept.
@@ -3344,6 +3378,14 @@ export async function updateRestaurantLocation(id, body = {}) {
     // question: the zone is which block, this is how far across it.
     if (body.deliveryRadiusKm !== undefined) {
         doc.deliveryRadiusKm = parseDeliveryRadiusKm(body.deliveryRadiusKm);
+    }
+
+    // The default stock tiers for every product in this outlet that has not set
+    // its own. This is the only way a shop with thousands of lines configures
+    // the low-stock feature at all, so it is editable from the same form as the
+    // rest of the outlet's settings rather than hidden behind the API.
+    if (body.stockThresholds !== undefined) {
+        doc.stockThresholds = parseStockThresholds(body.stockThresholds, doc.stockThresholds);
     }
 
     await doc.save();
@@ -3925,16 +3967,24 @@ export async function getFoods(query) {
     const brandIds = [...new Set([...ids('brandId'), ...ids('subBrandId')])];
     const [restaurants, brands, units] = await Promise.all([
         ids('restaurantId').length
-            ? FoodRestaurant.find({ _id: { $in: ids('restaurantId') } }).select('restaurantName').lean()
+            // stockThresholds rides along so each row's badge can be resolved
+            // against its own outlet rather than the platform default.
+            ? FoodRestaurant.find({ _id: { $in: ids('restaurantId') } }).select('restaurantName stockThresholds').lean()
             : [],
         brandIds.length ? FoodBrand.find({ _id: { $in: brandIds } }).select('name').lean() : [],
         ids('unitId').length ? FoodUnit.find({ _id: { $in: ids('unitId') } }).select('name shortName').lean() : []
     ]);
     const restaurantMap = new Map(restaurants.map((r) => [String(r._id), r.restaurantName]));
+    const outletMap = new Map(restaurants.map((r) => [String(r._id), r]));
     const brandMap = new Map(brands.map((b) => [String(b._id), b.name]));
     const unitMap = new Map(units.map((u) => [String(u._id), u]));
 
-    const foods = list.map((f) => serializeAdminFoodRow(f, restaurantMap, brandMap, unitMap));
+    const foods = list.map((f) => ({
+        ...serializeAdminFoodRow(f, restaurantMap, brandMap, unitMap),
+        // Computed here, not in the client: four screens render this badge and
+        // four hand-written comparisons drift.
+        stockBadge: stockBadge(f, outletMap.get(String(f.restaurantId)) || null)
+    }));
 
     return { foods, total, page, limit };
 }
@@ -4013,6 +4063,8 @@ function serializeAdminFoodRow(f, restaurantMap, brandMap, unitMap = new Map()) 
         minimumQuantity: f.minimumQuantity ?? null,
         stockQty: f.stockQty ?? null,
         lowStockThreshold: f.lowStockThreshold ?? null,
+        criticalStockThreshold: f.criticalStockThreshold ?? null,
+        outOfStockThreshold: f.outOfStockThreshold ?? null,
         maxQtyPerOrder: f.maxQtyPerOrder ?? null,
         packSize: f.packSize || '',
         showOnline: f.showOnline === true,
@@ -4321,6 +4373,8 @@ function buildAdminCatalogFields(body = {}) {
         gstRate: num(body.gstRate, { max: 100 }),
         stockQty: num(body.stockQty),
         lowStockThreshold: num(body.lowStockThreshold),
+        criticalStockThreshold: num(body.criticalStockThreshold),
+        outOfStockThreshold: num(body.outOfStockThreshold),
         maxQtyPerOrder: num(body.maxQtyPerOrder, { min: 1 }),
 
         // ── vasy product master fields ──
@@ -5484,6 +5538,8 @@ export async function getDeliveryPartners(query) {
             vehicleType: doc.vehicleType || '',
             status: doc.status,
             availabilityStatus: doc.availabilityStatus || 'offline',
+            // The zone-based dark-store toggle, so the panel can show and set it.
+            autoOnlineInZone: doc.autoOnlineInZone === true,
             isOnline: doc.availabilityStatus === 'online',
             lastLocation,
             lastLat,
@@ -6963,12 +7019,18 @@ export async function updateDeliveryBoyWallet(data) {
  *  - Changing the number changes who can sign in. The rider's existing sessions are
  *    invalidated so the old handset cannot keep acting on an identity that has moved.
  */
-export async function updateDeliveryPartnerProfile(id, { name, phone } = {}) {
+export async function updateDeliveryPartnerProfile(id, { name, phone, autoOnlineInZone } = {}) {
     const partner = await FoodDeliveryPartner.findById(id);
     if (!partner) throw new NotFoundError('Delivery partner not found');
 
     const nextName = typeof name === 'string' ? name.trim() : undefined;
     const nextPhone = typeof phone === 'string' ? phone.trim() : undefined;
+
+    // The zone-based dark-store toggle. Off unless somebody turns it on: it is
+    // the only thing that can change a rider's status without the rider.
+    if (autoOnlineInZone !== undefined) {
+        partner.autoOnlineInZone = autoOnlineInZone === true || autoOnlineInZone === 'true';
+    }
 
     if (nextName !== undefined) {
         if (!nextName) throw new ValidationError('Name cannot be empty');

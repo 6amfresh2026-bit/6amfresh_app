@@ -5,6 +5,7 @@ import { ValidationError } from '../../../../core/auth/errors.js';
 import { logger } from '../../../../utils/logger.js';
 import { recordMovement } from './stockLedger.service.js';
 import { allocateFefo, returnAllocations } from './stockBatch.service.js';
+import { notifyStockTierChange } from './stockAlert.service.js';
 
 /** Ledger reference for an order, when the caller can name one. */
 const orderRef = (ctx) =>
@@ -131,10 +132,22 @@ export async function reserveStockForItems(items = [], ctx = {}) {
       { $inc: { stockQty: -qty } },
       // manageMultipleBatch rides along so the allocation below can be skipped
       // without a second lookup.
-      { new: true, projection: { stockQty: 1, name: 1, itemCode: 1, restaurantId: 1, manageMultipleBatch: 1 } },
+      // The threshold fields and the last-seen tier ride along so the stock
+      // alert below needs no second read on the hot path of every sale.
+      {
+        new: true,
+        projection: {
+          stockQty: 1, name: 1, itemCode: 1, restaurantId: 1, manageMultipleBatch: 1,
+          lowStockThreshold: 1, criticalStockThreshold: 1, outOfStockThreshold: 1, stockAlert: 1,
+        },
+      },
     ).lean();
 
     if (updated) {
+      // Fire-and-forget: a push that fails must never fail a sale, and the
+      // helper only actually sends when this decrement crossed a tier.
+      void notifyStockTierChange(updated);
+
       // Which units, now that we know how many. Deliberately after the
       // conditional decrement above, never instead of it: that single atomic
       // update is what stops two customers buying the last one, and batches

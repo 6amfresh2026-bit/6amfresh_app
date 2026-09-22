@@ -78,6 +78,9 @@ const blank = () => ({
   onlinePrice: "",
   minimumQuantity: "",
   stockQty: "",
+  lowStockThreshold: "",
+  criticalStockThreshold: "",
+  outOfStockThreshold: "",
   netWeight: "",
   variants: [],
 })
@@ -257,6 +260,9 @@ export default function ProductForm() {
           onlinePrice: s(f.onlinePrice),
           minimumQuantity: s(f.minimumQuantity),
           stockQty: s(f.stockQty),
+          lowStockThreshold: s(f.lowStockThreshold),
+          criticalStockThreshold: s(f.criticalStockThreshold),
+          outOfStockThreshold: s(f.outOfStockThreshold),
           netWeight: s(f.netWeight),
           variants: (f.variants || []).map((v) => ({ name: v.name || "", price: s(v.price), otherPrice: s(v.otherPrice) })),
         })
@@ -453,6 +459,9 @@ export default function ProductForm() {
     onlinePrice: n(form.onlinePrice),
     minimumQuantity: n(form.minimumQuantity),
     stockQty: n(form.stockQty),
+    lowStockThreshold: n(form.lowStockThreshold),
+    criticalStockThreshold: n(form.criticalStockThreshold),
+    outOfStockThreshold: n(form.outOfStockThreshold),
     netWeight: n(form.netWeight),
     variants: form.variants.filter((v) => v.name.trim()).map((v) => ({ name: v.name.trim(), price: n(v.price) ?? 0, otherPrice: n(v.otherPrice) ?? 0 })),
   })
@@ -715,6 +724,11 @@ export default function ProductForm() {
           <F k="onlinePrice" label="Online Price" required><input type="number" step="any" value={form.onlinePrice} onChange={set("onlinePrice")} placeholder="0" className={inp} /></F>
           <F k="minimumQuantity" label="Minimum Quantity" required><input type="number" step="any" value={form.minimumQuantity} onChange={set("minimumQuantity")} placeholder="0" className={inp} /></F>
           <F k="stockQty" label="Opening Qty"><input type="number" step="any" value={form.stockQty} onChange={set("stockQty")} placeholder="0" className={inp} /></F>
+          {/* Left blank these inherit the outlet's defaults, which is how a
+              shop with thousands of lines configures this at all. */}
+          <F k="lowStockThreshold" label="Low Stock At"><input type="number" min={0} value={form.lowStockThreshold} onChange={set("lowStockThreshold")} placeholder="outlet default" className={inp} /></F>
+          <F k="criticalStockThreshold" label="Critical Stock At"><input type="number" min={0} value={form.criticalStockThreshold} onChange={set("criticalStockThreshold")} placeholder="outlet default" className={inp} /></F>
+          <F k="outOfStockThreshold" label="Out Of Stock At"><input type="number" min={0} value={form.outOfStockThreshold} onChange={set("outOfStockThreshold")} placeholder="outlet default" className={inp} /></F>
           <F k="netWeight" label="Net Weight"><input type="number" step="any" value={form.netWeight} onChange={set("netWeight")} placeholder="0" className={inp} /></F>
         </div>
       </section>

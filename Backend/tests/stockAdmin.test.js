@@ -49,16 +49,27 @@ describe('listStocks', () => {
         assert.equal(res.totals.testingQty, 5);
     });
 
-    it('classifies in-stock, low, out and untracked', async () => {
+    it('classifies in-stock, low, critical, out and untracked', async () => {
+        // `Low` used to hold 3 units and be classified low, because low was the
+        // only tier below in-stock. With a critical tier in place -- platform
+        // default 3 -- three units is genuinely critical, so it is now named
+        // that. `Low` below sits at 4 to pin the boundary that did not move.
         const store = await seedStore();
         await makeItem(store, { name: 'Plenty', stockQty: 100, lowStockThreshold: 10 });
-        await makeItem(store, { name: 'Low', stockQty: 3, lowStockThreshold: 5 });
+        await makeItem(store, { name: 'Low', stockQty: 4, lowStockThreshold: 5 });
+        await makeItem(store, { name: 'Critical', stockQty: 3, lowStockThreshold: 5 });
         await makeItem(store, { name: 'Gone', stockQty: 0 });
         await makeItem(store, { name: 'Untracked', stockQty: null });
 
         const { stocks } = await stock.listStocks({ restaurantId: String(store._id), limit: 50 });
         const byName = Object.fromEntries(stocks.map((s) => [s.name, s.status]));
-        assert.deepEqual(byName, { Plenty: 'in_stock', Low: 'low', Gone: 'out', Untracked: 'untracked' });
+        assert.deepEqual(byName, {
+            Plenty: 'in_stock',
+            Low: 'low',
+            Critical: 'critical',
+            Gone: 'out',
+            Untracked: 'untracked'
+        });
     });
 });
 
@@ -193,5 +204,46 @@ describe('stock verification', () => {
         await stock.deleteVerification(created.id);
         const { total } = await stock.listVerifications({});
         assert.equal(total, 0);
+    });
+});
+
+/**
+ * The thresholds a shop configures once, on the outlet.
+ *
+ * These are the whole point of the feature -- nobody fills in three numbers on
+ * four thousand SKUs -- so every screen that classifies stock has to read them.
+ * Each of these pins a place that was reading the platform defaults instead.
+ */
+describe('outlet-level stock thresholds', () => {
+    const strictStore = () =>
+        FoodRestaurant.create({
+            restaurantName: 'Strict Store',
+            ownerName: 'Owner',
+            ownerPhone: '9000000001',
+            phone: '9000000001',
+            // Far stricter than the platform defaults (10 / 3 / 0), so a row
+            // classified against the defaults lands in a different tier and the
+            // test cannot pass by accident.
+            stockThresholds: { low: 50, critical: 25, out: 5 }
+        });
+
+    it('classifies the admin stock screen against the outlet, not the defaults', async () => {
+        const store = await strictStore();
+        await makeItem(store, { name: 'Fortyish', stockQty: 40 });
+
+        const { stocks } = await stock.listStocks({ restaurantId: String(store._id), limit: 50 });
+        assert.equal(
+            stocks.find((s) => s.name === 'Fortyish').status,
+            'low',
+            '40 units is plenty by the platform default and low by this outlet’s'
+        );
+    });
+
+    it('still lets a product override its outlet', async () => {
+        const store = await strictStore();
+        await makeItem(store, { name: 'Bulk', stockQty: 40, lowStockThreshold: 5 });
+
+        const { stocks } = await stock.listStocks({ restaurantId: String(store._id), limit: 50 });
+        assert.equal(stocks.find((s) => s.name === 'Bulk').status, 'in_stock');
     });
 });

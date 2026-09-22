@@ -109,6 +109,12 @@ const normalizeDetailsFormFromRestaurant = (restaurant) => {
       restaurant?.deliveryRadiusKm === undefined || restaurant?.deliveryRadiusKm === null
         ? ""
         : String(restaurant.deliveryRadiusKm),
+    // The outlet's default stock tiers. Every product that has not set its own
+    // inherits these, which is the only way a catalogue of any size gets
+    // thresholds at all.
+    stockLow: String(restaurant?.stockThresholds?.low ?? 10),
+    stockCritical: String(restaurant?.stockThresholds?.critical ?? 3),
+    stockOut: String(restaurant?.stockThresholds?.out ?? 0),
     // Defaults to false rather than true: a seller who predates this field has
     // no value stored, and defaulting to exempt would quietly stop billing them.
     billingExempt: restaurant?.billingExempt === true,
@@ -415,6 +421,11 @@ export default function EditRestaurant() {
         // box actually clears the radius rather than leaving the old one.
         deliveryRadiusKm:
           detailsForm.deliveryRadiusKm === "" ? 0 : Number(detailsForm.deliveryRadiusKm),
+        stockThresholds: {
+          low: detailsForm.stockLow,
+          critical: detailsForm.stockCritical,
+          out: detailsForm.stockOut,
+        },
         estimatedDeliveryTimeMinutes:
           detailsForm.estimatedDeliveryTimeMinutes === ""
             ? undefined
@@ -728,6 +739,48 @@ export default function EditRestaurant() {
                   <p className="text-[11px] text-slate-500 mt-1">
                     How far this store delivers inside its zone. Addresses beyond it cannot order
                     from it and it is not listed to them. 0 means no limit.
+                  </p>
+                </div>
+                <div className="sm:col-span-2">
+                  <Label>Stock Alert Thresholds</Label>
+                  <div className="grid grid-cols-3 gap-3">
+                    <div>
+                      <Input
+                        type="number"
+                        min="0"
+                        data-testid="stock-low"
+                        value={detailsForm.stockLow}
+                        onChange={(e) => setDetailsForm((p) => ({ ...p, stockLow: e.target.value }))}
+                        placeholder="10"
+                      />
+                      <p className="text-[11px] text-slate-500 mt-1">Low at or below</p>
+                    </div>
+                    <div>
+                      <Input
+                        type="number"
+                        min="0"
+                        data-testid="stock-critical"
+                        value={detailsForm.stockCritical}
+                        onChange={(e) => setDetailsForm((p) => ({ ...p, stockCritical: e.target.value }))}
+                        placeholder="3"
+                      />
+                      <p className="text-[11px] text-slate-500 mt-1">Critical at or below</p>
+                    </div>
+                    <div>
+                      <Input
+                        type="number"
+                        min="0"
+                        data-testid="stock-out"
+                        value={detailsForm.stockOut}
+                        onChange={(e) => setDetailsForm((p) => ({ ...p, stockOut: e.target.value }))}
+                        placeholder="0"
+                      />
+                      <p className="text-[11px] text-slate-500 mt-1">Out at or below</p>
+                    </div>
+                  </div>
+                  <p className="text-[11px] text-slate-500 mt-1">
+                    Applies to every product in this outlet that has not set its own thresholds.
+                    Set Out to 1 if this store must never promise its last unit.
                   </p>
                 </div>
                 <div>
