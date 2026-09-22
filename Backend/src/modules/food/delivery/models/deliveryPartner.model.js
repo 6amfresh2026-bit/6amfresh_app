@@ -1,4 +1,5 @@
 import mongoose from 'mongoose';
+import { DELIVERY_AVAILABILITY_STATUSES } from '../../../../constants/deliveryAvailability.js';
 
 const normalizeRatingValue = (value) => {
     const numeric = Number(value);
@@ -90,9 +91,23 @@ const deliveryPartnerSchema = new mongoose.Schema(
         bankName: { type: String },
         upiId: { type: String },
         upiQrCode: { type: String },
+        /**
+         * The zone-based dark-store toggle.
+         *
+         * When on, a location ping from a rider who is offline and standing
+         * inside an active zone puts them online. Off by default and never
+         * implicit: flipping somebody online without their say-so is the one
+         * way this feature turns into a complaint, so it is opt-in per rider.
+         *
+         * It only ever lifts `offline`. A rider on a break, in the washroom or
+         * dealing with a breakdown stays exactly where they put themselves --
+         * those are deliberate and temporary, and walking past the shop is not
+         * consent to start taking orders again.
+         */
+        autoOnlineInZone: { type: Boolean, default: false, index: true },
         availabilityStatus: {
             type: String,
-            enum: ['online', 'offline'],
+            enum: DELIVERY_AVAILABILITY_STATUSES,
             default: 'offline'
         },
         // Set when a seller links this rider into their own manually-managed

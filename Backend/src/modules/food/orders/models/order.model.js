@@ -327,7 +327,26 @@ const dispatchSchema = new mongoose.Schema(
             at: { type: Date, default: Date.now },
             action: { type: String, enum: ['offered', 'rejected', 'timeout', 'deassigned'], default: 'offered' }
         }],
-        dispatchingAt: { type: Date }
+        dispatchingAt: { type: Date },
+        /**
+         * Every time this order changed hands, and why.
+         *
+         * Kept on the order rather than derived from statusHistory because the
+         * reason is the point: "reassigned" tells ops nothing, "rider's vehicle
+         * broke down at 7:42" is the thing a complaint or a payout dispute
+         * turns on. statusHistory records that the status did not change, which
+         * is exactly why a reassignment is invisible in it.
+         *
+         * Append-only. A later reassignment never rewrites an earlier one.
+         */
+        reassignments: [{
+            at: { type: Date, default: Date.now },
+            fromPartnerId: { type: mongoose.Schema.Types.ObjectId, ref: 'FoodDeliveryPartner', default: null },
+            toPartnerId: { type: mongoose.Schema.Types.ObjectId, ref: 'FoodDeliveryPartner', default: null },
+            reason: { type: String, trim: true, default: '' },
+            byRole: { type: String, enum: ['ADMIN', 'RESTAURANT', 'SYSTEM'], default: 'ADMIN' },
+            byId: { type: mongoose.Schema.Types.ObjectId, default: null }
+        }]
     },
     { _id: false }
 );

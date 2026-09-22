@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { adminAPI } from "@food/api";
+import ReassignDeliveryPanel from "@food/components/admin/orders/ReassignDeliveryPanel";
 
 const statusClass = {
   open: "bg-orange-100 text-orange-700",
@@ -79,6 +80,10 @@ export default function OrderReassignmentRequests() {
   useEffect(() => {
     void fetchRequests();
   }, [fetchRequests, status]);
+
+  // Picking the replacement, rather than throwing the order back into the
+  // pool and hoping. Held here so the row can open it for its own order.
+  const [reassignFor, setReassignFor] = useState(null);
 
   const deassignAndResend = async (request) => {
     const retryable = canRetryDispatch(request);
@@ -282,6 +287,19 @@ export default function OrderReassignmentRequests() {
                         </button>
                       )}
                       <button
+                        onClick={() =>
+                          setReassignFor({
+                            _id: request.orderId?._id || request.orderId,
+                            order_id: orderLabel(request),
+                          })
+                        }
+                        disabled={isBusy}
+                        className="inline-flex items-center justify-center gap-2 rounded-lg bg-blue-600 px-4 py-3 text-sm font-bold text-white hover:bg-blue-700 disabled:opacity-50"
+                      >
+                        <Bike className="h-4 w-4" />
+                        Reassign to a partner
+                      </button>
+                      <button
                         onClick={() => deassignAndResend(request)}
                         disabled={(!eligible && !retryable) || isBusy}
                         className="inline-flex items-center justify-center gap-2 rounded-lg bg-red-600 px-4 py-3 text-sm font-bold text-white hover:bg-red-700 disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-500"
@@ -310,6 +328,13 @@ export default function OrderReassignmentRequests() {
             })}
           </div>
         )}
+      {reassignFor && (
+        <ReassignDeliveryPanel
+          order={reassignFor}
+          onClose={() => setReassignFor(null)}
+          onDone={() => fetchRequests()}
+        />
+      )}
       </div>
     </div>
   );

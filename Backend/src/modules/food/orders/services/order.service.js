@@ -1736,6 +1736,14 @@ export async function recoverStuckOrders() {
       'dispatch.status': 'assigned',
       'dispatch.acceptedAt': { $exists: false },
       'dispatch.assignedAt': { $lt: new Date(now - TWO_MIN) },
+      // A person chose this rider. Healing it means quietly unassigning them
+      // and racing the order back to the pool two minutes later, which undoes
+      // the decision without telling anybody it happened -- and leaves the
+      // reassignment history claiming a rider who no longer has the order.
+      // An auto-assignment nobody accepted is a dispatch failure and this
+      // should heal it; a manual one is a fact about what ops decided, and if
+      // that rider never accepts it is ops who need to see it and act.
+      'dispatch.assignmentMode': { $ne: 'manual' },
       orderStatus: { $nin: ['delivered', 'cancelled_by_user', 'cancelled_by_restaurant'] }
     });
 

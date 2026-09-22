@@ -12,6 +12,7 @@ import { getDeliveryCashLimitSettings } from '../../admin/services/admin.service
 import { upsertFirebaseDeviceToken } from '../../../../core/notifications/firebase.service.js';
 import { logger } from '../../../../utils/logger.js';
 import { collectDynamicRegistration } from './driverRegistrationField.service.js';
+import { normalizeAvailabilityStatus } from '../../../../constants/deliveryAvailability.js';
 
 const savePartnerFcmToken = async (partnerId, fcmToken, platform) => {
     if (!fcmToken || !partnerId) return;
@@ -419,9 +420,40 @@ export const updateDeliveryAvailability = async (userId, payload) => {
     const lng = Number(payload?.longitude ?? payload?.lng);
     const hasFreshCoords = Number.isFinite(lat) && Number.isFinite(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180;
 
-    let validStatus = 'offline';
-    if (rawStatus === 'online' || rawStatus === true || rawStatus === 'true') validStatus = 'online';
-    else if (rawStatus === 'offline' || rawStatus === false || rawStatus === 'false') validStatus = 'offline';
+    // A payload with no status field at all is a location ping, not a status
+    // change. It used to fall through the normaliser and come out `offline`,
+    // which meant every plain location update knocked the rider off shift.
+    const statusWasSent = rawStatus !== undefined && rawStatus !== null && rawStatus !== '';
+
+    // Anything unrecognised becomes offline, which is the safe direction to
+    // fail: it stops orders rather than sending them to a rider whose state
+    // nobody understood.
+    let validStatus = statusWasSent
+        ? normalizeAvailabilityStatus(rawStatus)
+        : partner.availabilityStatus || 'offline';
+
+    /**
+     * The zone-based dark-store toggle: arriving at the zone puts the rider on.
+     *
+     * Only on a pure location ping, and only from `offline`. An explicit status
+     * in the same request always wins -- otherwise pressing "go offline" while
+     * standing in the zone would flip straight back to online and the button
+     * would be unusable. And a pause mode is never lifted: a rider in the
+     * washroom did not consent to new orders by not having moved.
+     */
+    let autoOnlined = false;
+    if (
+        !statusWasSent
+        && hasFreshCoords
+        && partner.autoOnlineInZone === true
+        && validStatus === 'offline'
+    ) {
+        const zone = await findZoneForPoint(lat, lng);
+        if (zone) {
+            validStatus = 'online';
+            autoOnlined = true;
+        }
+    }
 
     // A rider linked into a seller's own fleet can only go online from inside
     // that seller's delivery zone — going online anywhere else would let them
@@ -452,7 +484,7 @@ export const updateDeliveryAvailability = async (userId, payload) => {
         partner.lastLocationAt = new Date();
     }
     await partner.save();
-    return { availabilityStatus: partner.availabilityStatus };
+    return { availabilityStatus: partner.availabilityStatus, autoOnlined };
 };
 
 // ----- Delivery partner wallet (Pocket / requests page) -----

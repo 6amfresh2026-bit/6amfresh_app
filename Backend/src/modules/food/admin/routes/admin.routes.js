@@ -616,6 +616,13 @@ router.post(
     requireAdminPermission('order_management', 'edit'),
     adminController.assignOrderToRider
 );
+// Moving a live order between riders. Separate from assign-delivery because
+// it takes an order off somebody, which assign-delivery deliberately refuses.
+router.post(
+    '/orders/:orderId/reassign-delivery',
+    requireAdminPermission('order_management', 'edit'),
+    adminController.reassignOrderToRider
+);
 // Seller-wise rider management: who belongs to which shop.
 router.get(
     '/sellers/:restaurantId/fleet',

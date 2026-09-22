@@ -1826,8 +1826,8 @@ export async function updateDeliveryBoyWallet(req, res, next) {
 export async function updateDeliveryPartnerProfile(req, res, next) {
     try {
         const { id } = req.params;
-        const { name, phone } = req.body || {};
-        const data = await adminService.updateDeliveryPartnerProfile(id, { name, phone });
+        const { name, phone, autoOnlineInZone } = req.body || {};
+        const data = await adminService.updateDeliveryPartnerProfile(id, { name, phone, autoOnlineInZone });
         res.status(200).json({
             success: true,
             message: 'Delivery partner updated successfully',
@@ -2001,6 +2001,20 @@ export async function getAssignableRiders(req, res, next) {
     try {
         const data = await adminFleetService.listAssignableRiders(req.params.orderId);
         res.status(200).json({ success: true, message: 'Riders fetched successfully', data });
+    } catch (error) {
+        next(error);
+    }
+}
+
+export async function reassignOrderToRider(req, res, next) {
+    try {
+        const data = await adminFleetService.adminReassignOrder(
+            req.params.orderId,
+            req.body?.deliveryPartnerId,
+            req.body?.reason,
+            req.user?.userId
+        );
+        res.status(200).json({ success: true, message: 'Order reassigned successfully', data });
     } catch (error) {
         next(error);
     }

@@ -678,6 +678,13 @@ export const adminAPI = {
       { deliveryPartnerId },
       { contextModule: "admin" },
     ),
+  /** Moves a live order between riders; the reason is required. */
+  reassignOrderToRider: (orderId, deliveryPartnerId, reason) =>
+    apiClient.post(
+      `/food/admin/orders/${orderId}/reassign-delivery`,
+      { deliveryPartnerId, reason },
+      { contextModule: "admin" },
+    ),
   /** Get restaurant analytics for POS. */
   getRestaurantAnalytics: (id) =>
     apiClient.get(`/food/admin/restaurants/${id}/analytics`, {
@@ -2421,6 +2428,19 @@ export const deliveryAPI = {
     apiClient.patch(
       "/food/delivery/availability",
       { status: isOnline ? "online" : "offline" },
+      { contextModule: "delivery" },
+    ),
+  /**
+   * The pause modes, which are not a boolean.
+   *
+   * A rider on a five-minute break and a rider who has gone home both stop
+   * receiving orders, but only one of them is a staffing problem, and ops
+   * cannot tell them apart if both just say "offline".
+   */
+  setAvailabilityMode: (status, latitude, longitude) =>
+    apiClient.patch(
+      "/food/delivery/availability",
+      latitude && longitude ? { status, latitude, longitude } : { status },
       { contextModule: "delivery" },
     ),
   updateLocation: (latitude, longitude, isOnline, extras = {}) =>
