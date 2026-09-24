@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react"
 import { useNavigate, useParams } from "react-router-dom"
-import { Loader2, Settings2, Trash2 } from "lucide-react"
+import { ImagePlus, Loader2, Settings2, Trash2 } from "lucide-react"
 import { toast } from "sonner"
 
 import { adminAPI, uploadAPI } from "@food/api"
@@ -61,7 +61,7 @@ const blank = () => ({
   nutrition: [],
   netWeightUnitId: "",
   additionalInfo: "",
-  image: "",
+  images: [],
   foodType: "Veg",
   purchasePrice: "",
   landingCost: "",
@@ -243,7 +243,7 @@ export default function ProductForm() {
           nutrition: (f.nutrition || []).map((x) => ({ name: x.name || "", value: x.value || "", unit: x.unit || "" })),
           netWeightUnitId: s(f.netWeightUnitId),
           additionalInfo: f.additionalInfo || "",
-          image: f.image || "",
+          images: Array.isArray(f.images) && f.images.length ? f.images : (f.image ? [f.image] : []),
           foodType: f.foodType || "Veg",
           purchasePrice: s(f.purchasePrice),
           landingCost: s(f.landingCost),
@@ -376,21 +376,31 @@ export default function ProductForm() {
   const setVariant = (i, k, v) => setForm((f) => ({ ...f, variants: f.variants.map((x, j) => (j === i ? { ...x, [k]: v } : x)) }))
   const removeVariant = (i) => setForm((f) => ({ ...f, variants: f.variants.filter((_, j) => j !== i) }))
 
-  const onImage = async (e) => {
-    const file = e.target.files?.[0]
-    if (!file) return
+  const onImages = async (e) => {
+    const files = Array.from(e.target.files || [])
+    e.target.value = "" // lets the same file be re-picked later
+    if (!files.length) return
     setUploading(true)
     try {
-      const res = await uploadAPI.uploadMedia(file, { folder: "switcheats/admin/products" })
-      const url = res?.data?.data?.url || res?.data?.url || ""
-      if (!url) throw new Error("no url")
-      setForm((f) => ({ ...f, image: url }))
+      const uploaded = []
+      for (const file of files) {
+        const res = await uploadAPI.uploadMedia(file, { folder: "switcheats/admin/products" })
+        const url = res?.data?.data?.url || res?.data?.url || ""
+        if (url) uploaded.push(url)
+      }
+      if (!uploaded.length) throw new Error("no url")
+      setForm((f) => ({ ...f, images: [...f.images, ...uploaded] }))
+      if (uploaded.length < files.length) toast.error(`${files.length - uploaded.length} image(s) failed to upload`)
     } catch {
       toast.error("Image upload failed")
     } finally {
       setUploading(false)
     }
   }
+  const removeImage = (i) => setForm((f) => ({ ...f, images: f.images.filter((_, j) => j !== i) }))
+  // The first image is the primary everywhere else in the app reads a single
+  // `image` from, so "make primary" is just moving it to the front.
+  const makePrimary = (i) => setForm((f) => ({ ...f, images: [f.images[i], ...f.images.filter((_, j) => j !== i)] }))
 
   // ── validation: the reference's red "Select …" under required fields ──
   const validate = () => {
@@ -442,7 +452,8 @@ export default function ProductForm() {
     nutrition: form.nutrition.filter((x) => x.name.trim()),
     netWeightUnitId: form.netWeightUnitId || null,
     additionalInfo: form.additionalInfo.trim(),
-    image: form.image,
+    image: form.images[0] || "",
+    images: form.images,
     foodType: form.foodType,
     purchasePrice: n(form.purchasePrice),
     landingCost: n(form.landingCost),
@@ -513,6 +524,46 @@ export default function ProductForm() {
           <h2 className="font-medium text-sky-600">General Details</h2>
         </div>
         <div className="grid grid-cols-1 gap-4 p-4 md:grid-cols-2 xl:grid-cols-4">
+          <div className="md:col-span-2 xl:col-span-4">
+            <Label>Product Images</Label>
+            <div className="flex flex-wrap gap-3">
+              {form.images.map((url, i) => (
+                <div key={url + i} className="group relative h-24 w-24 overflow-hidden rounded-lg border border-neutral-300 bg-neutral-50">
+                  <img src={url} alt="" className="h-full w-full object-cover" />
+                  {i === 0 ? (
+                    <span className="absolute inset-x-0 bottom-0 bg-sky-500/90 py-0.5 text-center text-[10px] font-semibold text-white">Primary</span>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => makePrimary(i)}
+                      className="absolute inset-x-0 bottom-0 hidden bg-neutral-900/70 py-0.5 text-center text-[10px] font-semibold text-white group-hover:block"
+                    >
+                      Make primary
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => removeImage(i)}
+                    className="absolute right-1 top-1 grid h-5 w-5 place-items-center rounded-full bg-white/90 text-rose-600 shadow hover:bg-white"
+                  >
+                    <Trash2 className="h-3 w-3" />
+                  </button>
+                </div>
+              ))}
+              <label className="flex h-24 w-24 cursor-pointer flex-col items-center justify-center gap-1 rounded-lg border-2 border-dashed border-neutral-300 bg-neutral-50 text-center hover:border-sky-400 hover:bg-sky-50">
+                {uploading ? (
+                  <Loader2 className="h-5 w-5 animate-spin text-neutral-400" />
+                ) : (
+                  <>
+                    <ImagePlus className="h-5 w-5 text-neutral-400" />
+                    <span className="px-2 text-[11px] font-medium text-neutral-500">Add image{form.images.length ? "s" : ""}</span>
+                  </>
+                )}
+                <input type="file" accept="image/*" multiple onChange={onImages} disabled={uploading} className="hidden" />
+              </label>
+            </div>
+            <p className="mt-1.5 text-xs text-neutral-500">First image is the primary shown across the app. Add as many as you need.</p>
+          </div>
           <F k="restaurantId" label="Store" required>
             <select value={form.restaurantId} onChange={set("restaurantId")} disabled={editing} className={inp}>
               <option value="">Select Store</option>
@@ -607,14 +658,6 @@ export default function ProductForm() {
               <option value="Non-Veg">Non-Veg</option>
             </select>
           </F>
-          <F k="image" label="Image">
-            <div className="flex items-center gap-2">
-              {form.image && <img src={form.image} alt="" className="h-10 w-10 rounded border object-cover" />}
-              <input type="file" accept="image/*" onChange={onImage} disabled={uploading} className="text-xs" />
-              {uploading && <Loader2 className="h-4 w-4 animate-spin text-neutral-400" />}
-            </div>
-          </F>
-
           <F k="hsnCode" label="HSN Code">
             <input value={form.hsnCode} onChange={set("hsnCode")} placeholder="HSN Code" className={inp} />
           </F>
