@@ -128,6 +128,19 @@ export default function ProductsList() {
     }
   }
 
+  // Whether a customer can subscribe to this product for recurring delivery.
+  // A plain field update rather than a dedicated toggle endpoint, matching how
+  // every other one-field flip on this screen (Status, Show Online) is done.
+  const toggleSubscription = async (row) => {
+    const next = !row.subscriptionEnabled
+    try {
+      await adminAPI.updateFood(row.id, { subscriptionEnabled: next })
+      setRows((rs) => rs.map((r) => (r.id === row.id ? { ...r, subscriptionEnabled: next } : r)))
+    } catch (error) {
+      toast.error(error?.response?.data?.message || "Could not update")
+    }
+  }
+
   const toggleStatus = async (row) => {
     try {
       await adminAPI.updateFood(row.id, { isAvailable: !row.isAvailable })
@@ -183,10 +196,10 @@ export default function ProductsList() {
     setExportMenu(false)
     const list = onlySelected ? rows.filter((r) => selected.has(r.id)) : rows
     if (!list.length) return toast.error("Nothing to export")
-    const head = ["Item Code", "Category", "Brand", "Name", "MRP", "Selling Price", "HSN", "Qty", "Status", "Show Online"]
+    const head = ["Item Code", "Category", "Brand", "Name", "MRP", "Selling Price", "HSN", "Qty", "Status", "Show Online", "Subscription"]
     const esc = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`
     const lines = list.map((r) =>
-      [r.itemCode, r.categoryName, r.brandName, r.name, r.mrp ?? "", r.price ?? "", r.hsnCode, r.stockQty ?? "", r.isAvailable ? "ACTIVE" : "INACTIVE", r.showOnline ? "Yes" : "No"].map(esc).join(",")
+      [r.itemCode, r.categoryName, r.brandName, r.name, r.mrp ?? "", r.price ?? "", r.hsnCode, r.stockQty ?? "", r.isAvailable ? "ACTIVE" : "INACTIVE", r.showOnline ? "Yes" : "No", r.subscriptionEnabled ? "Yes" : "No"].map(esc).join(",")
     )
     const blob = new Blob([[head.map(esc).join(","), ...lines].join("\n")], { type: "text/csv" })
     const a = document.createElement("a")
@@ -362,14 +375,15 @@ export default function ProductsList() {
                 <th className="px-3 py-3 font-semibold">Qty</th>
                 <th className="px-3 py-3 font-semibold">Status</th>
                 <th className="px-3 py-3 font-semibold">Show Online</th>
+                <th className="px-3 py-3 font-semibold">Subscription</th>
                 <th className="px-3 py-3 font-semibold">Actions</th>
               </tr>
             </thead>
             <tbody>
               {loading ? (
-                <tr><td colSpan={14} className="px-3 py-14 text-center"><Loader2 className="mx-auto h-6 w-6 animate-spin text-neutral-400" /></td></tr>
+                <tr><td colSpan={15} className="px-3 py-14 text-center"><Loader2 className="mx-auto h-6 w-6 animate-spin text-neutral-400" /></td></tr>
               ) : rows.length === 0 ? (
-                <tr><td colSpan={14} className="px-3 py-14 text-center text-neutral-500">No products found.</td></tr>
+                <tr><td colSpan={15} className="px-3 py-14 text-center text-neutral-500">No products found.</td></tr>
               ) : (
                 rows.map((row, i) => (
                   <tr key={row.id} className="border-t border-neutral-100 odd:bg-white even:bg-neutral-50/60">
@@ -439,6 +453,23 @@ export default function ProductsList() {
                         className={`relative inline-flex h-6 w-11 items-center rounded-full transition ${row.showOnline ? "bg-sky-500" : "bg-neutral-200"}`}
                       >
                         <span className={`inline-block h-5 w-5 rounded-full bg-white shadow transition ${row.showOnline ? "translate-x-5" : "translate-x-0.5"}`} />
+                      </button>
+                    </td>
+                    <td className="px-3 py-3">
+                      {/* Fixed emerald rather than the theme's brand colour: this
+                          sits right beside the Show Online toggle, and two
+                          switches in the same colour are indistinguishable at a
+                          glance when both happen to be on. */}
+                      <button
+                        type="button"
+                        disabled={!canEdit}
+                        onClick={() => toggleSubscription(row)}
+                        role="switch"
+                        aria-checked={row.subscriptionEnabled}
+                        title={row.subscriptionEnabled ? "Subscribable — click to disable" : "Not subscribable — click to enable"}
+                        className={`relative inline-flex h-6 w-11 items-center rounded-full transition ${row.subscriptionEnabled ? "bg-emerald-500" : "bg-neutral-200"}`}
+                      >
+                        <span className={`inline-block h-5 w-5 rounded-full bg-white shadow transition ${row.subscriptionEnabled ? "translate-x-5" : "translate-x-0.5"}`} />
                       </button>
                     </td>
                     <td className="relative px-3 py-3">
