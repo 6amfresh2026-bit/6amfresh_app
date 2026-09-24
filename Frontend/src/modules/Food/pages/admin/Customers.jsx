@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react"
 import { useSearchParams } from "react-router-dom"
-import { Search, Download, ChevronDown, ChevronLeft, ChevronRight, Calendar, Eye, FileDown, FileSpreadsheet, FileText, X, Mail, Phone, MapPin, Package, IndianRupee, Calendar as CalendarIcon, User, CheckCircle, XCircle } from "lucide-react"
+import { Search, Download, ChevronDown, ChevronLeft, ChevronRight, Calendar, Eye, FileDown, FileSpreadsheet, FileText, X, Mail, Phone, MapPin, Package, IndianRupee, Calendar as CalendarIcon, User, CheckCircle, XCircle, Wallet } from "lucide-react"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@food/components/ui/dropdown-menu"
 import { exportCustomersToCSV, exportCustomersToExcel, exportCustomersToPDF } from "@food/components/admin/customers/customersExportUtils"
 import { adminAPI } from "@food/api"
@@ -177,6 +177,103 @@ export default function Customers() {
     }
   }
 
+  /**
+   * A downloadable statement for one customer's wallet, mirroring the order
+   * invoice PDF's own house style (teal header bar, jsPDF + autoTable) so
+   * anything printed out of this panel looks like it came from the same
+   * place. Debit/credit/running-balance columns, and an opening balance line
+   * -- the thing that makes this a statement rather than a transaction list.
+   */
+  const downloadWalletStatement = async (customer) => {
+    const transactions = customer.walletTransactions || []
+    try {
+      const { default: jsPDF } = await import("jspdf")
+      const { default: autoTable } = await import("jspdf-autotable")
+
+      const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" })
+      const pageWidth = doc.internal.pageSize.getWidth()
+
+      doc.setFillColor(15, 118, 110)
+      doc.rect(0, 0, pageWidth, 32, "F")
+      doc.setTextColor(255, 255, 255)
+      doc.setFontSize(15)
+      doc.setFont(undefined, "bold")
+      doc.text("6AM Fresh", 14, 14)
+      doc.setFontSize(10)
+      doc.setFont(undefined, "normal")
+      doc.text("Wallet Statement", 14, 21)
+      doc.setFontSize(8.5)
+      doc.text(`${customer.name || "Customer"} · ${customer.phone || ""}`, 14, 27)
+
+      autoTable(doc, {
+        startY: 40,
+        body: [[
+          `Opening Balance: ${formatMoney(customer.walletOpeningBalance)}`,
+          `Closing Balance: ${formatMoney(customer.walletBalance)}`,
+          `Referral Earnings: ${formatMoney(customer.walletReferralEarnings)}`,
+        ]],
+        theme: "plain",
+        styles: {
+          fontSize: 9,
+          textColor: [30, 41, 59],
+          fillColor: [241, 245, 249],
+          cellPadding: { top: 3.5, right: 4, bottom: 3.5, left: 4 },
+          lineColor: [226, 232, 240],
+          lineWidth: 0.25,
+          fontStyle: "bold",
+        },
+        columnStyles: {
+          0: { cellWidth: 62 },
+          1: { cellWidth: 62, textColor: [15, 118, 110] },
+          2: { cellWidth: 62 },
+        },
+        margin: { left: 14, right: 14 },
+      })
+
+      const rows = transactions.length > 0
+        ? transactions.map((tx) => [
+            formatDateTime(tx.date),
+            tx.description || tx.type,
+            tx.type === "deduction" ? formatMoney(tx.amount) : "-",
+            tx.type !== "deduction" ? formatMoney(tx.amount) : "-",
+            formatMoney(tx.balanceAfter),
+          ])
+        : [["-", "No wallet transactions on record", "-", "-", formatMoney(customer.walletBalance)]]
+
+      autoTable(doc, {
+        startY: (doc.lastAutoTable?.finalY || 55) + 6,
+        head: [["Date", "Description", "Debit", "Credit", "Balance"]],
+        body: rows,
+        theme: "grid",
+        headStyles: { fillColor: [15, 118, 110], textColor: 255, fontSize: 9, fontStyle: "bold" },
+        bodyStyles: { fontSize: 8.5, textColor: [30, 41, 59] },
+        alternateRowStyles: { fillColor: [248, 250, 252] },
+        styles: { cellPadding: 2.6, lineColor: [226, 232, 240], lineWidth: 0.3 },
+        columnStyles: {
+          0: { cellWidth: 34 },
+          1: { cellWidth: 62 },
+          2: { halign: "right", cellWidth: 30, textColor: [190, 18, 60] },
+          3: { halign: "right", cellWidth: 30, textColor: [4, 120, 87] },
+          4: { halign: "right", cellWidth: 26, fontStyle: "bold" },
+        },
+        margin: { left: 14, right: 14 },
+      })
+
+      const footerY = Math.max((doc.lastAutoTable?.finalY || 100) + 14, 270)
+      doc.setDrawColor(226, 232, 240)
+      doc.line(14, footerY - 6, pageWidth - 14, footerY - 6)
+      doc.setFontSize(8.5)
+      doc.setTextColor(100, 116, 139)
+      doc.text(`Generated on ${new Date().toLocaleString()}`, 14, footerY)
+
+      const safeName = String(customer.name || "customer").replace(/[^a-z0-9]+/gi, "_")
+      doc.save(`Wallet_Statement_${safeName}_${new Date().toISOString().split("T")[0]}.pdf`)
+    } catch (error) {
+      debugError("Error generating wallet statement PDF:", error)
+      toast.error("Failed to download wallet statement. Please try again.")
+    }
+  }
+
   const handleExport = (format) => {
     if (customers.length === 0) {
       toast.error("No customers to export")
@@ -207,6 +304,9 @@ export default function Customers() {
       toast.error("Failed to export customers")
     }
   }
+
+  const formatMoney = (value) =>
+    `Rs. ${(Number(value) || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 
   const getInitials = (name) => {
     if (!name) return "NA"
@@ -398,6 +498,7 @@ export default function Customers() {
                   <th className="px-6 py-4 text-left text-[10px] font-bold text-slate-700 uppercase tracking-wider">Contact Information</th>
                   <th className="px-6 py-4 text-left text-[10px] font-bold text-slate-700 uppercase tracking-wider">Total Order</th>
                   <th className="px-6 py-4 text-left text-[10px] font-bold text-slate-700 uppercase tracking-wider">Total Order Amount</th>
+                  <th className="px-6 py-4 text-left text-[10px] font-bold text-slate-700 uppercase tracking-wider">Wallet</th>
                   <th className="px-6 py-4 text-left text-[10px] font-bold text-slate-700 uppercase tracking-wider">Joining Date</th>
                   <th className="px-6 py-4 text-left text-[10px] font-bold text-slate-700 uppercase tracking-wider">Active/Inactive</th>
                   <th className="px-6 py-4 text-center text-[10px] font-bold text-slate-700 uppercase tracking-wider">Actions</th>
@@ -406,13 +507,13 @@ export default function Customers() {
               <tbody className="bg-white divide-y divide-slate-100">
                 {loading ? (
                   <tr>
-                    <td colSpan={8} className="px-6 py-8 text-center">
+                    <td colSpan={9} className="px-6 py-8 text-center">
                       <div className="text-sm text-slate-500">Loading customers...</div>
                     </td>
                   </tr>
                 ) : customers.length === 0 ? (
                   <tr>
-                    <td colSpan={8} className="px-6 py-8 text-center">
+                    <td colSpan={9} className="px-6 py-8 text-center">
                       <div className="text-sm text-slate-500">No customers found</div>
                     </td>
                   </tr>
@@ -462,6 +563,11 @@ export default function Customers() {
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
                         <span className="text-sm font-medium text-slate-900">Rs. {(customer.totalOrderAmount || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <span className={`text-sm font-medium ${customer.walletBalance > 0 ? "text-emerald-700" : "text-slate-500"}`}>
+                          Rs. {(customer.walletBalance || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </span>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
                         <span className="text-sm text-slate-700">{formatDateTime(customer.joiningDate)}</span>
@@ -639,6 +745,76 @@ export default function Customers() {
                   </div>
                 </div>
               )}
+
+              {/* Wallet Statement Section */}
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <h4 className="text-base font-bold text-slate-900 flex items-center gap-2">
+                    <Wallet className="w-4 h-4" />
+                    Wallet Statement
+                  </h4>
+                  {userDetails.walletTransactions && userDetails.walletTransactions.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => downloadWalletStatement(userDetails)}
+                      className="inline-flex items-center gap-1.5 text-xs font-semibold text-emerald-700 hover:text-emerald-800"
+                    >
+                      <FileDown className="w-3.5 h-3.5" />
+                      Download PDF
+                    </button>
+                  )}
+                </div>
+                <div className="grid grid-cols-2 gap-3 mb-3">
+                  <div className="bg-emerald-50 rounded-lg p-3">
+                    <p className="text-xs font-semibold text-slate-700 mb-1">Current Balance</p>
+                    <p className="text-xl font-bold text-emerald-700">{formatMoney(userDetails.walletBalance)}</p>
+                  </div>
+                  <div className="bg-slate-50 rounded-lg p-3">
+                    <p className="text-xs font-semibold text-slate-700 mb-1">Referral Earnings</p>
+                    <p className="text-xl font-bold text-slate-700">{formatMoney(userDetails.walletReferralEarnings)}</p>
+                  </div>
+                </div>
+                {userDetails.walletTransactions && userDetails.walletTransactions.length > 0 ? (
+                  <>
+                    {/* Opening balance is what the account held before the
+                        oldest entry below -- the line a formal statement is
+                        expected to carry alongside the closing balance above. */}
+                    <p className="text-xs text-slate-500 mb-2">
+                      Opening balance {formatMoney(userDetails.walletOpeningBalance)} · {userDetails.walletTransactions.length} entr{userDetails.walletTransactions.length === 1 ? "y" : "ies"}
+                    </p>
+                    <div className="max-h-64 overflow-auto rounded-lg border border-slate-200">
+                      <table className="w-full min-w-[520px] text-xs">
+                        <thead className="sticky top-0 bg-slate-100">
+                          <tr>
+                            <th className="px-3 py-2 text-left font-semibold text-slate-600">Date</th>
+                            <th className="px-3 py-2 text-left font-semibold text-slate-600">Description</th>
+                            <th className="px-3 py-2 text-right font-semibold text-slate-600">Debit</th>
+                            <th className="px-3 py-2 text-right font-semibold text-slate-600">Credit</th>
+                            <th className="px-3 py-2 text-right font-semibold text-slate-600">Balance</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100 bg-white">
+                          {userDetails.walletTransactions.map((tx) => (
+                            <tr key={tx.id}>
+                              <td className="px-3 py-2 whitespace-nowrap text-slate-600">{formatDateTime(tx.date)}</td>
+                              <td className="px-3 py-2 text-slate-800">{tx.description || tx.type}</td>
+                              <td className="px-3 py-2 text-right text-rose-600">
+                                {tx.type === "deduction" ? formatMoney(tx.amount) : "—"}
+                              </td>
+                              <td className="px-3 py-2 text-right text-emerald-600">
+                                {tx.type !== "deduction" ? formatMoney(tx.amount) : "—"}
+                              </td>
+                              <td className="px-3 py-2 text-right font-semibold text-slate-900">{formatMoney(tx.balanceAfter)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </>
+                ) : (
+                  <p className="text-sm text-slate-500">No wallet transactions yet.</p>
+                )}
+              </div>
 
               {/* Recent Orders Section */}
               {userDetails.orders && userDetails.orders.length > 0 && (

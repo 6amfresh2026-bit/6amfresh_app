@@ -38,6 +38,7 @@ import { FoodReferralLog } from '../models/referralLog.model.js';
 import { FoodSafetyEmergencyReport } from '../models/safetyEmergencyReport.model.js';
 import { FoodAddon } from '../../restaurant/models/foodAddon.model.js';
 import { FoodSupportTicket } from '../../user/models/supportTicket.model.js';
+import { FoodUserWallet } from '../../user/models/userWallet.model.js';
 import { FoodRestaurantSupportTicket } from '../../restaurant/models/supportTicket.model.js';
 import { FoodOrder } from '../../orders/models/order.model.js';
 import { isCancelledOrder, CANCELLED_ORDER_STATUSES } from '../../orders/services/order.helpers.js';
@@ -1573,6 +1574,16 @@ export async function getCustomers(query = {}) {
     };
 
     const userIds = needsOrderSort ? [] : docs.map((u) => u._id).filter(Boolean);
+    // Needed for the wallet lookup below regardless of which branch produced
+    // `docs` -- the order-sort aggregation still carries `_id` on every row,
+    // it just never populated `userIds` because that variable is order-stats
+    // specific.
+    const allUserIds = docs.map((u) => u._id).filter(Boolean);
+    const wallets = allUserIds.length > 0
+        ? await FoodUserWallet.find({ userId: { $in: allUserIds } }).select('userId balance').lean()
+        : [];
+    const walletBalanceMap = new Map(wallets.map((w) => [String(w.userId), Number(w.balance) || 0]));
+
     const orderStats = userIds.length > 0
         ? await FoodOrder.aggregate([
             {
@@ -1621,6 +1632,7 @@ export async function getCustomers(query = {}) {
         isVerified: u.isVerified === true,
         totalOrder: stats.totalOrder,
         totalOrderAmount: stats.totalOrderAmount,
+        walletBalance: walletBalanceMap.get(String(u._id)) || 0,
         joiningDate: u.createdAt,
         createdAt: u.createdAt
         });
@@ -1660,6 +1672,47 @@ export async function getCustomerById(id) {
         const str = String(s).trim();
         return str.replace(/^`+|`+$/g, '').trim();
     };
+
+    // The customer's own wallet is not part of FoodUser -- it is its own
+    // collection, one document per customer -- so it needs its own read here
+    // rather than a projection on the user query above. Full transaction
+    // history, not just the running balance: "the admin can see the wallet"
+    // means being able to answer where a balance came from, not just what it
+    // currently is.
+    const walletDoc = await FoodUserWallet.findOne({ userId: customerObjectId }).lean();
+
+    /**
+     * The running balance after each entry -- what makes this a statement
+     * rather than just a list of transactions.
+     *
+     * Transactions are debit ('deduction') or credit ('addition' / 'refund'),
+     * matching the sign userWallet.service.js itself applies when it posts
+     * one. Walked newest-first from the wallet's current balance: the balance
+     * *after* the newest entry is the wallet's balance right now, and each
+     * older entry's balance-after is recovered by undoing the one above it.
+     */
+    const sortedNewestFirst = Array.isArray(walletDoc?.transactions)
+        ? [...walletDoc.transactions].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+        : [];
+
+    let runningBalance = Number(walletDoc?.balance) || 0;
+    const walletTransactions = sortedNewestFirst.map((t) => {
+        const amount = Number(t.amount) || 0;
+        const signedAmount = t.type === 'deduction' ? -amount : amount;
+        const balanceAfter = runningBalance;
+        runningBalance -= signedAmount;
+        return {
+            id: String(t._id),
+            type: t.type,
+            amount,
+            status: t.status || 'Completed',
+            description: t.description || '',
+            date: t.createdAt,
+            createdAt: t.createdAt,
+            balanceAfter
+        };
+    });
+
     return {
         id: u._id,
         _id: u._id,
@@ -1674,6 +1727,13 @@ export async function getCustomerById(id) {
         totalOrders: Number(stats.totalOrders || 0),
         totalOrder: Number(stats.totalOrders || 0),
         totalOrderAmount: Number(stats.totalOrderAmount || 0),
+        walletBalance: Number(walletDoc?.balance) || 0,
+        walletReferralEarnings: Number(walletDoc?.referralEarnings) || 0,
+        // The balance before the oldest transaction on record -- the opening
+        // line a formal statement is expected to carry, alongside the closing
+        // balance above.
+        walletOpeningBalance: runningBalance,
+        walletTransactions,
         joiningDate: u.createdAt,
         createdAt: u.createdAt,
         updatedAt: u.updatedAt
