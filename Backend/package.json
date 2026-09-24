@@ -21,7 +21,7 @@
     "start:scheduler": "node scripts/run-scheduled-jobs.js",
     "start:socket": "node socket-server.js",
     "test:unit": "node --test --test-reporter=spec src/modules/food/orders/*.selfcheck.mjs scripts/*.selfcheck.mjs",
-    "test:integration": "node --test --test-reporter=spec --test-concurrency=1 \"tests/**/*.test.js\"",
+    "test:integration": "node --test --test-reporter=spec --test-concurrency=1 tests",
     "test:smoke": "node scripts/smoke.mjs"
   },
   "keywords": [],
