@@ -23,6 +23,12 @@ export default function Customers() {
   const [userDetails, setUserDetails] = useState(null)
   const [loadingDetails, setLoadingDetails] = useState(false)
   const [showUserDetails, setShowUserDetails] = useState(false)
+  // Purely a display filter: the wallet's own per-row balance already reflects
+  // the true account history, so narrowing which rows are visible never
+  // recomputes it -- a filtered statement still has to show the real balance
+  // the account actually had at each shown entry, not a total re-derived from
+  // only what happens to be on screen.
+  const [walletFilters, setWalletFilters] = useState({ type: "all", from: "", to: "" })
   const [filters, setFilters] = useState({
     orderDate: "",
     joiningDate: "",
@@ -158,6 +164,9 @@ export default function Customers() {
       setLoadingDetails(true)
       setShowUserDetails(true)
       setSelectedCustomer(customerId)
+      // A filter left on from the last customer's statement must not silently
+      // hide rows on this one.
+      setWalletFilters({ type: "all", from: "", to: "" })
 
       const response = await adminAPI.getCustomerById(customerId)
       const data = response?.data?.data || response?.data
@@ -184,8 +193,8 @@ export default function Customers() {
    * place. Debit/credit/running-balance columns, and an opening balance line
    * -- the thing that makes this a statement rather than a transaction list.
    */
-  const downloadWalletStatement = async (customer) => {
-    const transactions = customer.walletTransactions || []
+  const downloadWalletStatement = async (customer, filteredTransactions) => {
+    const transactions = filteredTransactions || customer.walletTransactions || []
     try {
       const { default: jsPDF } = await import("jspdf")
       const { default: autoTable } = await import("jspdf-autotable")
@@ -318,6 +327,32 @@ export default function Customers() {
       .map((part) => part[0]?.toUpperCase() || "")
       .join("") || "NA"
   }
+
+  /**
+   * Which statement rows the current type/date filters keep.
+   *
+   * Filters narrow what is shown, not what happened: a row's Balance column
+   * still comes straight from the server's own running-balance walk over the
+   * *complete* history, so a "Credit only" view does not quietly claim the
+   * account never had the debits in between.
+   */
+  const getFilteredWalletTransactions = () => {
+    const all = userDetails?.walletTransactions || []
+    const fromTime = walletFilters.from ? new Date(`${walletFilters.from}T00:00:00`).getTime() : null
+    const toTime = walletFilters.to ? new Date(`${walletFilters.to}T23:59:59.999`).getTime() : null
+
+    return all.filter((tx) => {
+      if (walletFilters.type === "credit" && tx.type === "deduction") return false
+      if (walletFilters.type === "debit" && tx.type !== "deduction") return false
+      const t = tx.date ? new Date(tx.date).getTime() : null
+      if (fromTime !== null && (t === null || t < fromTime)) return false
+      if (toTime !== null && (t === null || t > toTime)) return false
+      return true
+    })
+  }
+
+  const walletFiltersActive =
+    walletFilters.type !== "all" || Boolean(walletFilters.from) || Boolean(walletFilters.to)
 
   return (
     <div className="p-4 lg:p-6 bg-slate-50 min-h-screen">
@@ -756,7 +791,7 @@ export default function Customers() {
                   {userDetails.walletTransactions && userDetails.walletTransactions.length > 0 && (
                     <button
                       type="button"
-                      onClick={() => downloadWalletStatement(userDetails)}
+                      onClick={() => downloadWalletStatement(userDetails, getFilteredWalletTransactions())}
                       className="inline-flex items-center gap-1.5 text-xs font-semibold text-emerald-700 hover:text-emerald-800"
                     >
                       <FileDown className="w-3.5 h-3.5" />
@@ -776,40 +811,102 @@ export default function Customers() {
                 </div>
                 {userDetails.walletTransactions && userDetails.walletTransactions.length > 0 ? (
                   <>
-                    {/* Opening balance is what the account held before the
-                        oldest entry below -- the line a formal statement is
-                        expected to carry alongside the closing balance above. */}
-                    <p className="text-xs text-slate-500 mb-2">
-                      Opening balance {formatMoney(userDetails.walletOpeningBalance)} · {userDetails.walletTransactions.length} entr{userDetails.walletTransactions.length === 1 ? "y" : "ies"}
-                    </p>
-                    <div className="max-h-64 overflow-auto rounded-lg border border-slate-200">
-                      <table className="w-full min-w-[520px] text-xs">
-                        <thead className="sticky top-0 bg-slate-100">
-                          <tr>
-                            <th className="px-3 py-2 text-left font-semibold text-slate-600">Date</th>
-                            <th className="px-3 py-2 text-left font-semibold text-slate-600">Description</th>
-                            <th className="px-3 py-2 text-right font-semibold text-slate-600">Debit</th>
-                            <th className="px-3 py-2 text-right font-semibold text-slate-600">Credit</th>
-                            <th className="px-3 py-2 text-right font-semibold text-slate-600">Balance</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-slate-100 bg-white">
-                          {userDetails.walletTransactions.map((tx) => (
-                            <tr key={tx.id}>
-                              <td className="px-3 py-2 whitespace-nowrap text-slate-600">{formatDateTime(tx.date)}</td>
-                              <td className="px-3 py-2 text-slate-800">{tx.description || tx.type}</td>
-                              <td className="px-3 py-2 text-right text-rose-600">
-                                {tx.type === "deduction" ? formatMoney(tx.amount) : "—"}
-                              </td>
-                              <td className="px-3 py-2 text-right text-emerald-600">
-                                {tx.type !== "deduction" ? formatMoney(tx.amount) : "—"}
-                              </td>
-                              <td className="px-3 py-2 text-right font-semibold text-slate-900">{formatMoney(tx.balanceAfter)}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
+                    {/* Type and date filters. They only ever hide rows -- see
+                        getFilteredWalletTransactions -- so the Balance column
+                        stays the real account history whatever is selected. */}
+                    <div className="flex flex-wrap items-end gap-2 mb-2">
+                      <div>
+                        <label className="block text-[11px] font-semibold text-slate-500 mb-0.5">Type</label>
+                        <select
+                          value={walletFilters.type}
+                          onChange={(e) => setWalletFilters((f) => ({ ...f, type: e.target.value }))}
+                          className="h-8 rounded-md border border-slate-300 bg-white px-2 text-xs text-slate-700 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                        >
+                          <option value="all">All</option>
+                          <option value="credit">Credit</option>
+                          <option value="debit">Debit</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-[11px] font-semibold text-slate-500 mb-0.5">From</label>
+                        <input
+                          type="date"
+                          value={walletFilters.from}
+                          max={walletFilters.to || undefined}
+                          onChange={(e) => setWalletFilters((f) => ({ ...f, from: e.target.value }))}
+                          className="h-8 rounded-md border border-slate-300 bg-white px-2 text-xs text-slate-700 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[11px] font-semibold text-slate-500 mb-0.5">To</label>
+                        <input
+                          type="date"
+                          value={walletFilters.to}
+                          min={walletFilters.from || undefined}
+                          onChange={(e) => setWalletFilters((f) => ({ ...f, to: e.target.value }))}
+                          className="h-8 rounded-md border border-slate-300 bg-white px-2 text-xs text-slate-700 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                        />
+                      </div>
+                      {walletFiltersActive && (
+                        <button
+                          type="button"
+                          onClick={() => setWalletFilters({ type: "all", from: "", to: "" })}
+                          className="h-8 text-xs font-semibold text-slate-500 hover:text-slate-700"
+                        >
+                          Clear
+                        </button>
+                      )}
                     </div>
+
+                    {(() => {
+                      const filtered = getFilteredWalletTransactions()
+                      return (
+                        <>
+                          {/* Opening balance is what the account held before the
+                              oldest entry in the *full* statement -- unaffected
+                              by the filters above, because it is a fact about
+                              the account, not about what is currently shown. */}
+                          <p className="text-xs text-slate-500 mb-2">
+                            Opening balance {formatMoney(userDetails.walletOpeningBalance)} ·{" "}
+                            {walletFiltersActive
+                              ? `showing ${filtered.length} of ${userDetails.walletTransactions.length} entries`
+                              : `${userDetails.walletTransactions.length} entr${userDetails.walletTransactions.length === 1 ? "y" : "ies"}`}
+                          </p>
+                          {filtered.length > 0 ? (
+                            <div className="max-h-64 overflow-auto rounded-lg border border-slate-200">
+                              <table className="w-full min-w-[520px] text-xs">
+                                <thead className="sticky top-0 bg-slate-100">
+                                  <tr>
+                                    <th className="px-3 py-2 text-left font-semibold text-slate-600">Date</th>
+                                    <th className="px-3 py-2 text-left font-semibold text-slate-600">Description</th>
+                                    <th className="px-3 py-2 text-right font-semibold text-slate-600">Debit</th>
+                                    <th className="px-3 py-2 text-right font-semibold text-slate-600">Credit</th>
+                                    <th className="px-3 py-2 text-right font-semibold text-slate-600">Balance</th>
+                                  </tr>
+                                </thead>
+                                <tbody className="divide-y divide-slate-100 bg-white">
+                                  {filtered.map((tx) => (
+                                    <tr key={tx.id}>
+                                      <td className="px-3 py-2 whitespace-nowrap text-slate-600">{formatDateTime(tx.date)}</td>
+                                      <td className="px-3 py-2 text-slate-800">{tx.description || tx.type}</td>
+                                      <td className="px-3 py-2 text-right text-rose-600">
+                                        {tx.type === "deduction" ? formatMoney(tx.amount) : "—"}
+                                      </td>
+                                      <td className="px-3 py-2 text-right text-emerald-600">
+                                        {tx.type !== "deduction" ? formatMoney(tx.amount) : "—"}
+                                      </td>
+                                      <td className="px-3 py-2 text-right font-semibold text-slate-900">{formatMoney(tx.balanceAfter)}</td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          ) : (
+                            <p className="text-sm text-slate-500">No entries match these filters.</p>
+                          )}
+                        </>
+                      )
+                    })()}
                   </>
                 ) : (
                   <p className="text-sm text-slate-500">No wallet transactions yet.</p>
