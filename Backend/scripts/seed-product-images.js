@@ -198,18 +198,30 @@ async function fetchPhoto(term) {
 }
 
 async function main() {
-  await mongoose.connect(process.env.MONGODB_URI, { serverSelectionTimeoutMS: 30000 });
-  if (mongoose.connection.name !== 'quickcommerce') {
+  await mongoose.connect(process.env.MONGO_URI || process.env.MONGODB_URI, { serverSelectionTimeoutMS: 30000 });
+  if (!/^(quickcommerce|switcheats_dev)$/.test(mongoose.connection.name)) {
     console.error(`refusing to seed '${mongoose.connection.name}'`);
     process.exit(1);
   }
   console.log(`connected -> ${mongoose.connection.name}\n`);
 
-  const sellers = await FoodRestaurant.find({ status: 'approved' })
+  // Only the sellers seed-quick-commerce.js itself created -- not every
+  // approved seller in the database. This ran once against every approved
+  // restaurant and dropped 21 grocery items onto a real pizza place that had
+  // nothing to do with this catalogue.
+  //
+  // Matched by name, not the `website: 'seed:quick-commerce'` tag that
+  // script sets: FoodRestaurant has no `website` field, so Mongoose's default
+  // strict mode silently drops it on save and the tag was never actually
+  // there to match against.
+  const sellers = await FoodRestaurant.find({
+    status: 'approved',
+    restaurantName: { $in: ['FreshMart Express', 'DailyNeeds Store'] },
+  })
     .select('_id restaurantName')
     .lean();
   if (!sellers.length) {
-    console.error('no approved seller; run seed-quick-commerce.js first');
+    console.error('no seeded grocery seller; run seed-quick-commerce.js first');
     process.exit(1);
   }
 

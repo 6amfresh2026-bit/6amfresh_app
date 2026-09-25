@@ -96,11 +96,14 @@ const PRODUCTS = [
 async function main() {
     const wipe = process.argv.includes('--wipe');
 
-    await mongoose.connect(process.env.MONGODB_URI, { serverSelectionTimeoutMS: 30000 });
+    await mongoose.connect(process.env.MONGO_URI || process.env.MONGODB_URI, { serverSelectionTimeoutMS: 30000 });
     console.log(`connected -> ${mongoose.connection.name}`);
 
     if (wipe) {
-        const sellerIds = (await FoodRestaurant.find({ website: SEED_TAG }).select('_id').lean())
+        // Not `{ website: SEED_TAG }`: FoodRestaurant has no `website` field, so
+        // Mongoose's default strict mode silently drops it on save below and the
+        // tag was never actually there to match against.
+        const sellerIds = (await FoodRestaurant.find({ restaurantName: { $in: SELLERS.map((s) => s.restaurantName) } }).select('_id').lean())
             .map((s) => s._id);
         const removed = await Promise.all([
             FoodItem.deleteMany({ restaurantId: { $in: sellerIds } }),
@@ -157,8 +160,6 @@ async function main() {
                     rating: 4.4,
                     totalRatings: 120,
                     pureVegRestaurant: false,
-                    // Marker for --wipe; sellers have no dedicated tag field.
-                    website: SEED_TAG,
                 },
             },
             { upsert: true, new: true, setDefaultsOnInsert: true },
