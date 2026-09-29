@@ -543,7 +543,10 @@ export async function calculateOrderPricing(userId, dto, options = {}) {
   // the threshold — which is correct: what the rider carries is what was paid
   // for, and the trip costs the same either way.
   const cartAdjustments = resolveCartAdjustments(feeSettings, subtotal);
-  const smallCartFee = round2(cartAdjustments.smallCartFee);
+  // The fee exists to offset a rider's trip on a small delivery order -- a
+  // counter sale has no rider and no trip, so charging it at the till would be
+  // surcharging a customer standing right there for a cost nobody incurred.
+  const smallCartFee = counterSale ? 0 : round2(cartAdjustments.smallCartFee);
 
   const exactTotal = round2(
     Math.max(
