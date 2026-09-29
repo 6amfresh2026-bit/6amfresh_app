@@ -578,7 +578,30 @@ export async function updateRestaurantFood(restaurantId, foodId, body = {}) {
         'name', 'description', 'image', 'images', 'price', 'variants',
         'foodType', 'categoryId', 'categoryName', 'preparationTime'
     ];
-    const shouldResubmitForApproval = Object.keys(update).some(key => CRITICAL_APPROVAL_FIELDS.includes(key));
+    // The seller edit form resubmits the whole item every time -- unchanged
+    // name, price, image and all -- not just the field the seller actually
+    // touched. Flagging on "the key is present in `update`" fired on every
+    // save, so bumping a stock count alone knocked the item back to pending
+    // and off `showOnline` until an admin re-approved it. Compare against what
+    // is already on the document instead, and only resubmit when a critical
+    // field's value genuinely changed.
+    const CRITICAL_FIELD_FINGERPRINT = {
+        variants: (v) =>
+            JSON.stringify((Array.isArray(v) ? v : []).map((x) => ({
+                name: String(x?.name ?? ''),
+                price: Number(x?.price) || 0,
+                otherPrice: Number(x?.otherPrice) || 0
+            }))),
+        images: (v) => JSON.stringify((Array.isArray(v) ? v : []).map(String))
+    };
+    const fingerprint = (key, value) => {
+        if (value === undefined || value === null) return '';
+        const fn = CRITICAL_FIELD_FINGERPRINT[key];
+        return fn ? fn(value) : String(value);
+    };
+    const shouldResubmitForApproval = CRITICAL_APPROVAL_FIELDS.some(
+        (key) => key in update && fingerprint(key, update[key]) !== fingerprint(key, existing[key])
+    );
 
     if (shouldResubmitForApproval) {
         update.approvalStatus = 'pending';
