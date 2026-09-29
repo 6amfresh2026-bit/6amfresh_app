@@ -185,7 +185,9 @@ async function fetchPhoto(term) {
       const url = page?.imageinfo?.[0]?.thumburl;
       // SVG and TIFF come back from Commons too; the image pipeline rejects
       // them and they are not what a product tile wants anyway.
-      if (!url || !/\.(jpe?g|png|webp)$/i.test(url)) continue;
+      // Commons now appends "?utm_source=..." to thumburl, so the extension no
+      // longer sits at the end of the string.
+      if (!url || !/\.(jpe?g|png|webp)(\?|$)/i.test(url)) continue;
 
       const img = await politeFetch(url);
       if (!img.ok) continue;

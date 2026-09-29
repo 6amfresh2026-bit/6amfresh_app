@@ -117,7 +117,9 @@ async function fetchPhoto(term) {
   for (const query of [...new Set(attempts)]) {
     for (const page of await searchCommons(query)) {
       const url = page?.imageinfo?.[0]?.thumburl;
-      if (!url || !/\.(jpe?g|png|webp)$/i.test(url)) continue;
+      // Commons now appends "?utm_source=..." to thumburl, so the extension no
+      // longer sits at the end of the string.
+      if (!url || !/\.(jpe?g|png|webp)(\?|$)/i.test(url)) continue;
       const img = await politeFetch(url);
       if (!img.ok) continue;
       const buffer = Buffer.from(await img.arrayBuffer());
