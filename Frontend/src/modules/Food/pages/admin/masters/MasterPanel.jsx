@@ -249,7 +249,7 @@ export default function MasterPanel({ config }) {
       </div>
 
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-lg">
+        <DialogContent className="max-h-[85vh] overflow-y-auto p-6 pr-10 sm:max-w-lg">
           <DialogHeader><DialogTitle className="text-sky-600">{editing ? `Edit ${config.singular}` : `Create ${config.singular}`}</DialogTitle></DialogHeader>
           <form onSubmit={submit} className="space-y-4">
             <label className="block"><span className="mb-1 block text-sm font-semibold text-neutral-800">{config.singular} Name<span className="text-rose-500">*</span></span>
