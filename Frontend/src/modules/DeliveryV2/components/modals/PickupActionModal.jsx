@@ -170,6 +170,27 @@ export const PickupActionModal = ({
 
             {/* Content Area */}
             <div className="space-y-8">
+              {/* Batched orders -- added to this trip while it was already
+                  underway, so they don't have their own pickup card yet. */}
+              {Array.isArray(order.batchOrders) && order.batchOrders.length > 0 && (
+                <div className="bg-blue-50/60 border border-blue-100 rounded-[2rem] p-5 flex gap-4 items-start">
+                  <div className="w-10 h-10 rounded-xl bg-blue-100 flex items-center justify-center shrink-0">
+                    <Package className="w-5 h-5 text-blue-600" />
+                  </div>
+                  <div>
+                    <p className="text-[10px] font-black text-blue-600 uppercase tracking-[0.2em] mb-1.5">
+                      {order.batchOrders.length === 1 ? 'Another order added to your trip' : `${order.batchOrders.length} more orders added to your trip`}
+                    </p>
+                    {order.batchOrders.map((bo) => (
+                      <p key={bo._id} className="text-sm font-bold text-gray-800">
+                        #{bo.order_id || bo._id} · {bo.restaurantName || 'Nearby store'}
+                      </p>
+                    ))}
+                    <p className="text-xs font-semibold text-blue-500 mt-1">Finish this delivery first -- it'll show up as your next trip.</p>
+                  </div>
+                </div>
+              )}
+
               {/* Delivery Instructions */}
               {(() => {
                 const deliveryNote = String(order?.deliveryInstructions || order?.note || "").trim()

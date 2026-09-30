@@ -114,6 +114,9 @@ export async function pickFleetPartnerForOrder(order, restaurant, { excludeIds =
             continue;
         }
 
+        // canPartnerTakeOrder()'s cross-restaurant tier never fires here: a
+        // fleet rider only ever holds orders for the one seller they're linked
+        // to, so `active` and `order` are always the same store already.
         const verdict = canPartnerTakeOrder(active, order);
         if (verdict.allowed) shareable.push(entry);
     }

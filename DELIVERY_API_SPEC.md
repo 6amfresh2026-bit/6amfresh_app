@@ -201,6 +201,14 @@ Watch out: `note` on a delivery-facing order is the **delivery instruction**, no
 ### `GET /food/delivery/orders/current`
 → `data: { "activeOrder": <order|null> }`
 
+`activeOrder` is whichever order the rider accepted **first** among their
+active orders (oldest `dispatch.assignedAt`), not necessarily the most
+recently touched. If block batching (see `FLUTTER_BLOCK_BATCHING_FLOW.md`)
+has added a second, nearby order mid-trip, `activeOrder` carries an extra
+`batchOrders: [{ _id, order_id, orderStatus, restaurantName, pricing }]`
+field — a summary of any other active orders, so the app can show the rider
+they're carrying more than one without losing the primary one from view.
+
 ### `GET /food/delivery/orders/:orderId`
 → `data: { order }`. 403 if not assigned to this partner.
 
@@ -537,9 +545,11 @@ Handshake with the access token (`auth.token`, `Authorization` header, or `?toke
 **Listen:**
 | Event | Meaning |
 |---|---|
-| `new_order_available` | a new order is offered to you — show the accept modal |
+| `new_order` / `new_order_available` | a new order is offered to you — show the accept modal |
+| `order_assigned` | a seller's own fleet gave you an order directly — same accept-modal flow as above |
+| `order_added_to_batch` | a nearby order from a different seller was added to your *current* trip directly, no accept needed — see `FLUTTER_BLOCK_BATCHING_FLOW.md` |
 | `order_claimed` | another rider took it — dismiss the modal |
-| `order_deassigned` | the order was taken off you |
+| `order_deassigned` | the order was taken off you (can also fire for a batched order that lost an assignment race — see block-batching doc) |
 | `order_ready` | restaurant marked ready for pickup |
 | `order_status_update` | any status change |
 

@@ -200,4 +200,18 @@ describe('when every rider is already carrying something', () => {
         const quick = anOrder({ pricing: { deliveryMode: 'quick' } });
         assert.equal(await pickFleetPartnerForOrder(quick, STORE_DOC), null);
     });
+
+    it('never cross-batches across restaurants, even if the rider is somehow carrying another store\'s order', async () => {
+        // A fleet rider is restaurantId-linked, so this can't happen through
+        // ordinary assignment. But canPartnerTakeOrder() itself now has a
+        // cross-restaurant tier (block batching), and pickFleetPartnerForOrder
+        // never stamps __restaurantLocation before calling it -- so even a
+        // rider somehow carrying a different store's order reads as "no
+        // pickup point to compare" and is refused, exactly like a plain
+        // different-store order always was before block batching existed.
+        const busy = await rider('Cross Store Carrier');
+        await carrying(busy._id, { restaurantId: OTHER_STORE });
+
+        assert.equal(await pickFleetPartnerForOrder(anOrder(), STORE_DOC), null);
+    });
 });

@@ -19,6 +19,11 @@ import {
   notifyOwnersSafely,
   dispatchRadiusBandsKm,
   DISPATCH_LEAD_MS,
+  canPartnerTakeOrder,
+  attachRestaurantLocations,
+  TERMINAL_ORDER_STATUSES,
+  MAX_ACTIVE_ORDERS_PER_RIDER,
+  MAX_PICKUP_STOPS_PER_TRIP,
 } from './order.helpers.js';
 import { fetchDrivingRoute } from '../utils/googleMaps.js';
 import { parseGeoPoint } from '../../shared/geo.utils.js';
@@ -745,6 +750,220 @@ async function notifyFleetAssignment(order, partnerId) {
   }
 }
 
+/**
+ * Straight-line distance from a candidate order's pickup to the nearest
+ * pickup a rider is already carrying, using the coordinates
+ * attachRestaurantLocations() stamped onto both sides. Infinity when either
+ * side has nothing to compare -- that rider simply sorts last, never crashes
+ * the sort.
+ */
+function nearestPickupKm(activeOrders, candidateOrder) {
+  const candCoords = candidateOrder?.__restaurantLocation?.coordinates;
+  if (!Array.isArray(candCoords) || candCoords.length < 2) return Infinity;
+  const [cLng, cLat] = candCoords;
+
+  let min = Infinity;
+  for (const o of activeOrders) {
+    const coords = o?.__restaurantLocation?.coordinates;
+    if (!Array.isArray(coords) || coords.length < 2) continue;
+    const [lng, lat] = coords;
+    const d = haversineKm(cLat, cLng, lat, lng);
+    if (Number.isFinite(d) && d < min) min = d;
+  }
+  return min;
+}
+
+/**
+ * Riders already mid-delivery who could take this order directly instead of
+ * it going out to the whole pool -- the block-batching case. Looks at every
+ * rider currently carrying an accepted, not-yet-collected order, runs the
+ * shared canPartnerTakeOrder() rule against each one, and picks the best
+ * match (fewest orders on board, then nearest pickup). Returns null when
+ * nobody qualifies, so the caller falls through to the normal broadcast.
+ */
+async function findBlockBatchCandidate(order) {
+  const excludedIds = new Set(
+    (order.dispatch?.offeredTo || [])
+      .filter((offer) => offer.action === 'deassigned')
+      .map((offer) => String(offer.partnerId)),
+  );
+
+  const rows = await FoodOrder.find({
+    _id: { $ne: order._id },
+    'dispatch.status': 'accepted',
+    'dispatch.deliveryPartnerId': { $exists: true, $ne: null },
+    orderStatus: { $nin: TERMINAL_ORDER_STATUSES },
+  })
+    .select('dispatch.deliveryPartnerId restaurantId deliveryAddress deliveryState orderStatus pricing.deliveryMode')
+    .lean();
+
+  if (!rows.length) return null;
+
+  const byPartner = new Map();
+  for (const row of rows) {
+    const key = String(row.dispatch.deliveryPartnerId);
+    if (excludedIds.has(key)) continue;
+    if (!byPartner.has(key)) byPartner.set(key, []);
+    byPartner.get(key).push(row);
+  }
+  if (!byPartner.size) return null;
+
+  // One batched query for every restaurant involved, on both sides of the
+  // comparison, rather than a populate per candidate rider.
+  await attachRestaurantLocations([order, ...rows]);
+
+  const candidates = [];
+  for (const [partnerId, activeOrders] of byPartner) {
+    const verdict = canPartnerTakeOrder(activeOrders, order);
+    if (!verdict.allowed) continue;
+    candidates.push({ partnerId, activeOrders, activeCount: verdict.activeCount });
+  }
+  if (!candidates.length) return null;
+
+  // A rider whose app died mid-trip shouldn't silently get pushed more work --
+  // re-confirm they're still online rather than trusting the accepted-order
+  // row, which says nothing about their current connectivity.
+  const allowedStatuses = process.env.NODE_ENV === 'production' ? ['approved'] : ['approved', 'pending'];
+  const onlinePartners = await FoodDeliveryPartner.find({
+    _id: { $in: candidates.map((c) => c.partnerId) },
+    availabilityStatus: 'online',
+  })
+    .select('_id status')
+    .lean();
+  const onlineIds = new Set(
+    onlinePartners.filter((p) => allowedStatuses.includes(p.status)).map((p) => String(p._id)),
+  );
+
+  const eligible = candidates.filter((c) => onlineIds.has(c.partnerId));
+  if (!eligible.length) return null;
+
+  eligible.sort((a, b) => {
+    if (a.activeCount !== b.activeCount) return a.activeCount - b.activeCount;
+    return nearestPickupKm(a.activeOrders, order) - nearestPickupKm(b.activeOrders, order);
+  });
+
+  return eligible[0];
+}
+
+/**
+ * Gives the order directly to an in-progress rider instead of broadcasting
+ * it, when findBlockBatchCandidate() found one. Returns the assigned order,
+ * or null when nobody qualified or the atomic write lost a race -- either
+ * way the caller falls through to the normal broadcast unchanged.
+ */
+async function tryDirectBlockAssign(order) {
+  const candidate = await findBlockBatchCandidate(order);
+  if (!candidate) return null;
+
+  const partnerId = candidate.partnerId;
+  const assigned = await FoodOrder.findOneAndUpdate(
+    // Same guard as every other assignment write in this file: still
+    // unassigned (or held by a fleet timeout that hasn't landed), and nobody
+    // has accepted it in the meantime.
+    { _id: order._id, 'dispatch.status': { $in: ['unassigned', 'assigned'] }, 'dispatch.acceptedAt': { $exists: false } },
+    {
+      $set: {
+        'dispatch.status': 'accepted',
+        'dispatch.assignmentMode': 'auto',
+        'dispatch.deliveryPartnerId': partnerId,
+        'dispatch.assignedAt': new Date(),
+        'dispatch.acceptedAt': new Date(),
+      },
+      $unset: { 'dispatch.dispatchingAt': 1 },
+      $push: { 'dispatch.offeredTo': { partnerId, at: new Date(), action: 'offered' } },
+    },
+    { new: true },
+  ).populate(['restaurantId', 'userId']);
+
+  if (!assigned) {
+    logger.info(`tryAutoAssign: order ${order._id} was taken between finding a block-batch rider and assigning them.`);
+    return null;
+  }
+
+  // Two brand-new orders in the same block can both pass the eligibility
+  // read above before either write lands -- the same race same-store
+  // batching already lives with, closed the same way: re-check capacity
+  // after the write, and release whichever order lost the tiebreak (the
+  // more recently assigned one) back to normal dispatch.
+  const stillActive = await FoodOrder.find({
+    'dispatch.deliveryPartnerId': partnerId,
+    'dispatch.status': 'accepted',
+    orderStatus: { $nin: TERMINAL_ORDER_STATUSES },
+  })
+    .select('_id order_id restaurantId dispatch.assignedAt')
+    .lean();
+
+  const storeCount = new Set(
+    stillActive.map((o) => String(o?.restaurantId?._id || o?.restaurantId || '')),
+  ).size;
+
+  if (stillActive.length > MAX_ACTIVE_ORDERS_PER_RIDER || storeCount > MAX_PICKUP_STOPS_PER_TRIP) {
+    const loser = [...stillActive].sort(
+      (a, b) => new Date(b.dispatch?.assignedAt || 0) - new Date(a.dispatch?.assignedAt || 0),
+    )[0];
+
+    if (loser) {
+      const released = await FoodOrder.findOneAndUpdate(
+        { _id: loser._id, 'dispatch.deliveryPartnerId': partnerId, 'dispatch.status': 'accepted' },
+        {
+          $set: { 'dispatch.status': 'unassigned', 'dispatch.deliveryPartnerId': null },
+          $unset: { 'dispatch.assignedAt': 1, 'dispatch.acceptedAt': 1 },
+          $push: { 'dispatch.offeredTo': { partnerId, at: new Date(), action: 'deassigned' } },
+        },
+      );
+      if (released) {
+        logger.warn(
+          `Block-batch race on rider ${partnerId}: order ${loser._id} lost the tiebreak and is going back to dispatch.`,
+        );
+        void notifyFleetRelease({ _id: loser._id, order_id: loser.order_id }, partnerId);
+        await addOrderJob(
+          { action: 'DISPATCH_TIMEOUT_CHECK', orderMongoId: String(loser._id), orderId: String(loser._id), attempt: 1 },
+          { delay: 1000 },
+        );
+      }
+      // The order this call was trying to assign lost its own tiebreak --
+      // report failure so the caller falls through to the normal broadcast
+      // instead of returning an order that was just unassigned again.
+      if (String(loser._id) === String(assigned._id)) {
+        return null;
+      }
+    }
+  }
+
+  return assigned;
+}
+
+/**
+ * Tells the rider a nearby order was added to their current trip -- a
+ * distinct event from order_assigned so the rider app can show "added to
+ * your trip" rather than "new order", since nothing here is a fresh pickup.
+ *
+ * Fire-and-forget, same reasoning as notifyFleetAssignment: a rider who
+ * misses the alert still finds the order in their list.
+ */
+async function notifyBatchAddition(order, partnerId) {
+  try {
+    const payload = buildDeliverySocketPayload(order, order.restaurantId);
+    const io = getIO();
+    if (io) io.to(rooms.delivery(String(partnerId))).emit('order_added_to_batch', payload);
+
+    await notifyOwnersActionableAlert(
+      [{ ownerType: 'DELIVERY_PARTNER', ownerId: String(partnerId) }],
+      {
+        title: 'Another order added to your trip',
+        body: `Order #${order.order_id || order._id} was added to your current trip -- nearby pickup, same route.`,
+        data: {
+          type: 'order_added_to_batch',
+          orderId: String(order._id),
+          orderMongoId: String(order._id),
+        },
+      },
+    );
+  } catch (err) {
+    logger.warn(`Block-batch notice failed for order ${order._id}: ${err?.message || err}`);
+  }
+}
+
 export async function tryAutoAssign(orderId, options = {}) {
   const attempt = options.attempt || 1;
   // Small buffer above the accept window so an in-flight offer isn't reclaimed early.
@@ -843,6 +1062,16 @@ export async function tryAutoAssign(orderId, options = {}) {
     // hand, so owning riders made delivery slower than not owning any.
     if (await sellerHasOwnFleet(order.restaurantId?._id || order.restaurantId)) {
       return await assignFromOwnFleet(order, { attempt });
+    }
+
+    // Block-batching: a rider already mid-delivery nearby gets this order
+    // directly, skipping the broadcast entirely -- the whole point being one
+    // trip instead of two. Falls through unchanged below when nobody
+    // qualifies or the direct assignment loses a race.
+    const batched = await tryDirectBlockAssign(order);
+    if (batched) {
+      void notifyBatchAddition(batched, batched.dispatch.deliveryPartnerId);
+      return batched;
     }
 
     const offeredIds = (order.dispatch?.offeredTo || []).map(o => o.partnerId.toString());

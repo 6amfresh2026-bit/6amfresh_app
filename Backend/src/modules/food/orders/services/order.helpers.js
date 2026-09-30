@@ -1,6 +1,7 @@
 import mongoose from 'mongoose';
 
 import { FoodOrder } from '../models/order.model.js';
+import { FoodRestaurant } from '../../restaurant/models/restaurant.model.js';
 import { logger } from '../../../../utils/logger.js';
 import { haversineKm as geoHaversineKm, parseGeoPoint, formatDeliveryAddress } from '../../shared/geo.utils.js';
 import {
@@ -196,6 +197,28 @@ export const BATCH_DROP_RADIUS_KM = Math.max(
   Number(process.env.BATCH_DROP_RADIUS_KM) || 1.5,
 );
 
+/**
+ * How close two sellers have to be for one rider to collect from both on the
+ * same trip — the block-batching case, as opposed to same-store batching
+ * which never needed this because the pickup point was identical.
+ */
+export const BATCH_PICKUP_RADIUS_KM = Math.max(
+  0.1,
+  Number(process.env.BATCH_PICKUP_RADIUS_KM) || 1.5,
+);
+
+/**
+ * How many different sellers one rider will visit in a single trip.
+ *
+ * Carrying three bags from one counter and walking into three different
+ * counters are not the same job, so this is deliberately its own cap rather
+ * than folded into MAX_ACTIVE_ORDERS_PER_RIDER.
+ */
+export const MAX_PICKUP_STOPS_PER_TRIP = Math.max(
+  1,
+  Number(process.env.MAX_BATCH_PICKUP_STOPS) || 2,
+);
+
 const ACTIVE_DELIVERY_SELECT = '_id order_id restaurantId deliveryAddress deliveryState orderStatus promise payment pricing';
 
 /** Every order a rider is currently carrying. */
@@ -225,18 +248,65 @@ const dropPointOf = (order) => {
 };
 
 /**
+ * A store's own coordinates, read off `__restaurantLocation` — stamped by
+ * attachRestaurantLocations() rather than looked up here, so this stays a
+ * synchronous function callable from a hot path with no DB round trip.
+ */
+const pickupPointOf = (order) => {
+  const coords = order?.__restaurantLocation?.coordinates;
+  if (!Array.isArray(coords) || coords.length < 2) return null;
+  const [lng, lat] = coords;
+  return Number.isFinite(Number(lat)) && Number.isFinite(Number(lng))
+    ? { lat: Number(lat), lng: Number(lng) }
+    : null;
+};
+
+/**
+ * Stamps each order with its restaurant's pickup point ahead of a
+ * canPartnerTakeOrder() call, in one batched query rather than a populate per
+ * order. Only needed for the cross-restaurant comparison — same-store
+ * batching never had to ask where the pickup was.
+ */
+export async function attachRestaurantLocations(orders) {
+  const list = Array.isArray(orders) ? orders : [orders].filter(Boolean);
+  const ids = [...new Set(
+    list
+      .map((o) => String(o?.restaurantId?._id || o?.restaurantId || ''))
+      .filter((id) => mongoose.Types.ObjectId.isValid(id)),
+  )];
+  if (!ids.length) return list;
+
+  const restaurants = await FoodRestaurant.find({ _id: { $in: ids } })
+    .select('location')
+    .lean();
+  const locationById = new Map(restaurants.map((r) => [String(r._id), r.location]));
+
+  for (const order of list) {
+    const id = String(order?.restaurantId?._id || order?.restaurantId || '');
+    order.__restaurantLocation = locationById.get(id) || null;
+  }
+  return list;
+}
+
+/**
  * Whether a rider already carrying work may also take this order.
  *
- * Three conditions, and all of them are about protecting the promise rather
- * than about counting:
+ * Two shapes of batch, both about protecting the promise rather than about
+ * counting:
  *
- *  - **Same store.** A second pickup somewhere else is not a batch; it is two
- *    trips wearing one rider.
- *  - **Not yet collected.** Added while the rider is still heading to the
- *    store or standing in it, so one pickup serves the whole batch. Once they
- *    have ridden away, a new order means riding back.
- *  - **Drops close together.** The customer already on board pays for the new
- *    one's doorstep in minutes, and BATCH_DROP_RADIUS_KM is the cap on that.
+ *  - **Same store.** One pickup already serves the whole batch, so all that
+ *    is asked is that nothing has been collected yet and the drops sit close
+ *    together (BATCH_DROP_RADIUS_KM).
+ *  - **Different store, same block.** A second seller is only the same trip
+ *    if the two counters are close together too (BATCH_PICKUP_RADIUS_KM), on
+ *    top of everything same-store batching already requires, and capped at
+ *    MAX_PICKUP_STOPS_PER_TRIP sellers — three counters is a different job
+ *    than three bags from one.
+ *
+ * Either way: **not yet collected**. Added while the rider is still heading to
+ * a store or standing in it, so one pickup (or one short loop of nearby
+ * pickups) serves the whole batch. Once anything on board has been ridden
+ * away with, a new order means riding back.
  *
  * Returns a reason on refusal because the rider app shows it, and "you already
  * have an active delivery" was the single most useless sentence in that app.
@@ -276,17 +346,16 @@ export function canPartnerTakeOrder(activeOrders, candidate) {
   }
 
   const candidateStore = String(candidate?.restaurantId?._id || candidate?.restaurantId || '');
-  const sameStore = active.every(
+  const sameStore = Boolean(candidateStore) && active.every(
     (o) => String(o?.restaurantId?._id || o?.restaurantId || '') === candidateStore,
   );
-  if (!candidateStore || !sameStore) {
-    return {
-      allowed: false,
-      activeCount: active.length,
-      reason: 'This order is from a different store. Finish your current pickup first.',
-    };
-  }
 
+  // Not yet collected: added while the rider is still heading to a store or
+  // standing in it, so one pickup (same store) or one short loop of nearby
+  // pickups (different stores, see below) still serves the whole batch. Once
+  // anything on board has been ridden away with, a new order means riding
+  // back — checked before the store comparison because it refuses the same
+  // way regardless of which store the new order is from.
   const collected = active.some(
     (o) => Boolean(o?.deliveryState?.pickedUpAt) || ['picked_up', 'reached_drop'].includes(String(o?.orderStatus)),
   );
@@ -296,6 +365,51 @@ export function canPartnerTakeOrder(activeOrders, candidate) {
       activeCount: active.length,
       reason: 'You have already collected your current order. Deliver it before taking another.',
     };
+  }
+
+  if (!sameStore) {
+    // Cross-store batching (the "same block, different seller" case): a batch
+    // across sellers is only one trip if both ends of it are close together —
+    // the counter as well as the doorstep. BATCH_DROP_RADIUS_KM alone was
+    // enough when this only ever meant same-store, because the pickup point
+    // never moved; here it can, so it gets its own radius.
+    //
+    // A pickup point that cannot be compared (no stamped restaurant location —
+    // see attachRestaurantLocations()) refuses rather than lets through,
+    // unlike a missing drop pin below: an unmeasured drop still shares the
+    // one pickup a same-store batch already has, but an unmeasured pickup
+    // here is the one fact this whole branch exists to check.
+    const candidatePickup = pickupPointOf(candidate);
+    if (!candidatePickup) {
+      return {
+        allowed: false,
+        activeCount: active.length,
+        reason: 'This order is from a different store. Finish your current pickup first.',
+      };
+    }
+
+    for (const existing of active) {
+      const pickup = pickupPointOf(existing);
+      if (!pickup) continue;
+      const apart = geoHaversineKm(pickup.lat, pickup.lng, candidatePickup.lat, candidatePickup.lng);
+      if (Number.isFinite(apart) && apart > BATCH_PICKUP_RADIUS_KM) {
+        return {
+          allowed: false,
+          activeCount: active.length,
+          reason: 'This order is from a different store. Finish your current pickup first.',
+        };
+      }
+    }
+
+    const stores = new Set(active.map((o) => String(o?.restaurantId?._id || o?.restaurantId || '')));
+    stores.add(candidateStore);
+    if (stores.size > MAX_PICKUP_STOPS_PER_TRIP) {
+      return {
+        allowed: false,
+        activeCount: active.length,
+        reason: `That would mean picking up from ${stores.size} different sellers on one trip. Deliver something first.`,
+      };
+    }
   }
 
   const candidateDrop = dropPointOf(candidate);

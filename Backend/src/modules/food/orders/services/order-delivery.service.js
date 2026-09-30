@@ -30,6 +30,7 @@ import {
   notifyOwnersSafely,
   getActiveDeliveriesForPartner,
   canPartnerTakeOrder,
+  attachRestaurantLocations,
   MAX_ACTIVE_ORDERS_PER_RIDER,
   pushStatusHistory,
   sanitizeOrderForDeliveryPartner,
@@ -216,7 +217,7 @@ export async function getCurrentTripDelivery(deliveryPartnerId) {
   }
 
   const partnerId = new mongoose.Types.ObjectId(deliveryPartnerId);
-  const order = await FoodOrder.findOne({
+  const orders = await FoodOrder.find({
     'dispatch.deliveryPartnerId': partnerId,
     'dispatch.status': 'accepted',
     orderStatus: {
@@ -232,16 +233,41 @@ export async function getCurrentTripDelivery(deliveryPartnerId) {
     .select(DELIVERY_ORDER_BASE_SELECT)
     .populate(DELIVERY_RESTAURANT_POPULATE)
     .populate({ path: 'userId', select: 'name phone' })
-    .sort({ updatedAt: -1 })
+    // Whichever order the rider committed to first stays "the" trip even
+    // after block batching adds a second one mid-delivery. Sorting by
+    // updatedAt (as this used to) picks whichever order was touched last --
+    // which meant accepting order two silently replaced order one as "the"
+    // current trip, and the rider's app lost order one from the screen
+    // entirely until they happened to finish order two.
+    .sort({ 'dispatch.assignedAt': 1, createdAt: 1 })
     .lean();
 
-  if (!order) return null;
+  if (!orders.length) return null;
 
-  const tx = await FoodTransaction.findOne({ orderId: order._id })
+  const orderIds = orders.map((o) => o._id);
+  const txRows = await FoodTransaction.find({ orderId: { $in: orderIds } })
     .select(DELIVERY_TRANSACTION_SELECT)
     .lean();
+  const txByOrderId = new Map(txRows.map((tx) => [String(tx.orderId), tx]));
 
-  return sanitizeOrderForDeliveryPartner(mergeTransactionIntoOrder(order, tx));
+  const sanitized = orders.map((o) =>
+    sanitizeOrderForDeliveryPartner(mergeTransactionIntoOrder(o, txByOrderId.get(String(o._id)) || null)),
+  );
+
+  const [primary, ...rest] = sanitized;
+  // The rider app's "current trip" screen is built around one order at a
+  // time. This is what tells it a second (block-batched) order exists,
+  // rather than that order silently vanishing from the rider's view --
+  // it becomes the primary trip in its own right once this one is done.
+  primary.batchOrders = rest.map((o) => ({
+    _id: o._id,
+    order_id: o.order_id,
+    orderStatus: o.orderStatus,
+    restaurantName: o.restaurantId?.restaurantName || o.restaurantId?.name || '',
+    pricing: o.pricing,
+  }));
+
+  return primary;
 }
 
 export async function listOrdersAvailableDelivery(deliveryPartnerId, query) {
@@ -537,9 +563,15 @@ export async function acceptOrderDelivery(orderId, deliveryPartnerId) {
       return acceptedOrder ? sanitizeOrderForDeliveryPartner(acceptedOrder) : null;
     }
 
-    // A second order is allowed only when it genuinely rides along: same store,
-    // not yet collected, and a drop near the one already on board. The refusal
-    // says which of those failed, because the rider can act on that.
+    // A second order is allowed only when it genuinely rides along: same store
+    // (or a nearby different one, in the same block), not yet collected, and a
+    // drop near the one already on board. The refusal says which of those
+    // failed, because the rider can act on that.
+    //
+    // Stamps pickup coordinates on both sides -- a manual accept of a
+    // cross-store batch candidate needs the same comparison the automatic
+    // block-batch assignment already runs.
+    await attachRestaurantLocations([...activeOrders, requestedOrder]);
     const verdict = canPartnerTakeOrder(activeOrders, requestedOrder);
     if (!verdict.allowed) throw new ValidationError(verdict.reason);
   }
