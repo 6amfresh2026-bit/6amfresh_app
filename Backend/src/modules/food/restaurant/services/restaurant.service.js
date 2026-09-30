@@ -2079,11 +2079,26 @@ export const listApprovedRestaurants = async (query = {}) => {
         }
     }
 
-    // Strict zone filter for user listing:
-    // if zoneId is provided, return only restaurants mapped to that zone.
+    // Zone filter for user listing, matching the rule order placement enforces
+    // at checkout (resolveServiceableZone in order.service.js): a restaurant
+    // with no zone of its own is never zone-blocked there, only one whose zone
+    // is explicitly a *different* one is. An exact-match filter here excluded
+    // every zone-less restaurant instead -- which is most of them, since a
+    // zone is only ever assigned by hand -- hiding stores from the list that
+    // would have gone through fine at checkout.
     const zoneIdRaw = String(query.zoneId || '').trim();
     if (zoneIdRaw && mongoose.Types.ObjectId.isValid(zoneIdRaw)) {
-        filter.zoneId = new mongoose.Types.ObjectId(zoneIdRaw);
+        if (Array.isArray(filter.$or) && filter.$or.length) {
+            filter.$and = [...(filter.$and || []), { $or: filter.$or }];
+            delete filter.$or;
+        }
+        filter.$and = [...(filter.$and || []), {
+            $or: [
+                { zoneId: { $exists: false } },
+                { zoneId: null },
+                { zoneId: new mongoose.Types.ObjectId(zoneIdRaw) }
+            ]
+        }];
     }
 
     const lat = toFiniteNumber(query.lat);
