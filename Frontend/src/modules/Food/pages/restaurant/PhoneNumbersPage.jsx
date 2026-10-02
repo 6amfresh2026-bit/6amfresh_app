@@ -153,7 +153,7 @@ export default function PhoneNumbersPage() {
             <div className="flex-1">
               <h2 className="text-base font-bold text-gray-900">Order reminder numbers</h2>
               <p className="text-xs text-gray-600 mt-1">
-                Should always be available for Zomato to reach out for live order support and order reminders.
+                Should always be available for 6AM Fresh to reach out for live order support and order reminders.
               </p>
             </div>
           </div>
@@ -198,7 +198,7 @@ export default function PhoneNumbersPage() {
             <div className="flex-1">
               <h2 className="text-base font-bold text-gray-900">Store page number</h2>
               <p className="text-xs text-gray-600 mt-1">
-                Number for Zomato customers to call your restaurant.
+                Number for 6AM Fresh customers to call your restaurant.
               </p>
             </div>
           </div>

@@ -69,6 +69,11 @@ export default function AddCouponPage(props) {
       e.discountValue = "Enter a valid discount value"
     if (formData.discountType === "percentage" && Number(formData.discountValue) > 100)
       e.discountValue = "Percentage cannot exceed 100"
+    // The server refuses a percentage coupon with no cap (an uncapped % off a
+    // big basket is an open-ended giveaway), so say so here instead of letting
+    // the field read as optional and failing on submit with a raw field name.
+    if (formData.discountType === "percentage" && (!formData.maxDiscount || Number(formData.maxDiscount) <= 0))
+      e.maxDiscount = "Enter the maximum discount (in ₹) a percentage coupon can give"
     // A monthly offer auto-fills its window to the current calendar month
     // when left blank, so dates aren't mandatory for it.
     if (!formData.isMonthly) {
@@ -244,17 +249,18 @@ export default function AddCouponPage(props) {
           {/* Max Discount (only for percentage) */}
           {formData.discountType === "percentage" && (
             <div>
-              <FieldLabel>Max Discount Cap</FieldLabel>
+              <FieldLabel required>Max Discount Cap</FieldLabel>
               <div className="relative">
                 <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm font-medium">₹</span>
                 <input
                   type="number"
                   value={formData.maxDiscount}
                   onChange={(e) => set("maxDiscount", e.target.value)}
-                  placeholder="No cap"
+                  placeholder="Max ₹ off"
                   className={`${inputCls("maxDiscount")} pl-7`}
                 />
               </div>
+              <ErrorMsg field="maxDiscount" />
             </div>
           )}
         </div>

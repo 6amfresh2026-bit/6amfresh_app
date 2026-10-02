@@ -166,7 +166,7 @@ export default function UnifiedOTPFastLogin() {
   const hotelIcon = "/super-app/hotel.png"
 
   const services = [
-    { id: 'food', name: 'Food Delivery', icon: foodIcon, label: 'Zomato', color: 'bg-red-500', shadow: 'shadow-red-200' },
+    { id: 'food', name: 'Food Delivery', icon: foodIcon, label: '6AM Fresh', color: 'bg-red-500', shadow: 'shadow-red-200' },
     { id: 'taxi', name: 'Taxi', icon: taxiIcon, label: 'Taxi', color: 'bg-yellow-400', shadow: 'shadow-yellow-200' },
     { id: 'grocery', name: 'Quick Commerce', icon: groceryIcon, label: 'Blinkit', color: 'bg-green-500', shadow: 'shadow-green-200' },
     { id: 'hotels', name: 'Hotels', icon: hotelIcon, label: 'Hotels', color: 'bg-blue-500', shadow: 'shadow-blue-200' },

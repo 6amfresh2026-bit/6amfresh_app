@@ -18,6 +18,19 @@ const extractMenuCount = (response) => {
   if (Array.isArray(data?.foods)) return data.foods.length
   if (Array.isArray(data)) return data.length
   if (typeof data?.total === "number") return data.total
+  // The seller menu endpoint answers { menu: { sections: [{ items: [...] }] } },
+  // not a flat list, so none of the shapes above ever matched it and this step
+  // read "no items" for a store with a full catalogue.
+  const sections = data?.menu?.sections
+  if (Array.isArray(sections)) {
+    return sections.reduce((n, section) => {
+      const own = Array.isArray(section?.items) ? section.items.length : 0
+      const nested = Array.isArray(section?.subsections)
+        ? section.subsections.reduce((m, sub) => m + (Array.isArray(sub?.items) ? sub.items.length : 0), 0)
+        : 0
+      return n + own + nested
+    }, 0)
+  }
   return 0
 }
 
@@ -51,7 +64,14 @@ export default function SellerGettingStarted() {
 
   if (loading) return null
 
-  const hasProfile = Boolean(restaurant?.address || restaurant?.addressLine1) && Boolean(restaurant?.fssaiNumber)
+  // The profile response folds the address into `location`; there is no
+  // top-level address / addressLine1, so reading those never found one.
+  const loc = restaurant?.location
+  const hasAddress = Boolean(
+    restaurant?.address || restaurant?.addressLine1 ||
+    loc?.formattedAddress || loc?.address || loc?.addressLine1
+  )
+  const hasProfile = hasAddress && Boolean(restaurant?.fssaiNumber)
   const hasMenu = menuItemCount > 0
   const hasZone = Boolean(restaurant?.zoneId)
   const hasBankDetails = Boolean(restaurant?.accountNumber && restaurant?.ifscCode)

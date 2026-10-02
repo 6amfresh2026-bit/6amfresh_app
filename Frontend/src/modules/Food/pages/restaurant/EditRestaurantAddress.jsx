@@ -261,7 +261,7 @@ export default function EditRestaurantAddress() {
           {/* Informational Banner */}
           <div className="bg-blue-100 rounded-lg px-4 py-3 mb-4">
             <p className="text-sm text-gray-900">
-              Customers and Zomato delivery partners will use this to locate your outlet.
+              Customers and 6AM Fresh delivery partners will use this to locate your outlet.
             </p>
           </div>
 

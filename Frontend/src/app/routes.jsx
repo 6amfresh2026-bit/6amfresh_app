@@ -76,8 +76,12 @@ const SellerRouter = lazy(() => import('../modules/Food/components/restaurant/Re
  */
 const RedirectToSeller = () => {
   const location = useLocation()
+  // Both prefixes: /food/restaurant/* (old addresses) and bare /restaurant/*
+  // (what a lot of the seller screens still navigate to). The bare form used to
+  // fall through this replace unchanged, so the redirect pointed at itself and
+  // the seller landed on a blank page -- after creating a coupon, for one.
   const target =
-    location.pathname.replace(/^\/food\/restaurant/, '/seller') +
+    location.pathname.replace(/^\/(?:food\/)?restaurant(?=\/|$)/, '/seller') +
     location.search +
     location.hash
   return <Navigate to={target} replace />
