@@ -6806,6 +6806,22 @@ export async function updateZone(id, body) {
 }
 
 export async function deleteZone(id) {
+    // A restaurant keeps pointing at a deleted zone, and checkout then compares
+    // every customer's zone against one that no longer exists -- so the store
+    // refuses every address with "does not deliver to the selected address"
+    // and drops out of zoned listings, from one click on a different screen.
+    // Same rule as brands and units: in use means it cannot go.
+    if (mongoose.Types.ObjectId.isValid(String(id))) {
+        const zoneObjectId = new mongoose.Types.ObjectId(String(id));
+        const inUse = await FoodRestaurant.countDocuments({
+            $or: [{ zoneId: zoneObjectId }, { pendingZoneId: zoneObjectId }],
+        });
+        if (inUse > 0) {
+            throw new ValidationError(
+                `This zone is assigned to ${inUse} seller${inUse === 1 ? '' : 's'}. Move them to another zone before deleting it.`,
+            );
+        }
+    }
     const zone = await FoodZone.findByIdAndDelete(id);
     if (zone) void invalidateActiveZonesCache();
     return zone ? { id } : null;

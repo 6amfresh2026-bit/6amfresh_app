@@ -95,7 +95,12 @@ function mergeTransactionIntoOrder(orderDoc, txDoc) {
     ...orderDoc,
     paymentMethod: txDoc.payment?.method || txDoc.paymentMethod || orderDoc.paymentMethod,
     payment: txDoc.payment || orderDoc.payment,
-    pricing: txDoc.pricing || orderDoc.pricing,
+    // Merged, not replaced: the transaction's snapshot only carries the money
+    // lines, so swapping it in dropped roadDistanceKm / distanceKm / deliveryMode
+    // from every rider-facing response. The offer card then had no road
+    // distance and fell back to straight-line until Google Maps finished
+    // loading -- 9.6 km on screen for an order the customer was quoted 13.1 km.
+    pricing: txDoc.pricing ? { ...(orderDoc.pricing || {}), ...txDoc.pricing } : orderDoc.pricing,
     amounts: txDoc.amounts || orderDoc.amounts,
     transactionStatus: txDoc.status || orderDoc.transactionStatus,
   };

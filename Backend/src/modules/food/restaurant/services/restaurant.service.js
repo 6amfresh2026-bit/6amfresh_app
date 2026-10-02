@@ -1160,6 +1160,11 @@ export const getCurrentRestaurantProfile = async (restaurantId) => {
                 'onboardingFeePaymentId',
                 'onboardingFeePaymentSignature',
                 'status',
+                // toRestaurantProfile reads both; left out, the seller app always
+                // got zoneId "" (so "Set Your Delivery Zone" could never complete)
+                // and every store reported the 'grocery' default for storeType.
+                'zoneId',
+                'storeType',
                 'createdAt',
                 'updatedAt'
             ].join(' ')
@@ -1236,6 +1241,8 @@ export const updateRestaurantAcceptingOrders = async (restaurantId, isAcceptingO
                 'diningSettings',
                 'isAcceptingOrders',
                 'outsideHoursOverride',
+                'zoneId',
+                'storeType',
                 'status',
                 'createdAt',
                 'updatedAt'
@@ -1328,6 +1335,8 @@ export const updateCurrentRestaurantDiningSettings = async (restaurantId, body =
                 'diningSettings',
                 'isAcceptingOrders',
                 'outsideHoursOverride',
+                'zoneId',
+                'storeType',
                 'status',
                 'createdAt',
                 'updatedAt'
@@ -1852,7 +1861,7 @@ export const uploadRestaurantProfileImage = async (restaurantId, file) => {
                 rejectionReason: 1
             }
         },
-        { new: true, projection: 'profileImage coverImages restaurantName cuisines location menuImages addressLine1 addressLine2 area city state pincode landmark ownerName ownerEmail ownerPhone primaryContactNumber pureVegRestaurant openingTime closingTime openDays status createdAt updatedAt' }
+        { new: true, projection: 'profileImage coverImages restaurantName cuisines location menuImages addressLine1 addressLine2 area city state pincode landmark ownerName ownerEmail ownerPhone primaryContactNumber pureVegRestaurant openingTime closingTime openDays status zoneId storeType createdAt updatedAt' }
     ).lean();
 
     if (!doc) throw new ValidationError('Store not found');
