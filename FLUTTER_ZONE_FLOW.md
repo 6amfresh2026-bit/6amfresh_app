@@ -53,8 +53,8 @@ don't bother calling the restaurant listing yet.
 
 Once you have a `zoneId`, thread it through:
 
-- `GET /food/restaurants?zoneId=...` (+ your usual `lat`, `lng`, `radiusKm`, `sortBy` params)
-- `GET /food/search?zoneId=...`
+- `GET /food/restaurant/restaurants?zoneId=...` (+ your usual `lat`, `lng`, `radiusKm`, `sortBy` params)
+- `GET /food/search/unified?q=...&zoneId=...`
 - `GET /food/landing/settings/public?zoneId=...`
 - category endpoints that take `zoneId`
 
