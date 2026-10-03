@@ -8,6 +8,7 @@ import {
 import { ActionSlider } from '@/modules/DeliveryV2/components/ui/ActionSlider';
 import { uploadAPI } from '@food/api';
 import { toast } from 'sonner';
+import { formatKmToTarget } from '@/modules/DeliveryV2/utils/distanceLabel';
 import { openCamera } from "@food/utils/imageUploadUtils";
 
 /**
@@ -143,7 +144,7 @@ export const PickupActionModal = ({
                       <div className="bg-orange-50 px-3 py-1 rounded-full border border-orange-100">
                         <span className="text-orange-600 text-[10px] font-black uppercase tracking-widest">
                           {/* No GPS fix yet gives Infinity here, which printed "INFINITY KM". */}
-                          {Number.isFinite(distanceToTarget) ? (distanceToTarget / 1000).toFixed(1) : '--'} km • {eta || '--'} min
+                          {formatKmToTarget(distanceToTarget)} km • {eta || '--'} min
                         </span>
                       </div>
                     )}

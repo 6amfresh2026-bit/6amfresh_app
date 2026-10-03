@@ -1056,7 +1056,7 @@ export default function HubMenu() {
 
   // Category options handlers
   const handleOpenCategoryOptions = (group) => {
-    setSelectedCategory({ id: group.id, name: group.name })
+    setSelectedCategory({ id: group.id, categoryId: group.categoryId, name: group.name })
     setIsCategoryOptionsOpen(true)
   }
 
@@ -1067,9 +1067,9 @@ export default function HubMenu() {
     setIsCategoryOptionsOpen(false)
   }
 
-  const handleSaveCategoryName = () => {
+  const handleSaveCategoryName = async () => {
     if (!editCategoryName.trim() || !selectedCategory) return
-    
+
     const newCategoryName = editCategoryName.trim()
     if (newCategoryName === selectedCategory.name) {
       setIsEditCategoryOpen(false)
@@ -1077,23 +1077,24 @@ export default function HubMenu() {
       return
     }
 
-    // Update all foods in this category
-    const allFoods = getAllFoods()
-    const updatedFoods = allFoods.map(food => {
-      if (food.category === selectedCategory.name) {
-        return { ...food, category: newCategoryName }
-      }
-      return food
-    })
+    // The menu is built from the seller's items, so a section only has a real
+    // category behind it when it carries a Mongo id. "section-0" (items with no
+    // category) is just a bucket, and there is nothing to rename on the server.
+    const categoryId = selectedCategory.categoryId || selectedCategory.id
+    if (!/^[0-9a-f]{24}$/i.test(String(categoryId || ''))) {
+      toast.error('Items without a category cannot be renamed. Give them a category first.')
+      return
+    }
 
-    // Save updated foods
+    // This used to rewrite a localStorage copy of the foods via getAllFoods(),
+    // which no longer exists -- renaming a category crashed with a ReferenceError.
     try {
-      localStorage.setItem('restaurant_foods', JSON.stringify(updatedFoods))
-      window.dispatchEvent(new CustomEvent('foodsChanged'))
-      window.dispatchEvent(new Event('storage'))
+      await restaurantAPI.updateCategory(categoryId, { name: newCategoryName })
+      toast.success('Category renamed')
+      await fetchMenu(false)
     } catch (error) {
       debugError('Error updating category:', error)
-      alert('Error updating category name')
+      toast.error(error?.response?.data?.message || 'Could not rename the category')
       return
     }
 

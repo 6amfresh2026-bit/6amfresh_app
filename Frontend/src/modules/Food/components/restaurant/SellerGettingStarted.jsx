@@ -3,36 +3,7 @@ import { useNavigate } from "react-router-dom"
 import { CheckCircle2 } from "lucide-react"
 import { restaurantAPI } from "@food/api"
 import { cn } from "@food/utils/utils"
-
-const extractRestaurant = (response) =>
-  response?.data?.data?.restaurant ||
-  response?.data?.restaurant ||
-  response?.data?.data?.user ||
-  response?.data?.user ||
-  response?.data?.data ||
-  null
-
-const extractMenuCount = (response) => {
-  const data = response?.data?.data || response?.data || {}
-  if (Array.isArray(data?.items)) return data.items.length
-  if (Array.isArray(data?.foods)) return data.foods.length
-  if (Array.isArray(data)) return data.length
-  if (typeof data?.total === "number") return data.total
-  // The seller menu endpoint answers { menu: { sections: [{ items: [...] }] } },
-  // not a flat list, so none of the shapes above ever matched it and this step
-  // read "no items" for a store with a full catalogue.
-  const sections = data?.menu?.sections
-  if (Array.isArray(sections)) {
-    return sections.reduce((n, section) => {
-      const own = Array.isArray(section?.items) ? section.items.length : 0
-      const nested = Array.isArray(section?.subsections)
-        ? section.subsections.reduce((m, sub) => m + (Array.isArray(sub?.items) ? sub.items.length : 0), 0)
-        : 0
-      return n + own + nested
-    }, 0)
-  }
-  return 0
-}
+import { extractRestaurant, extractMenuCount, checklistState, checklistPercent } from "./sellerChecklist"
 
 /** First-run onboarding checklist for a brand-new seller — mirrors the admin
  * panel's "Getting Started" widget so both sides of the app guide setup the
@@ -64,17 +35,11 @@ export default function SellerGettingStarted() {
 
   if (loading) return null
 
-  // The profile response folds the address into `location`; there is no
-  // top-level address / addressLine1, so reading those never found one.
-  const loc = restaurant?.location
-  const hasAddress = Boolean(
-    restaurant?.address || restaurant?.addressLine1 ||
-    loc?.formattedAddress || loc?.address || loc?.addressLine1
-  )
-  const hasProfile = hasAddress && Boolean(restaurant?.fssaiNumber)
-  const hasMenu = menuItemCount > 0
-  const hasZone = Boolean(restaurant?.zoneId)
-  const hasBankDetails = Boolean(restaurant?.accountNumber && restaurant?.ifscCode)
+  const state = checklistState(restaurant, menuItemCount)
+  const hasProfile = state.profile
+  const hasMenu = state.menu
+  const hasZone = state.zone
+  const hasBankDetails = state.bank
 
   const steps = [
     {
@@ -103,7 +68,7 @@ export default function SellerGettingStarted() {
     },
   ]
 
-  const percent = Math.round((steps.filter((s) => s.completed).length / steps.length) * 100)
+  const percent = checklistPercent(state)
   if (percent >= 100) return null
 
   return (

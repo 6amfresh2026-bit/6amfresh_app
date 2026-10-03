@@ -2,6 +2,7 @@ import { Routes, Route, Navigate, useLocation, useNavigate } from 'react-router-
 import { Suspense, lazy, useEffect, useState } from 'react'
 import { AppShellSkeleton } from '@food/components/ui/loading-skeletons'
 import LandingPage from './LandingPage'
+import RedirectToSeller from './RedirectToSeller'
 import { isFeatureEnabled, loadCorePublicAppConfig } from '@food/services/publicAppConfig'
 
 const NATIVE_LAST_ROUTE_KEY = 'native_last_route'
@@ -65,27 +66,6 @@ const RootEntryRoute = () => {
 
 const AdminRouter = lazy(() => import('../modules/Food/components/admin/AdminRouter'))
 const SellerRouter = lazy(() => import('../modules/Food/components/restaurant/RestaurantRouter'))
-
-/**
- * Sends the old /food/restaurant/* addresses to /seller/*.
- *
- * A redirect rather than a second mount: two live copies of the panel would
- * mean two sessions, two sets of sockets, and a bug fixed in one of them. The
- * rest of the path, the query string and the hash survive, so a deep link to a
- * specific order still lands on it.
- */
-const RedirectToSeller = () => {
-  const location = useLocation()
-  // Both prefixes: /food/restaurant/* (old addresses) and bare /restaurant/*
-  // (what a lot of the seller screens still navigate to). The bare form used to
-  // fall through this replace unchanged, so the redirect pointed at itself and
-  // the seller landed on a blank page -- after creating a coupon, for one.
-  const target =
-    location.pathname.replace(/^\/(?:food\/)?restaurant(?=\/|$)/, '/seller') +
-    location.search +
-    location.hash
-  return <Navigate to={target} replace />
-}
 
 const AppRoutes = () => {
   const location = useLocation()
