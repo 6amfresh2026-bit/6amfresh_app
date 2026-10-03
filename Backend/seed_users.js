@@ -4,7 +4,13 @@ import { FoodUser } from './src/core/users/user.model.js';
 import { FoodRestaurant } from './src/modules/food/restaurant/models/restaurant.model.js';
 import { FoodDeliveryPartner } from './src/modules/food/delivery/models/deliveryPartner.model.js';
 
-const MONGODB_URI = 'mongodb+srv://6amfresh2026_db_user:c96JKHZQKVYBw7mL@cluster0.6ztmwjr.mongodb.net/?appName=Cluster0';
+// Never hard-code this: a connection string with a password was committed here
+// once and has to be treated as leaked. Point it at the database you mean to seed.
+const MONGODB_URI = process.env.MONGO_URI || process.env.MONGODB_URI;
+if (!MONGODB_URI) {
+    console.error('Set MONGO_URI to the database to seed, e.g. MONGO_URI=mongodb://127.0.0.1:27018/switcheats_dev');
+    process.exit(1);
+}
 
 async function seed() {
     try {
