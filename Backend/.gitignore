@@ -14,3 +14,7 @@ coverage/
 /secrets/
 *service-account*.json
 *serviceAccountKey*.json
+
+# test output
+test-results/
+coverage/
