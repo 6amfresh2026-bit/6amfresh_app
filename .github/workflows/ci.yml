@@ -13,11 +13,16 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+# Nothing here writes to the repository. A job that is ever tampered with then
+# holds a read-only token.
+permissions:
+  contents: read
+
 env:
   NODE_VERSION: '20.x'
 
 jobs:
-  # Runs before anything installs or builds, and gates both jobs that do.
+  # Runs before anything installs or builds, and gates every job that does.
   #
   # origin/master was force-pushed twice with malware appended to
   # Frontend/vite.config.js. Vite loads that file, so `npm run build` executed
@@ -25,10 +30,12 @@ jobs:
   # after the build would be reporting a burglary from inside the house.
   #
   # It is deliberately the cheapest job in the file — no install, no cache, just
-  # Node reading some text — so gating on it costs seconds.
+  # Node reading some text — so gating on it costs seconds. The credential scan
+  # lives here for the same reason: it reads tracked files and runs no project code.
   guard:
     name: Build-config guard
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
 
@@ -38,16 +45,25 @@ jobs:
 
       # A scanner that has quietly stopped detecting anything is worse than no
       # scanner, because it reads as a green check.
-      - name: Self-check the scanner
-        run: node .github/scripts/scan-build-config.mjs --selftest
+      - name: Self-check the scanners
+        run: |
+          node .github/scripts/scan-build-config.mjs --selftest
+          node .github/scripts/scan-secrets.mjs --selftest
 
       - name: Scan files that execute on install and build
         run: node .github/scripts/scan-build-config.mjs
+
+      # A database connection string with its password was committed in the first
+      # push and sat in the history for a month. Rotation is the only real fix,
+      # so the job is to stop the next one arriving.
+      - name: Scan for committed credentials
+        run: node .github/scripts/scan-secrets.mjs
 
   backend:
     name: Backend — tests
     needs: guard
     runs-on: ubuntu-latest
+    timeout-minutes: 20
 
     # The integration tests talk to a real Mongo: the parts they cover (atomic
     # decrements, the restock claim, unique indexes) are database behaviour, and
@@ -90,12 +106,32 @@ jobs:
       - name: Unit checks (no database)
         run: npm run test:unit
 
-      - name: Integration tests
-        run: npm run test:integration
+      # Spec output for the log, JUnit for the artifact, and the coverage table
+      # for the floor below. One run, three outputs.
+      - name: Integration tests (with coverage)
+        run: |
+          mkdir -p test-results
+          set -o pipefail
+          npm run test:ci 2>&1 | tee test-results/output.txt
         env:
           MONGO_TEST_URI: mongodb://127.0.0.1:27017/switcheats_test
           JWT_ACCESS_SECRET: ci-access-secret-not-a-real-key
           JWT_REFRESH_SECRET: ci-refresh-secret-not-a-real-key
+
+      # A ratchet: the floor sits just under today's number and goes up when
+      # coverage does. New code cannot quietly arrive untested.
+      - name: Coverage floor
+        run: node ../.github/scripts/check-coverage.mjs test-results/output.txt
+        env:
+          COVERAGE_MIN_LINES: '50'
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-test-results
+          path: Backend/test-results
+          retention-days: 7
 
       - name: Boot the server and smoke-test it
         run: |
@@ -126,6 +162,7 @@ jobs:
     name: Frontend — lint & build
     needs: guard
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: Frontend
@@ -173,6 +210,11 @@ jobs:
           echo "$CHANGED"
           npx eslint $CHANGED
 
+      # Pure logic that used to live inside components: the seller redirect, the
+      # onboarding checklist, coupon rules, distance labels. Fast, no browser.
+      - name: Unit tests
+        run: npm test
+
       - name: Build
         run: npm run build
 
@@ -183,9 +225,112 @@ jobs:
           path: Frontend/dist
           retention-days: 7
 
+  # The browser run: real backend, real frontend build, real Chromium, a seeded
+  # database. It is the programmatic version of opening every admin, seller,
+  # rider and customer screen and watching the console, which is how most of the
+  # bugs in this project were first found.
+  e2e:
+    name: End-to-end (browser)
+    needs: guard
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    services:
+      mongo:
+        image: mongo:7
+        ports: ['27017:27017']
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'db.runCommand({ ping: 1 })'"
+          --health-interval 10s --health-timeout 5s --health-retries 10
+
+    env:
+      MONGO_URI: mongodb://127.0.0.1:27017/switcheats_e2e
+      E2E_API_URL: http://127.0.0.1:5100/api/v1
+      E2E_BASE_URL: http://127.0.0.1:4173
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install backend
+        working-directory: Backend
+        run: npm ci --ignore-scripts && (npm rebuild sharp || true)
+
+      - name: Install frontend
+        working-directory: Frontend
+        run: npm ci --ignore-scripts
+
+      # The API address is baked in at build time, so this build is its own and
+      # not the one from the frontend job.
+      - name: Build frontend against the e2e backend
+        working-directory: Frontend
+        run: npm run build
+        env:
+          VITE_API_BASE_URL: http://127.0.0.1:5100/api/v1
+
+      - name: Install e2e runner and Chromium
+        working-directory: e2e
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+
+      - name: Seed the e2e database
+        working-directory: Backend
+        run: node scripts/e2e-seed.mjs
+
+      - name: Start backend and frontend
+        run: |
+          (cd Backend && npm start > ../backend.log 2>&1 & echo $! > ../backend.pid)
+          (cd Frontend && npx vite preview --host 127.0.0.1 --port 4173 --strictPort > ../frontend.log 2>&1 & echo $! > ../frontend.pid)
+          for i in $(seq 1 60); do
+            curl -sf "http://127.0.0.1:5100/api/v1/food/zones/detect?lat=17.385&lng=78.4867" >/dev/null && \
+            curl -sf http://127.0.0.1:4173/ >/dev/null && echo "both up after ${i}s" && exit 0
+            sleep 1
+          done
+          echo "servers did not come up"; tail -n 40 backend.log frontend.log; exit 1
+        env:
+          NODE_ENV: test
+          PORT: 5100
+          REDIS_ENABLED: 'false'
+          BULLMQ_ENABLED: 'false'
+          SERVER_BACKGROUND_JOBS_ENABLED: 'false'
+          USE_DEFAULT_OTP: 'true'
+          # Every spec signs in with OTP 1234; the default limit is 3 per phone per 10 min.
+          OTP_RATE_LIMIT: '1000'
+          JWT_ACCESS_SECRET: ci-access-secret-not-a-real-key
+          JWT_REFRESH_SECRET: ci-refresh-secret-not-a-real-key
+
+      - name: Run the browser tests
+        working-directory: e2e
+        run: npx playwright test
+
+      - name: Upload report and traces
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-report
+          path: |
+            e2e/playwright-report
+            e2e/test-results
+          retention-days: 7
+
+      - name: Server logs
+        if: failure()
+        run: tail -n 80 backend.log frontend.log || true
+
+      - name: Stop the servers
+        if: always()
+        run: |
+          kill "$(cat backend.pid)" 2>/dev/null || true
+          kill "$(cat frontend.pid)" 2>/dev/null || true
+
   audit:
     name: Dependency audit
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     # Advisory: a new CVE in a transitive dependency should be visible without
     # blocking an unrelated bug fix from merging.
     continue-on-error: true

@@ -19,24 +19,43 @@ echo "${LOCAL_ONLY:-<none>}"
 REAL=$(git log --no-merges --format='%h %s' origin/master..HEAD)
 if [ -n "$REAL" ]; then
   echo
-  echo "STOP: these are real commits that exist only on this server:"
+  echo "These are real commits that exist only on this server:"
   echo "$REAL"
-  echo "Not resetting. Send this output to the developer."
-  exit 1
+  if [ "${SALVAGE_LOCAL_COMMITS:-0}" != "1" ]; then
+    echo
+    echo "Not resetting. Either send this output to the developer, or re-run with"
+    echo "SALVAGE_LOCAL_COMMITS=1 to save them as patches first and then continue."
+    exit 1
+  fi
+  PATCHES="${BACKUP_DIR:-/root/server-backup}/patches-$(date +%s)"
+  mkdir -p "$PATCHES"
+  # Frontend/vite.config.js is excluded on purpose: it is the file the payload
+  # lives in, and a patch that re-adds it is a loaded gun in a backup folder.
+  git format-patch --no-merges origin/master..HEAD -o "$PATCHES" -- . ':!Frontend/vite.config.js'
+  echo "Saved as patches in $PATCHES (review before applying any of them)."
 fi
 
 echo "== files modified on the server (these will be discarded)"
 git status --short | grep -v '^??' || echo "<none>"
 
 echo "== back up untracked config before touching anything"
-mkdir -p /root/server-backup
+mkdir -p ${BACKUP_DIR:-/root/server-backup}
 for f in Frontend/.env.production Backend/.env; do
-  [ -f "$f" ] && cp -p "$f" "/root/server-backup/$(echo "$f" | tr / _).$(date +%s)"
+  [ -f "$f" ] && cp -p "$f" "${BACKUP_DIR:-/root/server-backup}/$(echo "$f" | tr / _).$(date +%s)"
 done
 
 echo "== reset to origin/master (untracked files such as .env.production are kept)"
 git reset --hard origin/master
 git status -sb
+
+# `npm run build` executes Frontend/vite.config.js. If that file has been tampered
+# with (it was, twice), building is how the payload runs -- as root, on this box.
+# Refuse to install or build anything until the scanner says the configs are clean.
+echo "== build-config guard"
+node .github/scripts/scan-build-config.mjs || {
+  echo "STOP: a build config looks tampered with. Not installing or building."
+  exit 1
+}
 
 echo "== backend install"
 ( cd Backend && npm ci --ignore-scripts && (npm rebuild sharp || true) )

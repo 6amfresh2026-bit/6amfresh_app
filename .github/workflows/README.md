@@ -7,9 +7,10 @@ CI goes green on `master`, or on a manual confirm.
 
 | Job | What it does | Blocking |
 |---|---|---|
-| **guard** | scans every file that executes on install or build, before anything installs or builds | yes — `backend` and `frontend` both `needs: guard` |
-| **backend** | `npm run test:unit` (7 selfchecks, no DB) → `npm run test:integration` (36 tests against a real Mongo service) → boots the server and runs `npm run test:smoke` against it | yes |
-| **frontend** | `npm run lint` → `npm run build` → uploads `dist` as an artifact | build yes, lint advisory |
+| **guard** | self-checks both scanners, then scans every file that executes on install or build **and** every tracked file for committed credentials — before anything installs or builds | yes — `backend`, `frontend` and `e2e` all `needs: guard` |
+| **backend** | `npm run test:unit` (selfchecks, no DB) → `npm run test:ci` (all integration tests against a real Mongo, with coverage and a JUnit file) → **coverage floor** → boots the server and runs `npm run test:smoke` | yes |
+| **frontend** | `npm run lint` (advisory) → `npm test` (Vitest, blocking) → `npm run build` → uploads `dist` | tests and build yes, lint advisory |
+| **e2e** | builds the frontend against a real backend, seeds a database, and drives Chromium (Playwright) through every admin, seller, rider and customer screen | yes |
 | **audit** | `npm audit --audit-level=high` on both apps | no (`continue-on-error`) |
 
 `audit` is the one job that does not wait for `guard`: `npm audit` reads the
@@ -48,6 +49,40 @@ silently stopped detecting is worse than none, because it reads as a green tick.
 `deploy.yml` runs the scan again after checkout. A `workflow_dispatch` deploy
 skips CI entirely, and hand-deploying a tampered commit is exactly the route
 someone would take once CI began refusing it.
+
+### What the tests cover
+
+| Layer | Where | What it proves |
+|---|---|---|
+| Backend integration | `Backend/tests/*.test.js` (~560 tests) | services against a real database: dispatch and batching, the whole rider lifecycle (accept → pickup → OTP → complete), pricing, stock, coupons, zones, seller profile, Directions fallbacks |
+| Frontend unit | `Frontend/tests/*` (Vitest) | logic that used to live inside components: the seller redirect (rendered, not just the regex), the onboarding checklist, coupon rules, distance labels |
+| End-to-end | `e2e/tests/*.spec.js` (~106 checks) | every admin and seller screen loads with no console error and no failed API call; login for all four apps; the regressions that were found by hand (blank page after creating a coupon, "Getting Started" at 0%, zone delete, the Zomato copy) |
+
+The e2e pages are checked the way a person would: open it, wait for it to settle,
+fail on any uncaught exception, console error, or `/api/v1` call that answers
+4xx/5xx. Known noise is listed in `e2e/helpers.js` with the reason beside it.
+
+### The coverage floor
+
+`.github/scripts/check-coverage.mjs` reads the table that
+`node --test --experimental-test-coverage` prints and fails when total line
+coverage is under `COVERAGE_MIN_LINES` (set in `ci.yml`, currently **50%**, with
+the real figure at ~55%). It is a ratchet, not a target: raise the floor when
+coverage climbs and new code cannot quietly arrive untested. The figure lands in
+the job summary on every run.
+
+### The credential scan
+
+Backend/seed_users.js carried a MongoDB Atlas connection string, password
+included, from the first commit. `.github/scripts/scan-secrets.mjs` reads tracked
+files and fails on database URIs with a real password, private keys, live
+Razorpay keys, GitHub/AWS/Slack/Stripe tokens and Google API keys. It never
+prints the value. Like the build-config guard it self-checks first and has no
+dependencies.
+
+It cannot undo a leak that is already in the history: **rotate the credential**.
+The one allow-list entry (the Firebase *web* config key shown as a form default)
+is public by design and carries its reason in the script.
 
 ### Why the integration tests use a real database
 
@@ -90,6 +125,12 @@ but are new opinions applied retroactively; promote one to `error` in
 Calls the deploy webhook in `Backend/src/routes/deploy.routes.js`, signing an
 HMAC over the exact request bytes the way that route verifies it.
 
+**An unconfigured target is a skip, not a failure.** If the two secrets below are
+missing, an automatic run (after CI on `master`) writes "Deploy skipped" to the
+summary with a warning annotation and stops, so a repository without a deploy
+target does not go red on every push. A *manual* run (`workflow_dispatch`) still
+fails, because someone asked for a deploy and did not get one.
+
 Required on the `production` environment:
 
 | Secret | Purpose |
@@ -104,7 +145,7 @@ and returns 404:
 ```
 DEPLOY_WEBHOOK_ENABLED=true
 DEPLOY_WEBHOOK_SECRET=<32+ chars, same as the GitHub secret>
-DEPLOY_SCRIPT_PATH=/absolute/path/to/deploy.sh
+DEPLOY_SCRIPT_PATH=/root/6AM-Fresh/deploy/sync-server.sh
 ```
 
 Response handling is explicit: `202` accepted, `409` a deploy was already
@@ -112,6 +153,16 @@ running (warning, not a failure), `403` signature mismatch, `404` endpoint not
 mounted. The webhook returns immediately and runs the script in the background,
 so the workflow then polls `/health` until the app serves again — "accepted" is
 not "finished".
+
+### The server-side script
+
+`deploy/sync-server.sh` is what `DEPLOY_SCRIPT_PATH` should point at. It fetches,
+resets the checkout to `origin/master`, **runs the build-config guard before it
+installs or builds anything** (building executes `vite.config.js`), then
+`npm ci`, builds the frontend and reloads pm2. It refuses to reset over real
+commits that exist only on the server; `SALVAGE_LOCAL_COMMITS=1` saves them as
+patches first (leaving `vite.config.js` out of the patches) and carries on.
+Backups of the `.env` files go to `BACKUP_DIR` (default `/root/server-backup`).
 
 `concurrency` allows one deploy at a time and never cancels one midway: the
 script on the far side is not resumable.
@@ -127,15 +178,43 @@ node .github/scripts/scan-build-config.mjs --selftest
 ```
 
 ```bash
+node .github/scripts/scan-secrets.mjs
+node .github/scripts/scan-secrets.mjs --selftest
+```
+
+```bash
 cd Backend
 npm run test:unit          # no database needed
 npm run test:integration   # needs Mongo; writes to a *_test database
-npm test                   # both
+npm run test:coverage      # same, with the coverage table
+npm test                   # unit + integration
 npm start & npm run test:smoke
 ```
 
 ```bash
 cd Frontend
+npm test                   # Vitest
+npm run test:coverage
 npm run lint
 npm run build
 ```
+
+The browser tests need a backend and a frontend running against a throw-away
+database (its name must contain `e2e` or `test`, or the seeder refuses):
+
+```bash
+# backend, on its own port and database
+cd Backend
+MONGO_URI=mongodb://127.0.0.1:27017/switcheats_e2e node scripts/e2e-seed.mjs
+PORT=5100 MONGO_URI=mongodb://127.0.0.1:27017/switcheats_e2e   USE_DEFAULT_OTP=true OTP_RATE_LIMIT=1000 REDIS_ENABLED=false node server.js
+
+# frontend build pointed at it
+cd Frontend && VITE_API_BASE_URL=http://127.0.0.1:5100/api/v1 npm run build && npx vite preview --port 4173
+
+# the tests
+cd e2e && npm ci && npx playwright install chromium
+E2E_BASE_URL=http://127.0.0.1:4173 E2E_API_URL=http://127.0.0.1:5100/api/v1 npx playwright test
+```
+
+`OTP_RATE_LIMIT=1000` matters: every spec signs in with OTP `1234`, and the
+default (3 per phone per 10 minutes) locks you out after a couple of runs.
