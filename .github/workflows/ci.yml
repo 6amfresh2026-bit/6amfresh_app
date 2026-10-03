@@ -342,6 +342,14 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
-      - name: npm audit (${{ matrix.app }})
+      # What ships: a high advisory here is a real finding.
+      - name: npm audit — production dependencies (${{ matrix.app }})
         working-directory: ${{ matrix.app }}
-        run: npm audit --audit-level=high
+        run: npm audit --audit-level=high --omit=dev
+
+      # Build and dev tooling (nodemon, vite, vitest, eslint) never reaches a user.
+      # A new advisory in a file watcher should be visible, not turn the run red
+      # a day after a clean one for a reason nobody pushed.
+      - name: npm audit — dev tooling, report only (${{ matrix.app }})
+        working-directory: ${{ matrix.app }}
+        run: npm audit --audit-level=high || echo "::warning title=Dev-tooling advisory (${{ matrix.app }})::npm audit reports high findings in dev dependencies only. See this step's log."
