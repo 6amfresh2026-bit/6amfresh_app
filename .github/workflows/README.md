@@ -11,7 +11,7 @@ CI goes green on `master`, or on a manual confirm.
 | **backend** | `npm run test:unit` (selfchecks, no DB) → `npm run test:ci` (all integration tests against a real Mongo, with coverage and a JUnit file) → **coverage floor** → boots the server and runs `npm run test:smoke` | yes |
 | **frontend** | `npm run lint` (advisory) → `npm test` (Vitest, blocking) → `npm run build` → uploads `dist` | tests and build yes, lint advisory |
 | **e2e** | builds the frontend against a real backend, seeds a database, and drives Chromium (Playwright) through every admin, seller, rider and customer screen | yes |
-| **audit** | `npm audit --audit-level=high` on both apps | no (`continue-on-error`) |
+| **audit** | `npm audit --audit-level=high --omit=dev` on both apps (what ships), plus a report-only pass over dev tooling | no (`continue-on-error`) |
 
 `audit` is the one job that does not wait for `guard`: `npm audit` reads the
 lockfile and runs no project code, so there is nothing for a tampered config to
