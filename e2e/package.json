@@ -1,0 +1,15 @@
+{
+  "name": "6am-e2e",
+  "private": true,
+  "type": "module",
+  "description": "Browser end-to-end checks against a running backend + frontend. Own package so Playwright never lands in the app's dependency tree.",
+  "scripts": {
+    "seed": "node ../Backend/scripts/e2e-seed.mjs",
+    "test": "playwright test",
+    "test:headed": "playwright test --headed",
+    "report": "playwright show-report"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.55.0"
+  }
+}
