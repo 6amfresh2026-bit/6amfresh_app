@@ -109,19 +109,27 @@ export async function sendEmail({ to, subject, html, text }) {
 const money = (n) => `Rs. ${(Number(n) || 0).toLocaleString('en-IN')}`;
 
 /**
- * Low-stock alert email. Sent to the central alert inbox (STOCK_ALERT_EMAIL)
- * and, when available, the seller who owns the product. Fire-and-forget.
- * @param {Object} p
- * @param {string} p.productName
- * @param {number} p.currentStock
- * @param {number} p.threshold
- * @param {string} [p.sku]
- * @param {string} [p.unit]
- * @param {string} [p.sellerName]
- * @param {string} [p.sellerEmail]  - also notified when present
- * @param {number} [p.price]
+ * Who a low-stock alert goes to: the central alert inbox(es) from
+ * STOCK_ALERT_EMAIL (comma-separated) plus the owning seller when known.
+ * Pure and dedup-free by design — exported so tests can assert recipient
+ * resolution without touching SMTP.
+ * @param {string} [sellerEmail]
+ * @returns {string[]}
  */
-export async function sendLowStockAlertEmail(p = {}) {
+export function resolveStockAlertRecipients(sellerEmail = '') {
+    return [
+        ...String(config.stockAlertEmail || '').split(',').map((s) => s.trim()),
+        sellerEmail
+    ].filter(Boolean);
+}
+
+/**
+ * Build the low-stock alert email. Pure: given the same product fields it
+ * always returns the same { subject, html, text, isOut }. No I/O, so CI can
+ * assert its content without any SMTP configured.
+ * @param {Object} p - see sendLowStockAlertEmail
+ */
+export function buildLowStockAlertEmail(p = {}) {
     const {
         productName = 'Product',
         currentStock = 0,
@@ -129,18 +137,8 @@ export async function sendLowStockAlertEmail(p = {}) {
         sku = '',
         unit = '',
         sellerName = '',
-        sellerEmail = '',
         price
     } = p;
-
-    const recipients = [
-        ...String(config.stockAlertEmail || '').split(',').map((s) => s.trim()),
-        sellerEmail
-    ].filter(Boolean);
-    if (recipients.length === 0) {
-        logger.warn('Low-stock alert skipped: no recipient configured (STOCK_ALERT_EMAIL)');
-        return false;
-    }
 
     const isOut = Number(currentStock) <= 0;
     const badge = isOut ? '#dc2626' : '#d97706';
@@ -174,5 +172,27 @@ export async function sendLowStockAlertEmail(p = {}) {
   </div>
 </body></html>`;
 
+    return { subject, html, isOut, recipients: resolveStockAlertRecipients(p.sellerEmail) };
+}
+
+/**
+ * Low-stock alert email. Sent to the central alert inbox (STOCK_ALERT_EMAIL)
+ * and, when available, the seller who owns the product. Fire-and-forget.
+ * @param {Object} p
+ * @param {string} p.productName
+ * @param {number} p.currentStock
+ * @param {number} p.threshold
+ * @param {string} [p.sku]
+ * @param {string} [p.unit]
+ * @param {string} [p.sellerName]
+ * @param {string} [p.sellerEmail]  - also notified when present
+ * @param {number} [p.price]
+ */
+export async function sendLowStockAlertEmail(p = {}) {
+    const { subject, html, recipients } = buildLowStockAlertEmail(p);
+    if (recipients.length === 0) {
+        logger.warn('Low-stock alert skipped: no recipient configured (STOCK_ALERT_EMAIL)');
+        return false;
+    }
     return sendEmail({ to: recipients, subject, html });
 }
