@@ -18,6 +18,7 @@ import { Input } from "@food/components/ui/input"
 import { resolveDeliveryFeeGst, formatDeliveryFeeBreakdownSubtext, getDeliveryFeeTotal } from "@food/utils/deliveryFeeDisplay"
 import { getCartCompareItemTotal } from "@food/utils/foodVariants"
 import { DualMoney } from "@food/components/user/FoodPriceDisplay"
+import OrderStatusTabs from "@food/components/admin/orders/OrderStatusTabs"
 
 const PAGE_SIZE = 20
 const RUPEE = "\u20B9"
@@ -237,6 +238,7 @@ export default function UserCarts() {
 
   return (
     <div className="p-4 lg:p-6 bg-slate-50 min-h-screen w-full max-w-full overflow-x-hidden">
+      <OrderStatusTabs activeStatus="user-carts" />
       <div className="mb-5 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
         <div>
           <h1 className="text-xl font-bold text-slate-900">User Carts</h1>
