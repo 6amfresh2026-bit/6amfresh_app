@@ -3,6 +3,7 @@ import { useSearchParams } from "react-router-dom"
 import { Search, Download, ChevronDown, ChevronLeft, ChevronRight, Calendar, Eye, FileDown, FileSpreadsheet, FileText, X, Mail, Phone, MapPin, Package, IndianRupee, Calendar as CalendarIcon, User, CheckCircle, XCircle, Wallet } from "lucide-react"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@food/components/ui/dropdown-menu"
 import { exportCustomersToCSV, exportCustomersToExcel, exportCustomersToPDF } from "@food/components/admin/customers/customersExportUtils"
+import { downloadCustomerReportPDF, downloadCustomerReportExcel, downloadCustomerReportCSV, downloadCustomerReportJSON } from "@food/components/admin/customers/customerReportUtils"
 import { adminAPI } from "@food/api"
 import { toast } from "sonner"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@food/components/ui/dialog"
@@ -314,6 +315,46 @@ export default function Customers() {
     }
   }
 
+  // Download a COMPLETE report for a single customer: profile, statistics,
+  // addresses, full order history and the full wallet statement. The list row
+  // only holds summary fields, so we fetch the full account via getCustomerById
+  // first, then build the report in the requested format.
+  const handleDownloadCustomer = async (customer, format) => {
+    if (!customer) return
+    const customerId = customer._id || customer.id || customer.sl
+    if (!customerId) {
+      toast.error("Customer ID not found")
+      return
+    }
+
+    const loadingToast = toast.loading(`Preparing report for ${customer.name || "customer"}...`)
+    try {
+      const response = await adminAPI.getCustomerById(customerId)
+      const data = response?.data?.data || response?.data
+      const user = data?.user
+      if (!user) {
+        toast.error("Failed to load customer details")
+        return
+      }
+
+      switch (format) {
+        case "csv": downloadCustomerReportCSV(user); break
+        case "excel": downloadCustomerReportExcel(user); break
+        case "json": downloadCustomerReportJSON(user); break
+        case "pdf":
+        default:
+          await downloadCustomerReportPDF(user)
+          break
+      }
+      toast.success(`Downloaded full report for ${user.name || "customer"}`)
+    } catch (error) {
+      debugError("Customer report download error:", error)
+      toast.error("Failed to download report")
+    } finally {
+      toast.dismiss(loadingToast)
+    }
+  }
+
   const formatMoney = (value) =>
     `Rs. ${(Number(value) || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 
@@ -620,12 +661,46 @@ export default function Customers() {
                         </button>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-center">
-                        <button
-                          onClick={() => handleViewDetails(customer._id || customer.id || customer.sl)}
-                          className="p-1.5 rounded text-blue-600 hover:bg-blue-50 transition-colors"
-                        >
-                          <Eye className="w-4 h-4" />
-                        </button>
+                        <div className="flex items-center justify-center gap-1">
+                          <button
+                            onClick={() => handleViewDetails(customer._id || customer.id || customer.sl)}
+                            title="View details"
+                            className="p-1.5 rounded text-blue-600 hover:bg-blue-50 transition-colors"
+                          >
+                            <Eye className="w-4 h-4" />
+                          </button>
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <button
+                                title="Download this customer's report"
+                                className="inline-flex items-center gap-0.5 p-1.5 rounded text-emerald-700 hover:bg-emerald-50 transition-colors"
+                              >
+                                <Download className="w-4 h-4" />
+                                <ChevronDown className="w-2.5 h-2.5" />
+                              </button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end" className="w-44 bg-white border border-slate-200 rounded-lg shadow-lg z-50">
+                              <DropdownMenuLabel>Download Report</DropdownMenuLabel>
+                              <DropdownMenuSeparator />
+                              <DropdownMenuItem onClick={() => handleDownloadCustomer(customer, "pdf")} className="cursor-pointer">
+                                <FileText className="w-4 h-4 mr-2" />
+                                PDF
+                              </DropdownMenuItem>
+                              <DropdownMenuItem onClick={() => handleDownloadCustomer(customer, "excel")} className="cursor-pointer">
+                                <FileSpreadsheet className="w-4 h-4 mr-2" />
+                                Excel
+                              </DropdownMenuItem>
+                              <DropdownMenuItem onClick={() => handleDownloadCustomer(customer, "csv")} className="cursor-pointer">
+                                <FileDown className="w-4 h-4 mr-2" />
+                                CSV
+                              </DropdownMenuItem>
+                              <DropdownMenuItem onClick={() => handleDownloadCustomer(customer, "json")} className="cursor-pointer">
+                                <FileDown className="w-4 h-4 mr-2" />
+                                JSON
+                              </DropdownMenuItem>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                        </div>
                       </td>
                     </tr>
                   ))

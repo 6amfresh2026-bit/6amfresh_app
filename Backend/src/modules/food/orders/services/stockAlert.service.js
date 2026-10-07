@@ -1,7 +1,8 @@
 import { FoodItem } from '../../admin/models/food.model.js';
 import { FoodRestaurant } from '../../restaurant/models/restaurant.model.js';
-import { stockTier, STOCK_TIER_LABELS, shouldAlertForTierChange } from '../../shared/stockTiers.js';
+import { stockTier, STOCK_TIER_LABELS, shouldAlertForTierChange, resolveStockThresholds } from '../../shared/stockTiers.js';
 import { notifyOwnersActionableAlert } from './order.helpers.js';
+import { sendLowStockAlertEmail } from '../../../../utils/email.js';
 import { logger } from '../../../../utils/logger.js';
 
 /**
@@ -22,9 +23,10 @@ export async function notifyStockTierChange(item) {
     if (!item?._id) return null;
 
     try {
-        // The outlet supplies the thresholds this product has not overridden.
+        // The outlet supplies the thresholds this product has not overridden,
+        // and the owner email the low-stock alert is sent to.
         const outlet = item.restaurantId
-            ? await FoodRestaurant.findById(item.restaurantId).select('stockThresholds restaurantName name').lean()
+            ? await FoodRestaurant.findById(item.restaurantId).select('stockThresholds restaurantName name ownerEmail').lean()
             : null;
 
         const nextTier = stockTier(item, outlet);
@@ -67,6 +69,26 @@ export async function notifyStockTierChange(item) {
                 },
             );
         }
+
+        // Email the central alert inbox (and the seller, when we have their
+        // email) on the same downward crossing. Fire-and-forget: an SMTP hiccup
+        // must never fail the sale this runs off, and it is already unawaited by
+        // the order path.
+        const thresholds = resolveStockThresholds(item, outlet);
+        const thresholdForTier =
+            nextTier === 'out' ? thresholds.out
+            : nextTier === 'critical' ? thresholds.critical
+            : thresholds.low;
+        void sendLowStockAlertEmail({
+            productName: item.name,
+            currentStock: remaining,
+            threshold: thresholdForTier,
+            sku: item.sku || item.itemCode || '',
+            unit: item.unit || '',
+            sellerName: outlet?.restaurantName || outlet?.name || '',
+            sellerEmail: outlet?.ownerEmail || '',
+            price: item.price,
+        }).catch((err) => logger.warn(`Low-stock email failed for ${item?._id}: ${err?.message || err}`));
 
         logger.info(`Stock alert: ${item.name} moved ${previousTier} -> ${nextTier} (${remaining} left)`);
         return { itemId: String(item._id), from: previousTier, to: nextTier, remaining };

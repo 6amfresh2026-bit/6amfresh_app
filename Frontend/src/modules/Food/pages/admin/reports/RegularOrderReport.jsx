@@ -1,5 +1,5 @@
 import { useMemo, useState, useEffect, useCallback } from "react"
-import { BarChart3, ChevronDown, Settings, FileText, FileSpreadsheet, Code, Loader2, Calendar } from "lucide-react"
+import { BarChart3, ChevronDown, Settings, FileText, FileSpreadsheet, Code, Loader2, Calendar, Download } from "lucide-react"
 import { adminAPI } from "@food/api"
 import { toast } from "sonner"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@food/components/ui/dropdown-menu"
@@ -36,6 +36,85 @@ const statusMeta = {
 
 const PAGE_SIZE = 25
 
+const EXPORT_HEADERS = [
+  { key: "orderId", label: "Order ID" },
+  { key: "restaurant", label: "Restaurant" },
+  { key: "customerName", label: "Customer Name" },
+  { key: "totalItemAmount", label: "Total Item Amount" },
+  { key: "couponDiscount", label: "Coupon Discount" },
+  { key: "vatTax", label: "VAT/Tax" },
+  { key: "deliveryCharge", label: "Delivery Charge" },
+  { key: "platformFee", label: "Platform Fee" },
+  { key: "totalAmount", label: "Order Amount" },
+  { key: "orderStatus", label: "Status" },
+]
+
+// Transform backend FoodOrder docs into the flat report row shape used by the
+// table and the export utilities. Kept at module scope so both the on-screen
+// fetch and the date-range download can share the exact same mapping.
+const mapOrdersToReport = (rawOrders = []) =>
+  rawOrders.map((order) => {
+    const pricing = order.pricing || {}
+    const items = Array.isArray(order.items) ? order.items : []
+
+    const itemsSubtotal = items.reduce((sum, item) => {
+      const qty = Number(item.quantity || 1)
+      const price = Number(item.price || 0)
+      return sum + qty * price
+    }, 0)
+
+    const subtotal = itemsSubtotal > 0 ? itemsSubtotal : Number(pricing.subtotal || 0)
+    const deliveryCharge = Number(pricing.deliveryFee || 0)
+    const platformFee = Number(pricing.platformFee || 0)
+    const vatTax = Number(pricing.tax || 0)
+    const couponDiscount = Number(pricing.discount || 0)
+    const computedTotal = subtotal + deliveryCharge + platformFee + vatTax - couponDiscount
+    const totalAmount = pricing.total != null ? Number(pricing.total) : computedTotal
+
+    const restaurantName = order.restaurantId?.restaurantName || order.restaurantName || ""
+    const restaurantId =
+      order.restaurantId?._id?.toString?.() || order.restaurantId?.toString?.() || ""
+    const orderZoneId =
+      order.restaurantId?.zoneId?._id?.toString?.() ||
+      order.restaurantId?.zoneId?.toString?.() ||
+      ""
+
+    const customerName = order.userId?.name || order.customerName || "N/A"
+    const customerId = order.userId?._id?.toString?.() || order.userId?.toString?.() || ""
+
+    const backendStatus = String(order.orderStatus || "").toLowerCase()
+    let displayStatus = order.orderStatus
+    if (!backendStatus || backendStatus === "created" || backendStatus === "confirmed") {
+      displayStatus = "Pending"
+    } else if (backendStatus === "preparing" || backendStatus === "ready_for_pickup") {
+      displayStatus = "Processing"
+    } else if (backendStatus === "picked_up") {
+      displayStatus = "Food On The Way"
+    } else if (backendStatus === "delivered") {
+      displayStatus = "Delivered"
+    } else if (backendStatus === "cancelled_by_restaurant") {
+      displayStatus = "Canceled"
+    } else if (backendStatus === "cancelled_by_user" || backendStatus === "cancelled_by_admin") {
+      displayStatus = "Canceled"
+    }
+
+    return {
+      orderId: order.orderId,
+      restaurantId,
+      zoneId: orderZoneId,
+      restaurant: restaurantName,
+      customerId,
+      customerName,
+      totalItemAmount: subtotal,
+      couponDiscount,
+      vatTax,
+      deliveryCharge,
+      platformFee,
+      totalAmount,
+      orderStatus: displayStatus,
+    }
+  })
+
 export default function RegularOrderReport() {
   const [orders, setOrders] = useState([])
   const [loading, setLoading] = useState(true)
@@ -56,6 +135,12 @@ export default function RegularOrderReport() {
   const [currentPage, setCurrentPage] = useState(1)
 
   const [isSettingsOpen, setIsSettingsOpen] = useState(false)
+
+  // Dedicated From/To date-range download (independent of the table filters)
+  const [downloadRange, setDownloadRange] = useState({ from: "", to: "" })
+  const [downloading, setDownloading] = useState(false)
+  // Shared From/To used by the per-row download dropdowns
+  const [rowRange, setRowRange] = useState({ from: "", to: "" })
 
   // Fetch zones, restaurants, and customers for filter dropdowns
   useEffect(() => {
@@ -145,88 +230,7 @@ export default function RegularOrderReport() {
       if (response.data?.success) {
         // Transform backend orders (FoodOrder docs) to report format
         const rawOrders = response.data.data.orders || []
-        const transformedOrders = rawOrders.map((order) => {
-          const pricing = order.pricing || {}
-          const items = Array.isArray(order.items) ? order.items : []
-
-          const itemsSubtotal = items.reduce((sum, item) => {
-            const qty = Number(item.quantity || 1)
-            const price = Number(item.price || 0)
-            return sum + qty * price
-          }, 0)
-
-          const subtotal =
-            itemsSubtotal > 0
-              ? itemsSubtotal
-              : Number(pricing.subtotal || 0)
-
-          const deliveryCharge = Number(pricing.deliveryFee || 0)
-          const platformFee = Number(pricing.platformFee || 0)
-          const vatTax = Number(pricing.tax || 0)
-          const couponDiscount = Number(pricing.discount || 0)
-          const computedTotal =
-            subtotal + deliveryCharge + platformFee + vatTax - couponDiscount
-
-          const totalAmount =
-            pricing.total != null
-              ? Number(pricing.total)
-              : computedTotal
-
-          const restaurantName =
-            order.restaurantId?.restaurantName ||
-            order.restaurantName ||
-            ""
-          const restaurantId =
-            order.restaurantId?._id?.toString?.() ||
-            order.restaurantId?.toString?.() ||
-            ""
-          const orderZoneId =
-            order.restaurantId?.zoneId?._id?.toString?.() ||
-            order.restaurantId?.zoneId?.toString?.() ||
-            ""
-
-          const customerName =
-            order.userId?.name ||
-            order.customerName ||
-            "N/A"
-          const customerId =
-            order.userId?._id?.toString?.() ||
-            order.userId?.toString?.() ||
-            ""
-
-          const backendStatus = String(order.orderStatus || "").toLowerCase()
-          let displayStatus = order.orderStatus
-          if (!backendStatus || backendStatus === "created" || backendStatus === "confirmed") {
-            displayStatus = "Pending"
-          } else if (backendStatus === "preparing" || backendStatus === "ready_for_pickup") {
-            displayStatus = "Processing"
-          } else if (backendStatus === "picked_up") {
-            displayStatus = "Food On The Way"
-          } else if (backendStatus === "delivered") {
-            displayStatus = "Delivered"
-          } else if (backendStatus === "cancelled_by_restaurant") {
-            displayStatus = "Canceled"
-          } else if (backendStatus === "cancelled_by_user" || backendStatus === "cancelled_by_admin") {
-            displayStatus = "Canceled"
-          }
-
-          return {
-            orderId: order.orderId,
-            restaurantId,
-            zoneId: orderZoneId,
-            restaurant: restaurantName,
-            customerId,
-            customerName,
-            totalItemAmount: subtotal,
-            couponDiscount,
-            vatTax,
-            deliveryCharge,
-            platformFee,
-            totalAmount,
-            orderStatus: displayStatus,
-          }
-        })
-        setOrders(transformedOrders)
+        setOrders(mapOrdersToReport(rawOrders))
       } else {
         setError(response.data?.message || "Failed to fetch orders")
         toast.error(response.data?.message || "Failed to fetch orders")
@@ -270,28 +274,91 @@ export default function RegularOrderReport() {
     )
   }, [orders, searchQuery, filters.zone, filters.customer])
 
+  const exportRows = (rows, format, fileName, title) => {
+    switch (format) {
+      case "csv": exportReportsToCSV(rows, EXPORT_HEADERS, fileName); break
+      case "excel": exportReportsToExcel(rows, EXPORT_HEADERS, fileName); break
+      case "pdf": exportReportsToPDF(rows, EXPORT_HEADERS, fileName, title); break
+      case "json": exportReportsToJSON(rows, fileName); break
+      default: break
+    }
+  }
+
   const handleExport = (format) => {
     if (filteredOrders.length === 0) {
-      alert("No data to export")
+      toast.error("No data to export")
       return
     }
-    const headers = [
-      { key: "orderId", label: "Order ID" },
-      { key: "restaurant", label: "Restaurant" },
-      { key: "customerName", label: "Customer Name" },
-      { key: "totalItemAmount", label: "Total Item Amount" },
-      { key: "couponDiscount", label: "Coupon Discount" },
-      { key: "vatTax", label: "VAT/Tax" },
-      { key: "deliveryCharge", label: "Delivery Charge" },
-      { key: "platformFee", label: "Platform Fee" },
-      { key: "totalAmount", label: "Order Amount" },
-      { key: "orderStatus", label: "Status" },
-    ]
-    switch (format) {
-      case "csv": exportReportsToCSV(filteredOrders, headers, "regular_order_report"); break
-      case "excel": exportReportsToExcel(filteredOrders, headers, "regular_order_report"); break
-      case "pdf": exportReportsToPDF(filteredOrders, headers, "regular_order_report", "Regular Order Report"); break
-      case "json": exportReportsToJSON(filteredOrders, "regular_order_report"); break
+    exportRows(filteredOrders, format, "regular_order_report", "Regular Order Report")
+  }
+
+  // Download the report for a single order row.
+  const handleDownloadOrder = (order, format) => {
+    if (!order) return
+    const safeId = String(order.orderId || "order").replace(/[^a-zA-Z0-9_-]/g, "_")
+    exportRows([order], format, `order_report_${safeId}`, `Order Report - ${order.orderId}`)
+    toast.success(`Downloaded report for ${order.orderId}`)
+  }
+
+  // Core: fetch a given From/To date range fresh and export it, independent of
+  // the on-screen table data. Reused by the top card and the per-row dropdown.
+  const downloadRangeReport = async (from, to, format) => {
+    if (!from || !to) {
+      toast.error("Please select both From and To dates")
+      return
+    }
+    if (from > to) {
+      toast.error("From date cannot be after To date")
+      return
+    }
+
+    setDownloading(true)
+    try {
+      const params = {
+        page: 1,
+        limit: 10000,
+        startDate: from,
+        endDate: to,
+        ...(filters.zone !== "All Zones" && { zoneId: filters.zone }),
+        ...(filters.restaurant !== "All restaurants" && { restaurantId: filters.restaurant }),
+      }
+      const response = await adminAPI.getOrders(params)
+      if (!response.data?.success) {
+        toast.error(response.data?.message || "Failed to fetch orders for the selected range")
+        return
+      }
+
+      let rows = mapOrdersToReport(response.data.data.orders || [])
+      if (filters.customer !== "All customers") {
+        rows = rows.filter((o) => String(o.customerId || "") === String(filters.customer))
+      }
+
+      if (rows.length === 0) {
+        toast.error("No orders found for the selected date range")
+        return
+      }
+
+      const fileName = `order_report_${from}_to_${to}`
+      exportRows(rows, format, fileName, `Order Report (${from} to ${to})`)
+      toast.success(`Downloaded ${rows.length} orders (${from} to ${to})`)
+    } catch (err) {
+      debugError("Error downloading date-range report:", err)
+      toast.error(err.response?.data?.message || "Failed to download report")
+    } finally {
+      setDownloading(false)
+    }
+  }
+
+  // Top card: download by the dedicated From/To range.
+  const handleDownloadRange = (format) => downloadRangeReport(downloadRange.from, downloadRange.to, format)
+
+  // Per-row dropdown: if a From/To date is set there, download that whole range;
+  // otherwise download just this one order.
+  const handleRowDownload = (order, format) => {
+    if (rowRange.from || rowRange.to) {
+      downloadRangeReport(rowRange.from, rowRange.to, format)
+    } else {
+      handleDownloadOrder(order, format)
     }
   }
 
@@ -535,6 +602,80 @@ export default function RegularOrderReport() {
           )}
         </div>
 
+        {/* Download report by date range */}
+        <div className="bg-white rounded-lg shadow-sm border border-slate-200 p-3 mb-3">
+          <div className="flex flex-col gap-2 lg:flex-row lg:items-end lg:justify-between">
+            <div>
+              <h3 className="text-sm font-bold text-slate-900">Download Order Report</h3>
+              <p className="text-[11px] text-slate-500">Pick a From and To date, then download the report for that range.</p>
+            </div>
+            <div className="flex flex-col sm:flex-row sm:items-end gap-2">
+              <div>
+                <label className="block text-[10px] font-medium text-slate-600 mb-1">From</label>
+                <div className="relative">
+                  <Calendar className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400 pointer-events-none" />
+                  <input
+                    type="date"
+                    value={downloadRange.from}
+                    max={downloadRange.to || undefined}
+                    onChange={(e) => setDownloadRange((prev) => ({ ...prev, from: e.target.value }))}
+                    className="w-full pl-8 pr-2.5 py-1.5 text-xs rounded-lg border border-slate-300 bg-white text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+              </div>
+              <div>
+                <label className="block text-[10px] font-medium text-slate-600 mb-1">To</label>
+                <div className="relative">
+                  <Calendar className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400 pointer-events-none" />
+                  <input
+                    type="date"
+                    value={downloadRange.to}
+                    min={downloadRange.from || undefined}
+                    onChange={(e) => setDownloadRange((prev) => ({ ...prev, to: e.target.value }))}
+                    className="w-full pl-8 pr-2.5 py-1.5 text-xs rounded-lg border border-slate-300 bg-white text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+              </div>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <button
+                    disabled={downloading}
+                    className="h-[30px] px-3 text-[11px] font-medium rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-60 disabled:cursor-not-allowed flex items-center gap-1.5 transition-all whitespace-nowrap"
+                  >
+                    {downloading ? (
+                      <Loader2 className="w-3 h-3 animate-spin" />
+                    ) : (
+                      <img src={exportIcon} alt="Download" className="w-3 h-3" />
+                    )}
+                    <span>{downloading ? "Downloading..." : "Download"}</span>
+                    <ChevronDown className="w-2.5 h-2.5" />
+                  </button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-52 bg-white border border-slate-200 rounded-lg shadow-lg z-50">
+                  <DropdownMenuLabel>Download Format</DropdownMenuLabel>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem onClick={() => handleDownloadRange("excel")} className="cursor-pointer">
+                    <FileSpreadsheet className="w-4 h-4 mr-2" />
+                    Excel
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => handleDownloadRange("csv")} className="cursor-pointer">
+                    <FileText className="w-4 h-4 mr-2" />
+                    CSV
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => handleDownloadRange("pdf")} className="cursor-pointer">
+                    <FileText className="w-4 h-4 mr-2" />
+                    PDF
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => handleDownloadRange("json")} className="cursor-pointer">
+                    <Code className="w-4 h-4 mr-2" />
+                    JSON
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+          </div>
+        </div>
+
         {/* Status Summary Cards */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-2 mb-3">
           {renderStatusRow("Scheduled")}
@@ -646,12 +787,15 @@ export default function RegularOrderReport() {
                   <th className="px-1.5 py-1 text-left text-[8px] font-bold text-slate-700 uppercase tracking-wider" style={{ width: "5%" }}>
                     Status
                   </th>
+                  <th className="px-1.5 py-1 text-center text-[8px] font-bold text-slate-700 uppercase tracking-wider" style={{ width: "6%" }}>
+                    Action
+                  </th>
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-slate-100">
                 {paginatedOrders.length === 0 ? (
                   <tr>
-                    <td colSpan={11} className="px-6 py-20 text-center">
+                    <td colSpan={12} className="px-6 py-20 text-center">
                       <div className="flex flex-col items-center justify-center">
                         <p className="text-lg font-semibold text-slate-700 mb-1">No Data Found</p>
                         <p className="text-sm text-slate-500">No orders match your filters</p>
@@ -697,6 +841,79 @@ export default function RegularOrderReport() {
                         <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[9px] font-medium bg-slate-100 text-slate-700">
                           {order.orderStatus}
                         </span>
+                      </td>
+                      <td className="px-1.5 py-1 text-center">
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <button
+                              title="Download this order's report"
+                              className="inline-flex items-center justify-center gap-0.5 px-1.5 py-1 rounded-md bg-emerald-50 text-emerald-700 hover:bg-emerald-100 transition-all"
+                            >
+                              <Download className="w-3 h-3" />
+                              <ChevronDown className="w-2 h-2" />
+                            </button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end" className="w-60 bg-white border border-slate-200 rounded-lg shadow-lg z-50">
+                            <DropdownMenuLabel>Download Order</DropdownMenuLabel>
+                            <DropdownMenuSeparator />
+                            {/* Optional date range. Leave empty to download just this
+                                order; set both to download that whole range instead. */}
+                            <div
+                              className="px-2 py-1.5 grid grid-cols-2 gap-1.5"
+                              onClick={(e) => e.stopPropagation()}
+                              onKeyDown={(e) => e.stopPropagation()}
+                            >
+                              <div>
+                                <label className="block text-[9px] font-medium text-slate-500 mb-0.5">From</label>
+                                <input
+                                  type="date"
+                                  value={rowRange.from}
+                                  max={rowRange.to || undefined}
+                                  onChange={(e) => setRowRange((prev) => ({ ...prev, from: e.target.value }))}
+                                  onSelect={(e) => e.stopPropagation()}
+                                  className="w-full px-1.5 py-1 text-[10px] rounded-md border border-slate-300 bg-white text-slate-700 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                                />
+                              </div>
+                              <div>
+                                <label className="block text-[9px] font-medium text-slate-500 mb-0.5">To</label>
+                                <input
+                                  type="date"
+                                  value={rowRange.to}
+                                  min={rowRange.from || undefined}
+                                  onChange={(e) => setRowRange((prev) => ({ ...prev, to: e.target.value }))}
+                                  onSelect={(e) => e.stopPropagation()}
+                                  className="w-full px-1.5 py-1 text-[10px] rounded-md border border-slate-300 bg-white text-slate-700 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                                />
+                              </div>
+                              {(rowRange.from || rowRange.to) && (
+                                <button
+                                  type="button"
+                                  onClick={() => setRowRange({ from: "", to: "" })}
+                                  className="col-span-2 text-[9px] text-slate-500 hover:text-slate-700 text-left"
+                                >
+                                  Clear dates (download this order only)
+                                </button>
+                              )}
+                            </div>
+                            <DropdownMenuSeparator />
+                            <DropdownMenuItem onClick={() => handleRowDownload(order, "pdf")} className="cursor-pointer">
+                              <FileText className="w-4 h-4 mr-2" />
+                              PDF
+                            </DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => handleRowDownload(order, "excel")} className="cursor-pointer">
+                              <FileSpreadsheet className="w-4 h-4 mr-2" />
+                              Excel
+                            </DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => handleRowDownload(order, "csv")} className="cursor-pointer">
+                              <FileText className="w-4 h-4 mr-2" />
+                              CSV
+                            </DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => handleRowDownload(order, "json")} className="cursor-pointer">
+                              <Code className="w-4 h-4 mr-2" />
+                              JSON
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
                       </td>
                     </tr>
                   ))

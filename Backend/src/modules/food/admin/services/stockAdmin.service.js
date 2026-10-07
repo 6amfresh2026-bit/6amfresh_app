@@ -9,6 +9,7 @@ import { FoodRestaurant } from '../../restaurant/models/restaurant.model.js';
 import { FoodStockMovement } from '../../orders/models/stockMovement.model.js';
 import { FoodStockVerification } from '../../orders/models/stockVerification.model.js';
 import { recordMovement } from '../../orders/services/stockLedger.service.js';
+import { notifyStockTierChange } from '../../orders/services/stockAlert.service.js';
 import { nextSequence } from '../models/counter.model.js';
 import { NotFoundError, ValidationError } from '../../../../core/auth/errors.js';
 import { stockTier, DEFAULT_STOCK_THRESHOLDS } from '../../shared/stockTiers.js';
@@ -187,10 +188,15 @@ export async function adjustStock({ itemId, mode, qty, reason = '', note = '' },
     else if (mode === 'remove') { filter.stockQty = { $gte: n }; update = { $inc: { stockQty: -n } }; }
     else { update = { $set: { stockQty: n } }; }
 
-    const updated = await FoodItem.findOneAndUpdate(filter, update, { new: true, projection: { stockQty: 1, name: 1, itemCode: 1, restaurantId: 1 } }).lean();
+    const updated = await FoodItem.findOneAndUpdate(filter, update, { new: true, projection: { stockQty: 1, name: 1, itemCode: 1, restaurantId: 1, sku: 1, price: 1, lowStockThreshold: 1, criticalStockThreshold: 1, outOfStockThreshold: 1, stockAlert: 1 } }).lean();
     if (!updated) {
         throw new ValidationError(`Only ${before.stockQty} in stock — cannot remove ${n}`);
     }
+
+    // Manual edits that drop the item into a worse tier should alert the same
+    // way a sale does (push + low-stock email). Fire-and-forget: notifications
+    // must never fail the stock write the admin just made.
+    void notifyStockTierChange(updated);
 
     // Keep the availability flag in step, the same way the order path does.
     await FoodItem.updateOne({ _id: id, stockQty: 0 }, { $set: { isAvailable: false } });
@@ -402,11 +408,14 @@ export async function completeVerification(id, user) {
         const updated = await FoodItem.findOneAndUpdate(
             { _id: line.itemId, isDeleted: { $ne: true } },
             { $set: { stockQty: Number(line.countedQty) } },
-            { new: true, projection: { stockQty: 1, name: 1, itemCode: 1, restaurantId: 1 } }
+            { new: true, projection: { stockQty: 1, name: 1, itemCode: 1, restaurantId: 1, sku: 1, price: 1, lowStockThreshold: 1, criticalStockThreshold: 1, outOfStockThreshold: 1, stockAlert: 1 } }
         ).lean();
         if (!updated) continue;
         await FoodItem.updateOne({ _id: line.itemId, stockQty: 0 }, { $set: { isAvailable: false } });
         await FoodItem.updateOne({ _id: line.itemId, stockQty: { $gt: 0 }, isAvailable: false, stockOffMode: { $in: [null, undefined] } }, { $set: { isAvailable: true } });
+        // A physical count that reveals a shortage should alert like any other
+        // downward move (push + low-stock email). Fire-and-forget.
+        void notifyStockTierChange(updated);
         const before = line.bookQty ?? null;
         const diff = Number(line.countedQty) - Number(before || 0);
         await recordMovement({

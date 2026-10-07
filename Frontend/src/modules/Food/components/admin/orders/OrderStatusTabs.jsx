@@ -4,12 +4,17 @@ import { cn } from "@food/utils/utils"
 const TABS = [
   { key: "all", label: "All", path: "/admin/store/orders/all" },
   { key: "scheduled", label: "Scheduled", path: "/admin/store/orders/scheduled" },
-  { key: "pending", label: "New Requests", path: "/admin/store/orders/pending" },
+  { key: "pending", label: "Pending", path: "/admin/store/orders/pending" },
   { key: "processing", label: "Processing", path: "/admin/store/orders/processing" },
-  { key: "food-on-the-way", label: "On The Way", path: "/admin/store/orders/food-on-the-way" },
+  { key: "food-on-the-way", label: "Out For Delivery", path: "/admin/store/orders/food-on-the-way" },
   { key: "delivered", label: "Delivered", path: "/admin/store/orders/delivered" },
   { key: "canceled", label: "Cancelled", path: "/admin/store/orders/canceled" },
+  { key: "restaurant-cancelled", label: "Seller cancelled", path: "/admin/store/orders/restaurant-cancelled" },
+  { key: "payment-failed", label: "Payment Failed", path: "/admin/store/orders/payment-failed" },
+  { key: "refunded", label: "Refunded", path: "/admin/store/orders/refunded" },
+  { key: "offline-payments", label: "Offline Payments", path: "/admin/store/orders/offline-payments" },
   { key: "abandoned", label: "Abandoned", path: "/admin/store/orders/abandoned" },
+  { key: "user-carts", label: "User Carts", path: "/admin/store/orders/user-carts" },
 ]
 
 /** Quick status switcher shown at the top of every Orders page — jump between

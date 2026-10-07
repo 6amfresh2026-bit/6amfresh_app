@@ -140,5 +140,7 @@ export const config = {
     emailPort: Number(process.env.EMAIL_PORT) || 587,
     emailUser: process.env.EMAIL_USER,
     emailPass: process.env.EMAIL_PASS ? String(process.env.EMAIL_PASS).replace(/\s/g, '') : '',
-    emailFrom: process.env.EMAIL_FROM || process.env.EMAIL_USER || 'noreply@example.com'
+    emailFrom: process.env.EMAIL_FROM || process.env.EMAIL_USER || 'noreply@example.com',
+    // Recipient(s) for low-stock / inventory alerts (comma-separated).
+    stockAlertEmail: process.env.STOCK_ALERT_EMAIL || process.env.EMAIL_USER || ''
 };
