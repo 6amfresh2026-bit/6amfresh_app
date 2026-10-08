@@ -7363,6 +7363,18 @@ export async function createSubAdmin(payload = {}, actorId) {
         throw new ValidationError('Email and password are required');
     }
 
+    // Section-wise permissions may be set at creation time (the single-step
+    // create form), or left empty and granted later via the permission matrix.
+    // An invalid payload is rejected rather than silently dropped so the UI's
+    // selection is never quietly lost.
+    let permissions = {};
+    if (payload.permissions !== undefined && payload.permissions !== null) {
+        if (!isValidPermissionPayload(payload.permissions)) {
+            throw new ValidationError('Invalid permissions payload');
+        }
+        permissions = sanitizeAdminPermissions(payload.permissions);
+    }
+
     const existing = await FoodAdmin.findOne({ email }).lean();
     if (existing) {
         throw new ValidationError('Admin with this email already exists');
@@ -7375,7 +7387,7 @@ export async function createSubAdmin(payload = {}, actorId) {
         phone: String(payload.phone || '').trim(),
         role: 'ADMIN',
         adminType: 'sub_admin',
-        permissions: {},
+        permissions,
         isActive: true,
         isDeleted: false,
         createdBy: actorId || null,
