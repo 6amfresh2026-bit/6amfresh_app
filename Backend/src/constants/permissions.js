@@ -14,7 +14,8 @@ export const ADMIN_PERMISSION_SECTIONS = [
     'report_management',
     'transaction_management',
     'banner_management',
-    'pages_social_media'
+    'pages_social_media',
+    'product_request_management'
 ];
 
 export const ADMIN_FULL_PERMISSIONS = Object.freeze(

@@ -51,6 +51,10 @@ import {
     createSupportTicketController,
     listMySupportTicketsController
 } from '../controllers/supportTicket.controller.js';
+import {
+    createProductRequestController,
+    listMyProductRequestsController
+} from '../controllers/productRequest.controller.js';
 import { syncUserCartController } from '../controllers/userCart.controller.js';
 import {
     getFavoritesController,
@@ -91,6 +95,10 @@ router.get('/safety-emergency-reports', listMySafetyEmergencyReportsController);
 // Support tickets (Bearer USER)
 router.post('/support/ticket', createSupportTicketController);
 router.get('/support/my-tickets', listMySupportTicketsController);
+
+// Request a new product (not yet in the catalog) — visible to admins.
+router.post('/product-requests', createProductRequestController);
+router.get('/product-requests', listMyProductRequestsController);
 
 router.get('/addresses', listAddressesController);
 router.post('/addresses', addAddressController);

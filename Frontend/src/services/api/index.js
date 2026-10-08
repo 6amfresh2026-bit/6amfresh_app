@@ -1320,6 +1320,20 @@ export const adminAPI = {
     }),
 
   /** Safety / Emergency Reports (admin) */
+  // ----- Product Requests (customer-submitted) -----
+  getProductRequests: (params) =>
+    apiClient.get("/food/admin/product-requests", {
+      params: params ?? {},
+      contextModule: "admin",
+    }),
+  updateProductRequest: (id, body = {}) =>
+    apiClient.patch(`/food/admin/product-requests/${String(id)}`, body, {
+      contextModule: "admin",
+    }),
+  deleteProductRequest: (id) =>
+    apiClient.delete(`/food/admin/product-requests/${String(id)}`, {
+      contextModule: "admin",
+    }),
   getSafetyEmergencyReports: (params) =>
     apiClient.get("/food/admin/safety-emergency-reports", {
       params: params ?? {},
@@ -2879,6 +2893,17 @@ export const userAPI = {
   /** GET /food/user/safety-emergency-reports (Bearer USER) */
   getMySafetyEmergencyReports: (params) =>
     apiClient.get("/food/user/safety-emergency-reports", {
+      params: params ?? {},
+      contextModule: "user",
+    }),
+  /** POST /food/user/product-requests (Bearer USER) — request a new product */
+  createProductRequest: (body = {}) =>
+    apiClient.post("/food/user/product-requests", body, {
+      contextModule: "user",
+    }),
+  /** GET /food/user/product-requests (Bearer USER) — my product requests */
+  getMyProductRequests: (params) =>
+    apiClient.get("/food/user/product-requests", {
       params: params ?? {},
       contextModule: "user",
     }),

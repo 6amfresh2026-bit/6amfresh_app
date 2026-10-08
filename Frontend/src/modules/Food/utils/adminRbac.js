@@ -17,6 +17,7 @@ export const ADMIN_PERMISSION_SECTIONS = [
   "transaction_management",
   "banner_management",
   "pages_social_media",
+  "product_request_management",
 ];
 
 const PATH_PREFIX_TO_SECTION = [
@@ -73,6 +74,7 @@ const PATH_PREFIX_TO_SECTION = [
   { prefix: "/admin/store/broadcast-notification", section: "system_settings" },
   { prefix: "/admin/store/survey", section: "system_settings" },
   { prefix: "/admin/store/pages-social-media", section: "pages_social_media" },
+  { prefix: "/admin/store/product-requests", section: "product_request_management" },
   { prefix: "/admin/store/employees", section: "sub_admin_management" },
   { prefix: "/admin/store/employee-role", section: "sub_admin_management" },
 ];

@@ -109,6 +109,7 @@ const resolveSectionFromRequest = (path = '', method = '') => {
     if (path.startsWith('/feedback-experiences')) return 'report_management';
     if (path.startsWith('/reports')) return 'report_management';
     if (path.startsWith('/feature-settings') || path.startsWith('/business-settings') || path.startsWith('/power-scanning') || path.startsWith('/notifications')) return 'system_settings';
+    if (path.startsWith('/product-requests')) return 'product_request_management';
     if (path.startsWith('/pages-social-media')) return 'pages_social_media';
     if (path.startsWith('/sidebar-badges') || path.startsWith('/dashboard-stats') || path.startsWith('/dashboard-analytics') || path.startsWith('/dashboard-operations')) return 'dashboard';
     return null;
@@ -193,6 +194,11 @@ router.delete('/safety-emergency-reports/:id', adminController.deleteSafetyEmerg
 router.get('/support-tickets/stats', adminController.getFoodSupportTicketStatsController);
 router.get('/support-tickets', adminController.getSupportTicketsController);
 router.patch('/support-tickets/:id', adminController.updateSupportTicketController);
+
+// ----- Product Requests (customer-submitted) -----
+router.get('/product-requests', adminController.getProductRequestsController);
+router.patch('/product-requests/:id', adminController.updateProductRequestController);
+router.delete('/product-requests/:id', adminController.deleteProductRequestController);
 router.get('/global-search', adminController.globalSearch);
 router.get('/restaurants/complaints/stats', adminController.getRestaurantComplaintStatsController);
 router.get('/restaurants/complaints', adminController.getRestaurantComplaints);

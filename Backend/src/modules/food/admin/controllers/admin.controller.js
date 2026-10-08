@@ -959,6 +959,43 @@ export async function updateSupportTicketController(req, res, next) {
     }
 }
 
+export async function getProductRequestsController(req, res, next) {
+    try {
+        const data = await adminService.getProductRequests(req.query || {});
+        res.status(200).json({ success: true, message: 'Product requests fetched successfully', data });
+    } catch (error) {
+        next(error);
+    }
+}
+
+export async function updateProductRequestController(req, res, next) {
+    try {
+        const { id } = req.params;
+        if (!id || !mongoose.Types.ObjectId.isValid(id)) {
+            return res.status(400).json({ success: false, message: 'Invalid product request id' });
+        }
+        const updated = await adminService.updateProductRequest(id, req.body || {});
+        if (!updated) return res.status(404).json({ success: false, message: 'Product request not found' });
+        res.status(200).json({ success: true, message: 'Product request updated successfully', data: { request: updated } });
+    } catch (error) {
+        next(error);
+    }
+}
+
+export async function deleteProductRequestController(req, res, next) {
+    try {
+        const { id } = req.params;
+        if (!id || !mongoose.Types.ObjectId.isValid(id)) {
+            return res.status(400).json({ success: false, message: 'Invalid product request id' });
+        }
+        const deleted = await adminService.deleteProductRequest(id);
+        if (!deleted) return res.status(404).json({ success: false, message: 'Product request not found' });
+        res.status(200).json({ success: true, message: 'Product request deleted successfully', data: { request: deleted } });
+    } catch (error) {
+        next(error);
+    }
+}
+
 export async function getPendingRestaurants(req, res, next) {
     try {
         const pending = await adminService.getPendingRestaurants();

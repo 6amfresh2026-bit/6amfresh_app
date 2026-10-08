@@ -121,6 +121,7 @@ export const adminSidebarMenu = [
         icon: "MessageSquare",
       },
       { type: "link", label: "User Feedback", path: "/admin/store/contact-messages", icon: "Mail" },
+      { type: "link", label: "Product Requests", path: "/admin/store/product-requests", icon: "Package" },
       { type: "link", label: "Safety Emergency Reports", path: "/admin/store/safety-emergency-reports", icon: "AlertTriangle" },
     ],
   },

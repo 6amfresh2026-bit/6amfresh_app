@@ -38,6 +38,7 @@ import { FoodReferralLog } from '../models/referralLog.model.js';
 import { FoodSafetyEmergencyReport } from '../models/safetyEmergencyReport.model.js';
 import { FoodAddon } from '../../restaurant/models/foodAddon.model.js';
 import { FoodSupportTicket } from '../../user/models/supportTicket.model.js';
+import { FoodProductRequest } from '../../user/models/productRequest.model.js';
 import { FoodUserWallet } from '../../user/models/userWallet.model.js';
 import { FoodRestaurantSupportTicket } from '../../restaurant/models/supportTicket.model.js';
 import { FoodOrder } from '../../orders/models/order.model.js';
@@ -7499,4 +7500,72 @@ export function getAdminPermissionCatalog() {
             actions: ADMIN_FULL_PERMISSIONS[section],
         })),
     };
+}
+
+// ---- Product Requests (customer-submitted, admin-reviewed) ----
+
+const PRODUCT_REQUEST_STATUSES = ['pending', 'reviewed', 'approved', 'rejected', 'fulfilled'];
+
+export async function getProductRequests(query = {}) {
+    const limit = Math.min(Math.max(parseInt(query.limit, 10) || 20, 1), 200);
+    const page = Math.max(parseInt(query.page, 10) || 1, 1);
+    const skip = (page - 1) * limit;
+
+    const filter = {};
+    if (query.status && query.status !== 'all') filter.status = query.status;
+
+    const search = String(query.search || '').trim();
+    if (search) {
+        const regex = { $regex: search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), $options: 'i' };
+        filter.$or = [
+            { productName: regex },
+            { brand: regex },
+            { category: regex },
+            { customerName: regex },
+            { customerPhone: regex },
+        ];
+    }
+
+    const [requests, total] = await Promise.all([
+        FoodProductRequest.find(filter)
+            .populate('userId', 'name phone email profileImage')
+            .sort({ createdAt: -1 })
+            .skip(skip)
+            .limit(limit)
+            .lean(),
+        FoodProductRequest.countDocuments(filter),
+    ]);
+
+    return {
+        requests,
+        pagination: { page, limit, total, pages: Math.max(1, Math.ceil(total / limit)) },
+    };
+}
+
+export async function updateProductRequest(id, payload = {}) {
+    if (!id || !mongoose.Types.ObjectId.isValid(id)) {
+        throw new ValidationError('Invalid product request id');
+    }
+    const update = {};
+    if (payload.status !== undefined) {
+        if (!PRODUCT_REQUEST_STATUSES.includes(payload.status)) {
+            throw new ValidationError('Invalid status');
+        }
+        update.status = payload.status;
+    }
+    if (payload.adminResponse !== undefined) {
+        update.adminResponse = String(payload.adminResponse || '').trim();
+    }
+    if (Object.keys(update).length === 0) {
+        throw new ValidationError('Nothing to update');
+    }
+    const updated = await FoodProductRequest.findByIdAndUpdate(id, { $set: update }, { new: true }).lean();
+    return updated;
+}
+
+export async function deleteProductRequest(id) {
+    if (!id || !mongoose.Types.ObjectId.isValid(id)) {
+        throw new ValidationError('Invalid product request id');
+    }
+    return FoodProductRequest.findByIdAndDelete(id).lean();
 }
