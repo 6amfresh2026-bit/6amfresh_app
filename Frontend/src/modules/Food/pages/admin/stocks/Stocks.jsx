@@ -234,26 +234,30 @@ export default function Stocks() {
             <select value={pageSize} onChange={(e) => { setPageSize(Number(e.target.value)); setPage(1) }} className="h-9 rounded border border-neutral-300 bg-white px-2 text-sm">
               {[10, 25, 50, 100].map((n) => <option key={n} value={n}>{n}</option>)}
             </select>
-            <div className="relative">
-              <button type="button" onClick={() => setFilterOpen((v) => !v)} className="inline-flex h-9 items-center gap-2 rounded bg-sky-500 px-3 text-sm font-medium text-white hover:bg-sky-600"><Filter className="h-4 w-4" /> Filter{nFilters ? ` (${nFilters})` : ""}</button>
-              {filterOpen && (
-                <div className="absolute right-0 z-20 mt-1 w-72 space-y-2 rounded border border-neutral-200 bg-white p-3 text-sm shadow-lg">
-                  <select value={filters.restaurantId} onChange={(e) => setFilters((f) => ({ ...f, restaurantId: e.target.value }))} className="w-full rounded border border-neutral-300 px-2 py-1.5"><option value="">All Stores</option>{lookups.restaurants.map((r) => <option key={r._id || r.id} value={r._id || r.id}>{r.restaurantName || r.name}</option>)}</select>
-                  <select value={filters.departmentId} onChange={(e) => setFilters((f) => ({ ...f, departmentId: e.target.value }))} className="w-full rounded border border-neutral-300 px-2 py-1.5"><option value="">All Departments</option>{lookups.departments.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}</select>
-                  <select value={filters.categoryId} onChange={(e) => setFilters((f) => ({ ...f, categoryId: e.target.value }))} className="w-full rounded border border-neutral-300 px-2 py-1.5"><option value="">All Categories</option>{lookups.categories.map((c) => <option key={c._id || c.id} value={c._id || c.id}>{c.name}</option>)}</select>
-                  <select value={filters.brandId} onChange={(e) => setFilters((f) => ({ ...f, brandId: e.target.value }))} className="w-full rounded border border-neutral-300 px-2 py-1.5"><option value="">All Brands</option>{lookups.brands.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}</select>
-                  <select value={filters.unitId} onChange={(e) => setFilters((f) => ({ ...f, unitId: e.target.value }))} className="w-full rounded border border-neutral-300 px-2 py-1.5"><option value="">All Units</option>{lookups.units.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}</select>
-                  <select value={filters.status} onChange={(e) => setFilters((f) => ({ ...f, status: e.target.value }))} className="w-full rounded border border-neutral-300 px-2 py-1.5"><option value="">Any Status</option><option value="in_stock">In Stock</option><option value="low">Low Stock</option><option value="out">Out Of Stock</option><option value="untracked">Untracked</option></select>
-                  <div className="flex justify-end gap-2 pt-1"><button type="button" onClick={clearFilters} className="rounded bg-neutral-200 px-3 py-1.5">Clear</button><button type="button" onClick={applyFilters} className="rounded bg-sky-500 px-3 py-1.5 text-white">Apply</button></div>
-                </div>
-              )}
-            </div>
+            <button type="button" onClick={() => setFilterOpen((v) => !v)} className="inline-flex h-9 items-center gap-2 rounded bg-sky-500 px-3 text-sm font-medium text-white hover:bg-sky-600"><Filter className="h-4 w-4" /> Filter{nFilters ? ` (${nFilters})` : ""}</button>
             <div className="relative">
               <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search List..." className="h-9 w-52 rounded border border-neutral-300 bg-white pl-3 pr-8 text-sm outline-none focus:border-sky-500" />
               <Search className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-400" />
             </div>
           </div>
         </div>
+
+        {filterOpen && (
+          <div className="mb-3 rounded-lg border border-neutral-200 bg-neutral-50 p-3">
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
+              <select value={filters.restaurantId} onChange={(e) => setFilters((f) => ({ ...f, restaurantId: e.target.value }))} className="w-full rounded border border-neutral-300 bg-white px-2 py-1.5 text-sm"><option value="">All Stores</option>{lookups.restaurants.map((r) => <option key={r._id || r.id} value={r._id || r.id}>{r.restaurantName || r.name}</option>)}</select>
+              <select value={filters.departmentId} onChange={(e) => setFilters((f) => ({ ...f, departmentId: e.target.value }))} className="w-full rounded border border-neutral-300 bg-white px-2 py-1.5 text-sm"><option value="">All Departments</option>{lookups.departments.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}</select>
+              <select value={filters.categoryId} onChange={(e) => setFilters((f) => ({ ...f, categoryId: e.target.value }))} className="w-full rounded border border-neutral-300 bg-white px-2 py-1.5 text-sm"><option value="">All Categories</option>{lookups.categories.map((c) => <option key={c._id || c.id} value={c._id || c.id}>{c.name}</option>)}</select>
+              <select value={filters.brandId} onChange={(e) => setFilters((f) => ({ ...f, brandId: e.target.value }))} className="w-full rounded border border-neutral-300 bg-white px-2 py-1.5 text-sm"><option value="">All Brands</option>{lookups.brands.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}</select>
+              <select value={filters.unitId} onChange={(e) => setFilters((f) => ({ ...f, unitId: e.target.value }))} className="w-full rounded border border-neutral-300 bg-white px-2 py-1.5 text-sm"><option value="">All Units</option>{lookups.units.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}</select>
+              <select value={filters.status} onChange={(e) => setFilters((f) => ({ ...f, status: e.target.value }))} className="w-full rounded border border-neutral-300 bg-white px-2 py-1.5 text-sm"><option value="">Any Status</option><option value="in_stock">In Stock</option><option value="low">Low Stock</option><option value="out">Out Of Stock</option><option value="untracked">Untracked</option></select>
+            </div>
+            <div className="mt-2 flex justify-end gap-2">
+              <button type="button" onClick={clearFilters} className="rounded bg-neutral-200 px-3 py-1.5 text-sm">Clear</button>
+              <button type="button" onClick={applyFilters} className="rounded bg-sky-500 px-3 py-1.5 text-sm text-white">Apply</button>
+            </div>
+          </div>
+        )}
 
         <div className="overflow-x-auto">
           <table className="w-full min-w-[1100px] border border-neutral-200 text-sm">
