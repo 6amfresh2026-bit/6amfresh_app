@@ -14,6 +14,23 @@ const formatCurrency = (amount) => {
   return `\u20B9${numericAmount.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 }
 
+// The metrics shown, one row each, in the side-by-side compare dialog.
+const COMPARE_ROWS = [
+  { label: "Email", render: (dm) => dm.email || "\u2014" },
+  { label: "Phone", render: (dm) => dm.phone || "\u2014" },
+  { label: "Zone", render: (dm) => dm.zone || "\u2014" },
+  { label: "Availability", render: (dm) => dm.status || "\u2014" },
+  { label: "Rating", render: (dm) => (dm.rating > 0 ? dm.rating.toFixed(1) : "\u2014") },
+  { label: "Total Orders", render: (dm) => dm.totalOrders || 0 },
+  { label: "Pocket Balance", render: (dm) => formatCurrency(dm.pocketBalance) },
+  { label: "Cash In Hand", render: (dm) => formatCurrency(dm.cashInHand) },
+  { label: "Remaining Cash Limit", render: (dm) => formatCurrency(dm.remainingCashLimit) },
+  { label: "Total Earning", render: (dm) => formatCurrency(dm.totalEarning) },
+  { label: "Bonus", render: (dm) => formatCurrency(dm.bonus) },
+  { label: "Total Withdrawn", render: (dm) => formatCurrency(dm.totalWithdrawn) },
+  { label: "Reachable", render: (dm) => (dm.hasPushToken === false ? "No push token" : "Yes") },
+]
+
 export default function DeliverymanList() {
   const [searchQuery, setSearchQuery] = useState("")
   // Server-side, alongside the search: the list is the whole approved fleet,
@@ -41,6 +58,9 @@ export default function DeliverymanList() {
   const [editValues, setEditValues] = useState({ pocketBalance: "", cashInHand: "" })
   const [savingDeliveryId, setSavingDeliveryId] = useState(null)
   const [deletingDeliveryId, setDeletingDeliveryId] = useState(null)
+  // Compare 2+ riders side by side. Holds the selected rows' ids.
+  const [compareIds, setCompareIds] = useState(() => new Set())
+  const [isCompareOpen, setIsCompareOpen] = useState(false)
   const [visibleColumns, setVisibleColumns] = useState({
     si: true,
     name: true,
@@ -202,6 +222,24 @@ availableCashLimit: wallet?.availableCashLimit || 0,
     // Backend already handles search, but we can do client-side filtering if needed
     return deliverymen
   }, [deliverymen])
+
+  const toggleCompare = (id) => {
+    const key = String(id)
+    setCompareIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
+  }
+
+  const clearCompare = () => setCompareIds(new Set())
+
+  // The selected rows, in the order they appear in the list.
+  const compareList = useMemo(
+    () => filteredDeliverymen.filter((dm) => compareIds.has(String(dm._id))),
+    [filteredDeliverymen, compareIds],
+  )
 
   const handleView = async (deliveryman) => {
     try {
@@ -549,6 +587,25 @@ availableCashLimit: deliveryman.availableCashLimit || 0,
                   </span>
                 )}
               </button>
+
+              <button
+                onClick={() => setIsCompareOpen(true)}
+                disabled={compareIds.size < 2}
+                title={compareIds.size < 2 ? "Select 2 or more riders to compare" : `Compare ${compareIds.size} riders`}
+                className={`px-4 py-2.5 text-sm font-medium rounded-lg border flex items-center gap-2 transition-all disabled:opacity-50 disabled:cursor-not-allowed ${
+                  compareIds.size >= 2
+                    ? "border-emerald-500 bg-emerald-50 text-emerald-700"
+                    : "border-slate-300 bg-white text-slate-700"
+                }`}
+              >
+                <Columns className="w-4 h-4" />
+                <span className="font-bold">Compare</span>
+                {compareIds.size > 0 && (
+                  <span className="rounded-full bg-emerald-600 px-1.5 text-xs font-semibold text-white">
+                    {compareIds.size}
+                  </span>
+                )}
+              </button>
               <button
                 onClick={handleExportPDF}
                 className="px-4 py-2.5 text-sm font-medium rounded-lg border border-slate-300 bg-white hover:bg-slate-50 text-slate-700 flex items-center gap-2 transition-all"
@@ -740,6 +797,18 @@ availableCashLimit: deliveryman.availableCashLimit || 0,
               <table className="w-full">
                 <thead className="bg-slate-50 border-b border-slate-200">
                   <tr>
+                    <th className="px-4 py-4 text-left">
+                      <input
+                        type="checkbox"
+                        aria-label="Select all riders to compare"
+                        checked={filteredDeliverymen.length > 0 && filteredDeliverymen.every((dm) => compareIds.has(String(dm._id)))}
+                        onChange={(e) => {
+                          if (e.target.checked) setCompareIds(new Set(filteredDeliverymen.map((dm) => String(dm._id))))
+                          else clearCompare()
+                        }}
+                        className="w-4 h-4 cursor-pointer accent-emerald-600"
+                      />
+                    </th>
                     {visibleColumns.si && (
                       <th className="px-6 py-4 text-left text-[10px] font-bold text-slate-700 uppercase tracking-wider">
                         <div className="flex items-center gap-2">
@@ -820,13 +889,22 @@ availableCashLimit: deliveryman.availableCashLimit || 0,
                 <tbody className="bg-white divide-y divide-slate-100">
                   {filteredDeliverymen.length === 0 ? (
                     <tr>
-                      <td colSpan={Object.values(visibleColumns).filter(v => v).length} className="px-6 py-8 text-center text-slate-500">
+                      <td colSpan={Object.values(visibleColumns).filter(v => v).length + 1} className="px-6 py-8 text-center text-slate-500">
                         {error ? "Error loading delivery partners" : "No delivery partners found"}
                       </td>
                     </tr>
                   ) : (
                     filteredDeliverymen.map((dm) => (
-                      <tr key={dm._id} className="hover:bg-slate-50 transition-colors">
+                      <tr key={dm._id} className={`transition-colors ${compareIds.has(String(dm._id)) ? "bg-emerald-50/60 hover:bg-emerald-50" : "hover:bg-slate-50"}`}>
+                        <td className="px-4 py-4">
+                          <input
+                            type="checkbox"
+                            aria-label={`Select ${dm.name || "rider"} to compare`}
+                            checked={compareIds.has(String(dm._id))}
+                            onChange={() => toggleCompare(dm._id)}
+                            className="w-4 h-4 cursor-pointer accent-emerald-600"
+                          />
+                        </td>
                         {visibleColumns.si && (
                           <td className="px-6 py-4 whitespace-nowrap">
                             <span className="text-sm font-medium text-slate-700">{dm.sl}</span>
@@ -1491,6 +1569,73 @@ availableCashLimit: deliveryman.availableCashLimit || 0,
               </button>
             </div>
           </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Compare Dialog */}
+      <Dialog open={isCompareOpen} onOpenChange={setIsCompareOpen}>
+        <DialogContent className="max-w-4xl bg-white p-0 max-h-[85vh] overflow-y-auto">
+          <DialogHeader className="px-6 pt-6 pb-4 border-b border-slate-200">
+            <DialogTitle className="text-xl font-bold text-slate-900 flex items-center gap-2">
+              <Columns className="w-5 h-5" /> Compare Delivery Partners
+              <span className="px-2 py-0.5 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-700">{compareList.length}</span>
+            </DialogTitle>
+          </DialogHeader>
+          <div className="px-6 pb-2 overflow-x-auto">
+            {compareList.length < 2 ? (
+              <p className="text-sm text-slate-500 py-6">Select at least 2 riders to compare.</p>
+            ) : (
+              <table className="w-full border-collapse mt-4 min-w-[520px]">
+                <thead>
+                  <tr>
+                    <th className="sticky left-0 z-10 bg-white p-3 border-b border-slate-200"></th>
+                    {compareList.map((dm) => (
+                      <th key={dm._id} className="p-3 border-b border-slate-200 text-center align-top min-w-[140px]">
+                        <div className="flex flex-col items-center gap-1.5">
+                          <div className="w-11 h-11 rounded-full bg-slate-200 flex items-center justify-center overflow-hidden border border-slate-100">
+                            {(dm.profileImage?.url ?? dm.profilePhoto) ? (
+                              <img src={dm.profileImage?.url ?? dm.profilePhoto} alt={dm.name} className="w-full h-full object-cover" />
+                            ) : (
+                              <span className="text-xs font-semibold text-slate-500">{dm.name?.trim() ? dm.name.slice(0, 2).toUpperCase() : "?"}</span>
+                            )}
+                          </div>
+                          <span className="text-sm font-semibold text-slate-900">{dm.name || "N/A"}</span>
+                        </div>
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {COMPARE_ROWS.map((row) => (
+                    <tr key={row.label} className="odd:bg-slate-50/60">
+                      <td className="sticky left-0 z-10 bg-inherit text-xs font-semibold uppercase tracking-wide text-slate-500 p-3 whitespace-nowrap border-b border-slate-100">
+                        {row.label}
+                      </td>
+                      {compareList.map((dm) => (
+                        <td key={dm._id} className="p-3 text-center text-sm text-slate-800 border-b border-slate-100 capitalize">
+                          {row.render(dm)}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+          <DialogFooter className="px-6 py-4 border-t border-slate-200 flex items-center justify-between gap-3">
+            <button
+              onClick={clearCompare}
+              className="px-4 py-2 text-sm font-medium rounded-lg border border-slate-300 bg-white text-slate-700 hover:bg-slate-50 transition-all"
+            >
+              Clear selection
+            </button>
+            <button
+              onClick={() => setIsCompareOpen(false)}
+              className="px-4 py-2 text-sm font-medium rounded-lg bg-emerald-500 text-white hover:bg-emerald-600 transition-all shadow-md"
+            >
+              Close
+            </button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>
