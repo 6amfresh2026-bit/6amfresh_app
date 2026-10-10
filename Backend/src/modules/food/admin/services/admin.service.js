@@ -5560,6 +5560,25 @@ export async function getDeliveryPartners(query) {
         ];
     }
 
+    // Join-date range. The dates come from the admin's date pickers as
+    // YYYY-MM-DD; the end date is pushed to the last millisecond of that day so
+    // a single day picked as both from and to still includes everyone who
+    // joined that day.
+    const startDate = String(query.startDate || '').trim();
+    const endDate = String(query.endDate || '').trim();
+    if (startDate || endDate) {
+        const createdAt = {};
+        if (startDate) {
+            const from = new Date(`${startDate}T00:00:00.000`);
+            if (!Number.isNaN(from.getTime())) createdAt.$gte = from;
+        }
+        if (endDate) {
+            const to = new Date(`${endDate}T23:59:59.999`);
+            if (!Number.isNaN(to.getTime())) createdAt.$lte = to;
+        }
+        if (Object.keys(createdAt).length) filter.createdAt = createdAt;
+    }
+
     const skip = Math.max(0, (Number(page) || 1) - 1) * Math.max(1, Math.min(1000, Number(limit) || 100));
     const limitNum = Math.max(1, Math.min(1000, Number(limit) || 100));
 

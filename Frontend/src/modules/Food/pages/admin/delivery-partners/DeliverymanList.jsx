@@ -25,6 +25,8 @@ export default function DeliverymanList() {
     vehicleType: "",
     fleet: "",
     reachable: "",
+    startDate: "",
+    endDate: "",
   })
   const [filterOptions, setFilterOptions] = useState({ zones: [], vehicleTypes: [] })
   const [sellers, setSellers] = useState([])
@@ -191,7 +193,7 @@ availableCashLimit: wallet?.availableCashLimit || 0,
   const setFilter = (key, value) => setFilters((prev) => ({ ...prev, [key]: value }))
 
   const clearFilters = () =>
-    setFilters({ availability: "", zone: "", vehicleType: "", fleet: "", reachable: "" })
+    setFilters({ availability: "", zone: "", vehicleType: "", fleet: "", reachable: "", startDate: "", endDate: "" })
 
   const selectClass =
     "h-10 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-400"
@@ -662,6 +664,34 @@ availableCashLimit: deliveryman.availableCashLimit || 0,
                     <option value="yes">Can receive orders</option>
                     <option value="no">No push token</option>
                   </select>
+                </div>
+
+                <div>
+                  {/* Join-date range: narrow the fleet to riders who joined
+                      within these dates. */}
+                  <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    Joined From
+                  </label>
+                  <input
+                    type="date"
+                    value={filters.startDate}
+                    max={filters.endDate || undefined}
+                    onChange={(e) => setFilter("startDate", e.target.value)}
+                    className={selectClass}
+                  />
+                </div>
+
+                <div>
+                  <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    Joined To
+                  </label>
+                  <input
+                    type="date"
+                    value={filters.endDate}
+                    min={filters.startDate || undefined}
+                    onChange={(e) => setFilter("endDate", e.target.value)}
+                    className={selectClass}
+                  />
                 </div>
               </div>
 
