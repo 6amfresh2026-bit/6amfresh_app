@@ -63,7 +63,7 @@ export default function Stocks() {
   const [visible, setVisible] = useState(() => new Set(COLUMNS.map((c) => c.key)))
   const [exportMenu, setExportMenu] = useState(false)
 
-  const [filterOpen, setFilterOpen] = useState(false)
+  const [filterOpen, setFilterOpen] = useState(true)
   const [filters, setFilters] = useState({ restaurantId: "", departmentId: "", categoryId: "", brandId: "", unitId: "", status: "" })
   const [applied, setApplied] = useState(filters)
   const [lookups, setLookups] = useState({ restaurants: [], departments: [], categories: [], brands: [], units: [] })
@@ -176,8 +176,8 @@ export default function Stocks() {
     const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = `stock-${new Date().toISOString().slice(0, 10)}.csv`; a.click(); URL.revokeObjectURL(a.href)
   }
 
-  const applyFilters = () => { setApplied(filters); setPage(1); setFilterOpen(false) }
-  const clearFilters = () => { const e = { restaurantId: "", departmentId: "", categoryId: "", brandId: "", unitId: "", status: "" }; setFilters(e); setApplied(e); setPage(1); setFilterOpen(false) }
+  const applyFilters = () => { setApplied(filters); setPage(1) }
+  const clearFilters = () => { const e = { restaurantId: "", departmentId: "", categoryId: "", brandId: "", unitId: "", status: "" }; setFilters(e); setApplied(e); setPage(1) }
   const nFilters = Object.values(applied).filter(Boolean).length
 
   const cell = (row, c, i) => {
