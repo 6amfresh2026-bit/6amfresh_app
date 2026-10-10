@@ -11,6 +11,12 @@ export const adminSidebarMenu = [
       },
       {
         type: "link",
+        label: "Point of Sale",
+        path: "/admin/store/pos",
+        icon: "CreditCard",
+      },
+      {
+        type: "link",
         label: "Orders",
         path: "/admin/store/orders/all",
         icon: "FileText",

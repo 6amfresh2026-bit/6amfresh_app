@@ -21,6 +21,7 @@ export const ADMIN_PERMISSION_SECTIONS = [
 ];
 
 const PATH_PREFIX_TO_SECTION = [
+  { prefix: "/admin/store/pos", section: "point_of_sale" },
   { prefix: "/admin/store/fee-settings", section: "delivery_management" },
   { prefix: "/admin/store/delivery-cash-limit", section: "delivery_management" },
   { prefix: "/admin/store/cash-limit-settlement", section: "delivery_management" },
