@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react"
 import { toast } from "sonner"
-import { Plus, Trash2, ClipboardList, Loader2, X, ImagePlus } from "lucide-react"
+import { Plus, Trash2, ClipboardList, Loader2, X, ImagePlus, Star } from "lucide-react"
 import { adminAPI, uploadAPI } from "@food/api"
 
 const IMAGE_TYPES = ["image/png", "image/jpeg", "image/jpg", "image/webp"]
@@ -293,6 +293,77 @@ export default function SurveyManagement() {
                     </div>
                   </div>
                 ))}
+              </div>
+            </div>
+
+            {/* Live preview — how the survey popup will look to users, rendered
+                per question type as the admin builds it. */}
+            <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+              <div className="mb-3 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                Preview — how users will see it
+              </div>
+              <div className="mx-auto w-full max-w-sm select-none rounded-2xl border border-slate-200 bg-white p-5 shadow-lg">
+                <h3 className="text-lg font-bold text-slate-900">{title.trim() || "Survey title"}</h3>
+                {description.trim() && <p className="mt-1 text-sm text-slate-500">{description.trim()}</p>}
+
+                <div className="mt-4 space-y-4">
+                  {questions.filter((q) => q.text.trim()).length === 0 ? (
+                    <p className="text-sm text-slate-400">Add a question to see the preview.</p>
+                  ) : (
+                    questions
+                      .filter((q) => q.text.trim())
+                      .map((q, i) => {
+                        const opts = q.optionsText.split(",").map((o) => o.trim()).filter(Boolean)
+                        const shownOpts = opts.length ? opts : ["Option 1", "Option 2"]
+                        return (
+                          <div key={i} className="space-y-2">
+                            <p className="text-sm font-medium text-slate-800">{i + 1}. {q.text.trim()}</p>
+                            {q.image && (
+                              <img src={q.image} alt="" className="max-h-40 w-full rounded-lg object-cover" />
+                            )}
+                            {q.type === "text" && (
+                              <input
+                                disabled
+                                placeholder="Type your answer…"
+                                className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-400"
+                              />
+                            )}
+                            {q.type === "single-choice" && (
+                              <div className="space-y-1.5">
+                                {shownOpts.map((o, oi) => (
+                                  <div key={oi} className="flex items-center gap-2 text-sm text-slate-700">
+                                    <span className="inline-block h-4 w-4 shrink-0 rounded-full border-2 border-slate-300" />
+                                    {o}
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                            {q.type === "multiple-choice" && (
+                              <div className="space-y-1.5">
+                                {shownOpts.map((o, oi) => (
+                                  <div key={oi} className="flex items-center gap-2 text-sm text-slate-700">
+                                    <span className="inline-block h-4 w-4 shrink-0 rounded border-2 border-slate-300" />
+                                    {o}
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                            {q.type === "rating" && (
+                              <div className="flex items-center gap-1">
+                                {[1, 2, 3, 4, 5].map((n) => (
+                                  <Star key={n} className="h-6 w-6 text-amber-300" />
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        )
+                      })
+                  )}
+                </div>
+
+                <button disabled className="mt-5 w-full rounded-lg bg-blue-600/60 py-2.5 text-sm font-semibold text-white">
+                  Submit
+                </button>
               </div>
             </div>
 
