@@ -40,7 +40,7 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@food/components/ui/popover";
-import brandLogo from "@food/assets/6am-fresh-brand.png";
+import brandLogo from "@food/assets/6am-fresh-brand-slogan.png";
 import { adminAPI } from "@food/api";
 import { clearModuleAuth } from "@food/utils/auth";
 import { getCachedSettings, loadBusinessSettings } from "@food/utils/businessSettings";

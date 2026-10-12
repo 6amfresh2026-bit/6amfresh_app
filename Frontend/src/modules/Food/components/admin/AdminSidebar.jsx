@@ -55,7 +55,7 @@ import { adminAPI } from "@food/api"
 import { getCachedSettings, loadBusinessSettings } from "@food/utils/businessSettings"
 import { canAccessFeatureSettings, canAccessSuperPowers } from "@food/utils/adminPermissions"
 import { canAdminAccess, isSuperAdmin, resolvePermissionSectionByPath } from "@food/utils/adminRbac"
-import brandLogo from "@food/assets/6am-fresh-brand.png"
+import brandLogo from "@food/assets/6am-fresh-brand-slogan.png"
 const debugLog = (...args) => {}
 const debugWarn = (...args) => {}
 const debugError = (...args) => {}
