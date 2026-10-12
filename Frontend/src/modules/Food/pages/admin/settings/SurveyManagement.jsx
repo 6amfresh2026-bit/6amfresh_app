@@ -1,7 +1,10 @@
 import { useState, useEffect, useCallback } from "react"
 import { toast } from "sonner"
-import { Plus, Trash2, ClipboardList, Loader2, X } from "lucide-react"
-import { adminAPI } from "@food/api"
+import { Plus, Trash2, ClipboardList, Loader2, X, ImagePlus } from "lucide-react"
+import { adminAPI, uploadAPI } from "@food/api"
+
+const IMAGE_TYPES = ["image/png", "image/jpeg", "image/jpg", "image/webp"]
+const MAX_IMAGE_BYTES = 5 * 1024 * 1024
 
 const QUESTION_TYPES = [
   { value: "text", label: "Text answer" },
@@ -10,7 +13,7 @@ const QUESTION_TYPES = [
   { value: "rating", label: "Rating" },
 ]
 
-const emptyQuestion = () => ({ text: "", type: "text", optionsText: "" })
+const emptyQuestion = () => ({ text: "", type: "text", optionsText: "", image: "" })
 
 export default function SurveyManagement() {
   const [surveys, setSurveys] = useState([])
@@ -22,6 +25,7 @@ export default function SurveyManagement() {
   const [title, setTitle] = useState("")
   const [description, setDescription] = useState("")
   const [questions, setQuestions] = useState([emptyQuestion()])
+  const [uploadingIndex, setUploadingIndex] = useState(null)
 
   const loadSurveys = useCallback(async () => {
     setLoading(true)
@@ -55,6 +59,31 @@ export default function SurveyManagement() {
 
   const needsOptions = (type) => type === "single-choice" || type === "multiple-choice"
 
+  // Upload a question's image to shared media storage and keep the returned URL.
+  const handleQuestionImage = async (index, file) => {
+    if (!file) return
+    if (!IMAGE_TYPES.includes(file.type)) {
+      toast.error("Invalid file type. Use PNG, JPG, JPEG or WEBP.")
+      return
+    }
+    if (file.size > MAX_IMAGE_BYTES) {
+      toast.error("Image must be 5MB or smaller.")
+      return
+    }
+    setUploadingIndex(index)
+    try {
+      const res = await uploadAPI.uploadMedia(file, { folder: "food/surveys" })
+      const url = res?.data?.data?.url
+      if (!url) throw new Error("No URL returned")
+      updateQuestion(index, { image: url })
+      toast.success("Image uploaded")
+    } catch (err) {
+      toast.error(err?.response?.data?.message || "Failed to upload image")
+    } finally {
+      setUploadingIndex(null)
+    }
+  }
+
   const handleCreate = async (e) => {
     e.preventDefault()
     if (!title.trim()) {
@@ -69,6 +98,7 @@ export default function SurveyManagement() {
         options: needsOptions(q.type)
           ? q.optionsText.split(",").map((o) => o.trim()).filter(Boolean)
           : [],
+        image: q.image || "",
       }))
     if (!cleanedQuestions.length) {
       toast.error("At least one question is required")
@@ -211,6 +241,43 @@ export default function SurveyManagement() {
                               placeholder="Options, comma separated e.g. Yes, No, Maybe"
                               className="flex-1 min-w-[220px] px-3 py-2 text-sm rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-blue-500"
                             />
+                          )}
+                        </div>
+
+                        {/* Optional image for this question */}
+                        <div className="flex items-center gap-3">
+                          {q.image ? (
+                            <div className="relative">
+                              <img src={q.image} alt="Question" className="h-16 w-16 rounded-lg object-cover border border-slate-200" />
+                              <button
+                                type="button"
+                                onClick={() => updateQuestion(i, { image: "" })}
+                                title="Remove image"
+                                className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-red-500 text-white flex items-center justify-center shadow"
+                              >
+                                <X className="w-3 h-3" />
+                              </button>
+                            </div>
+                          ) : (
+                            <label className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium rounded-lg border border-dashed border-slate-300 text-slate-600 bg-white hover:bg-slate-50 cursor-pointer">
+                              {uploadingIndex === i ? (
+                                <Loader2 className="w-4 h-4 animate-spin" />
+                              ) : (
+                                <ImagePlus className="w-4 h-4" />
+                              )}
+                              {uploadingIndex === i ? "Uploading…" : "Add image (optional)"}
+                              <input
+                                type="file"
+                                accept="image/png,image/jpeg,image/jpg,image/webp"
+                                className="hidden"
+                                disabled={uploadingIndex === i}
+                                onChange={(e) => {
+                                  const file = e.target.files?.[0]
+                                  e.target.value = ""
+                                  handleQuestionImage(i, file)
+                                }}
+                              />
+                            </label>
                           )}
                         </div>
                       </div>

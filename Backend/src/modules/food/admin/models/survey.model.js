@@ -5,6 +5,8 @@ const surveyQuestionSchema = new mongoose.Schema(
         text: { type: String, required: true, trim: true },
         type: { type: String, enum: ['text', 'single-choice', 'multiple-choice', 'rating'], default: 'text' },
         options: { type: [String], default: [] },
+        // Optional image shown with the question in the survey popup.
+        image: { type: String, default: '', trim: true },
     },
     { _id: true }
 );

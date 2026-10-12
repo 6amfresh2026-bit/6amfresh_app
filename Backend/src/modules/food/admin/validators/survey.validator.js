@@ -5,6 +5,7 @@ const questionSchema = z.object({
     text: z.string().min(1, 'Question text is required'),
     type: z.enum(['text', 'single-choice', 'multiple-choice', 'rating']).optional(),
     options: z.array(z.string()).optional(),
+    image: z.string().optional(),
 });
 
 const createSurveySchema = z.object({
