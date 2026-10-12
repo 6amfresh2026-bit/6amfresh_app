@@ -24,11 +24,28 @@ const emptyForm = () => ({
   label: "",
   startTime: "07:00",
   endTime: "08:00",
-  cutoffMinutes: "",
+  // The cutoff is entered as hours + minutes and combined into a single
+  // minutes value for the API. Both blank means "use the system default".
+  cutoffHours: "",
+  cutoffMins: "",
   capacity: "",
   daysOfWeek: [],
   sortOrder: 0,
 })
+
+// hours + minutes inputs → the single minutes value the API stores. Both
+// blank leaves it to the default (null); any entry counts as an explicit 0+.
+const cutoffToMinutes = (hours, mins) => {
+  if (String(hours).trim() === "" && String(mins).trim() === "") return null
+  return (Number(hours) || 0) * 60 + (Number(mins) || 0)
+}
+
+// stored minutes → { hours, mins } for the edit form; null stays blank.
+const minutesToCutoff = (total) => {
+  if (total == null || total === "") return { cutoffHours: "", cutoffMins: "" }
+  const n = Number(total)
+  return { cutoffHours: String(Math.floor(n / 60)), cutoffMins: String(n % 60) }
+}
 
 /** "07:00" → "7:00 AM", so the list reads the way the customer will see it. */
 const pretty = (hhmm) => {
@@ -87,7 +104,7 @@ export default function DeliverySlots() {
       label: slot.label || "",
       startTime: slot.startTime || "07:00",
       endTime: slot.endTime || "08:00",
-      cutoffMinutes: slot.cutoffMinutes ?? "",
+      ...minutesToCutoff(slot.cutoffMinutes),
       capacity: slot.capacity ?? "",
       daysOfWeek: slot.daysOfWeek || [],
       sortOrder: slot.sortOrder || 0,
@@ -123,7 +140,7 @@ export default function DeliverySlots() {
         endTime: form.endTime,
         // Blank leaves it to the system default, which is derived from the
         // delivery promise rather than pinned here.
-        cutoffMinutes: form.cutoffMinutes === "" ? null : Number(form.cutoffMinutes),
+        cutoffMinutes: cutoffToMinutes(form.cutoffHours, form.cutoffMins),
         // Blank means uncapped, which is not the same as a capacity of zero.
         capacity: form.capacity === "" ? null : Number(form.capacity),
         daysOfWeek: form.daysOfWeek,
@@ -320,19 +337,38 @@ export default function DeliverySlots() {
 
               <div>
                 <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
-                  Orders close (minutes before)
+                  Orders close (before window starts)
                 </label>
-                <input
-                  type="number"
-                  min="0"
-                  value={form.cutoffMinutes}
-                  data-testid="slot-cutoff"
-                  onChange={(e) => setForm((p) => ({ ...p, cutoffMinutes: e.target.value }))}
-                  className="w-full px-3 py-2.5 text-sm rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
+                <div className="flex items-stretch gap-2">
+                  <div className="flex-1 relative">
+                    <input
+                      type="number"
+                      min="0"
+                      value={form.cutoffHours}
+                      data-testid="slot-cutoff-hours"
+                      onChange={(e) => setForm((p) => ({ ...p, cutoffHours: e.target.value }))}
+                      placeholder="0"
+                      className="w-full pl-3 pr-10 py-2.5 text-sm rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                    <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-400 pointer-events-none">hrs</span>
+                  </div>
+                  <div className="flex-1 relative">
+                    <input
+                      type="number"
+                      min="0"
+                      max="59"
+                      value={form.cutoffMins}
+                      data-testid="slot-cutoff-mins"
+                      onChange={(e) => setForm((p) => ({ ...p, cutoffMins: e.target.value }))}
+                      placeholder="0"
+                      className="w-full pl-3 pr-10 py-2.5 text-sm rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                    <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-400 pointer-events-none">min</span>
+                  </div>
+                </div>
                 <p className="text-[11px] text-slate-500 mt-1">
                   How long before the window starts you stop taking orders for it.
-                  Leave blank to use the default.
+                  Leave both blank to use the default.
                 </p>
               </div>
               <div>
