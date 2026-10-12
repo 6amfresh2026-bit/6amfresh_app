@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect } from "react"
-import { BarChart3, ChevronDown, Settings, FileText, FileSpreadsheet, Code, Loader2, Calendar } from "lucide-react"
+import { BarChart3, ChevronDown, Settings, FileText, FileSpreadsheet, Code, Loader2, Calendar, Download } from "lucide-react"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@food/components/ui/dropdown-menu"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@food/components/ui/dialog"
 import { exportTransactionReportToCSV, exportTransactionReportToExcel, exportTransactionReportToPDF, exportTransactionReportToJSON } from "@food/components/admin/reports/reportsExportUtils"
@@ -183,6 +183,21 @@ export default function TransactionReport() {
       case "pdf": exportTransactionReportToPDF(filteredTransactions); break
       case "json": exportTransactionReportToJSON(filteredTransactions); break
     }
+  }
+
+  // Download the report for a single order's transaction row.
+  const handleDownloadTransaction = (transaction, format) => {
+    if (!transaction) return
+    const safeId = String(transaction.orderId || transaction.id || "order").replace(/[^a-zA-Z0-9_-]/g, "_")
+    const filename = `transaction_${safeId}`
+    switch (format) {
+      case "csv": exportTransactionReportToCSV([transaction], filename); break
+      case "excel": exportTransactionReportToExcel([transaction], filename); break
+      case "pdf": exportTransactionReportToPDF([transaction], filename); break
+      case "json": exportTransactionReportToJSON([transaction], filename); break
+      default: return
+    }
+    toast.success(`Downloaded transaction ${transaction.orderId || ""}`.trim())
   }
 
   const handleFilterApply = () => {
@@ -488,13 +503,14 @@ export default function TransactionReport() {
                   <th className="px-1.5 py-1 text-left text-[8px] font-bold text-slate-700 uppercase tracking-wider" style={{ width: '10%' }}>Delivery Charge</th>
                   <th className="px-1.5 py-1 text-left text-[8px] font-bold text-slate-700 uppercase tracking-wider" style={{ width: '9%' }}>Platform Fee</th>
                   <th className="px-1.5 py-1 text-left text-[8px] font-bold text-slate-700 uppercase tracking-wider" style={{ width: '9%' }}>Order Amount</th>
-                  <th className="px-1.5 py-1 text-left text-[8px] font-bold text-slate-700 uppercase tracking-wider" style={{ width: '8%' }}>Status</th>
+                  <th className="px-1.5 py-1 text-left text-[8px] font-bold text-slate-700 uppercase tracking-wider" style={{ width: '7%' }}>Status</th>
+                  <th className="px-1.5 py-1 text-center text-[8px] font-bold text-slate-700 uppercase tracking-wider" style={{ width: '6%' }}>Action</th>
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-slate-100">
                 {filteredTransactions.length === 0 ? (
                   <tr>
-                    <td colSpan={11} className="px-6 py-20 text-center">
+                    <td colSpan={12} className="px-6 py-20 text-center">
                       <div className="flex flex-col items-center justify-center">
                         <p className="text-lg font-semibold text-slate-700 mb-1">No Data Found</p>
                         <p className="text-sm text-slate-500">No transactions match your search</p>
@@ -547,6 +563,35 @@ export default function TransactionReport() {
                         <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide ${getStatusBadgeClasses(transaction.status || transaction.orderStatus)}`}>
                           {transaction.status || transaction.orderStatus || 'N/A'}
                         </span>
+                      </td>
+                      <td className="px-1.5 py-1 text-center">
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <button
+                              title="Download this order's transaction"
+                              className="inline-flex items-center justify-center gap-0.5 rounded-md bg-blue-50 px-1.5 py-1 text-blue-600 hover:bg-blue-100 transition-colors"
+                            >
+                              <Download className="w-3 h-3" />
+                              <ChevronDown className="w-2 h-2" />
+                            </button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end" className="w-44 bg-white border border-slate-200 rounded-lg shadow-lg z-50">
+                            <DropdownMenuLabel>Download Order</DropdownMenuLabel>
+                            <DropdownMenuSeparator />
+                            <DropdownMenuItem onClick={() => handleDownloadTransaction(transaction, "pdf")} className="cursor-pointer">
+                              <FileText className="w-4 h-4 mr-2" /> PDF
+                            </DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => handleDownloadTransaction(transaction, "excel")} className="cursor-pointer">
+                              <FileSpreadsheet className="w-4 h-4 mr-2" /> Excel
+                            </DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => handleDownloadTransaction(transaction, "csv")} className="cursor-pointer">
+                              <FileText className="w-4 h-4 mr-2" /> CSV
+                            </DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => handleDownloadTransaction(transaction, "json")} className="cursor-pointer">
+                              <Code className="w-4 h-4 mr-2" /> JSON
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
                       </td>
                     </tr>
                   ))
