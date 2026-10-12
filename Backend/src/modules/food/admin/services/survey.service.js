@@ -1,6 +1,7 @@
 import mongoose from 'mongoose';
 import { FoodSurvey } from '../models/survey.model.js';
 import { FoodSurveyResponse } from '../models/surveyResponse.model.js';
+import { nextSurveyId } from '../models/counter.model.js';
 import { FoodUser } from '../../../../core/users/user.model.js';
 import { ValidationError, NotFoundError } from '../../../../core/auth/errors.js';
 
@@ -13,6 +14,7 @@ const toObjectId = (value, label = 'Id') => {
 
 export async function createSurvey(dto) {
     const survey = await FoodSurvey.create({
+        surveyId: await nextSurveyId(),
         title: dto.title,
         description: dto.description || '',
         questions: dto.questions,

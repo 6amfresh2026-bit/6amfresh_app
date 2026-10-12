@@ -13,6 +13,9 @@ const surveyQuestionSchema = new mongoose.Schema(
 
 const surveySchema = new mongoose.Schema(
     {
+        // Human-readable id ("SUR-0001") assigned on creation; the Mongo _id
+        // stays the primary key, this is what the admin list and exports show.
+        surveyId: { type: String, unique: true, sparse: true, index: true },
         title: { type: String, required: true, trim: true },
         description: { type: String, default: '', trim: true },
         // Admin defines however many questions the survey needs.

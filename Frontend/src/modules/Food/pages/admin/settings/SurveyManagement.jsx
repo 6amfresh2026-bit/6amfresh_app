@@ -315,6 +315,7 @@ export default function SurveyManagement() {
           <table className="w-full">
             <thead className="bg-slate-50 border-b border-slate-200">
               <tr>
+                <th className="px-6 py-4 text-left text-[10px] font-bold text-slate-700 uppercase tracking-wider">Survey ID</th>
                 <th className="px-6 py-4 text-left text-[10px] font-bold text-slate-700 uppercase tracking-wider">Title</th>
                 <th className="px-6 py-4 text-left text-[10px] font-bold text-slate-700 uppercase tracking-wider">Questions</th>
                 <th className="px-6 py-4 text-left text-[10px] font-bold text-slate-700 uppercase tracking-wider">Created</th>
@@ -324,14 +325,14 @@ export default function SurveyManagement() {
             <tbody className="bg-white divide-y divide-slate-100">
               {loading ? (
                 <tr>
-                  <td colSpan={4} className="px-6 py-16 text-center text-slate-500">
+                  <td colSpan={5} className="px-6 py-16 text-center text-slate-500">
                     <Loader2 className="w-5 h-5 animate-spin mx-auto mb-2" />
                     Loading surveys…
                   </td>
                 </tr>
               ) : surveys.length === 0 ? (
                 <tr>
-                  <td colSpan={4} className="px-6 py-16 text-center">
+                  <td colSpan={5} className="px-6 py-16 text-center">
                     <p className="text-lg font-semibold text-slate-700 mb-1">No surveys yet</p>
                     <p className="text-sm text-slate-500">Create one to show it to new users the first time they open the app.</p>
                   </td>
@@ -339,6 +340,11 @@ export default function SurveyManagement() {
               ) : (
                 surveys.map((survey) => (
                   <tr key={survey._id} className="hover:bg-slate-50 transition-colors">
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <span className="inline-flex items-center rounded-md bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-700">
+                        {survey.surveyId || "—"}
+                      </span>
+                    </td>
                     <td className="px-6 py-4">
                       <div className="text-sm font-medium text-slate-800">{survey.title}</div>
                       {survey.description && (

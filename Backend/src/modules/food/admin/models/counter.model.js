@@ -34,3 +34,9 @@ export async function nextItemCode() {
     const seq = await nextSequence('food_item_code');
     return `PRD${String(seq).padStart(10, '0')}`;
 }
+
+/** "SUR-0001" — the readable id shown against each survey. */
+export async function nextSurveyId() {
+    const seq = await nextSequence('food_survey_id');
+    return `SUR-${String(seq).padStart(4, '0')}`;
+}
