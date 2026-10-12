@@ -20,6 +20,60 @@ const debugLog = (...args) => {}
 const debugWarn = (...args) => {}
 const debugError = (...args) => {}
 
+// One source of truth for turning the chosen preset (or custom range) into
+// concrete from/to Date objects. Boundaries are built in the admin's LOCAL
+// time (midnight → 23:59:59.999 of the local day); the caller serialises with
+// toISOString() so the backend gets the exact instant, and the same instant is
+// used to render the "showing" label — so what is filtered and what is shown
+// can never disagree.
+const startOfDay = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0)
+const endOfDay = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate(), 23, 59, 59, 999)
+
+const computeDateRange = (time, fromDateStr, toDateStr) => {
+  const now = new Date()
+  let from = null
+  let to = null
+
+  switch (time) {
+    case "Custom Range":
+      if (fromDateStr) from = new Date(`${fromDateStr}T00:00:00`)
+      if (toDateStr) to = new Date(`${toDateStr}T23:59:59.999`)
+      break
+    case "Today":
+      from = startOfDay(now)
+      to = endOfDay(now)
+      break
+    case "Yesterday": {
+      const y = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1)
+      from = startOfDay(y)
+      to = endOfDay(y)
+      break
+    }
+    case "This Week": {
+      const weekStart = new Date(now.getFullYear(), now.getMonth(), now.getDate() - now.getDay())
+      const weekEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate() - now.getDay() + 6)
+      from = startOfDay(weekStart)
+      to = endOfDay(weekEnd)
+      break
+    }
+    case "This Month":
+      from = startOfDay(new Date(now.getFullYear(), now.getMonth(), 1))
+      to = endOfDay(new Date(now.getFullYear(), now.getMonth() + 1, 0))
+      break
+    case "This Year":
+      from = startOfDay(new Date(now.getFullYear(), 0, 1))
+      to = endOfDay(new Date(now.getFullYear(), 11, 31))
+      break
+    default:
+      // All Time — no bounds
+      break
+  }
+
+  return { from, to }
+}
+
+const formatRangeDate = (d) =>
+  d ? d.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" }) : ""
 
 export default function TransactionReport() {
   const [searchQuery, setSearchQuery] = useState("")
@@ -72,29 +126,8 @@ export default function TransactionReport() {
       try {
         setIsRefreshing(true)
 
-        // Build date range based on time filter
-        let fromDate = null
-        let toDate = null
-        const now = new Date()
-
-        if (filters.time === "Custom Range") {
-          if (filters.fromDate) fromDate = new Date(`${filters.fromDate}T00:00:00`)
-          if (filters.toDate) toDate = new Date(`${filters.toDate}T23:59:59`)
-        } else if (filters.time === "Today") {
-          fromDate = new Date(now.getFullYear(), now.getMonth(), now.getDate())
-          toDate = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59)
-        } else if (filters.time === "This Week") {
-          const dayOfWeek = now.getDay()
-          const diff = now.getDate() - dayOfWeek
-          fromDate = new Date(now.getFullYear(), now.getMonth(), diff)
-          toDate = new Date(now.getFullYear(), now.getMonth(), diff + 6, 23, 59, 59)
-        } else if (filters.time === "This Month") {
-          fromDate = new Date(now.getFullYear(), now.getMonth(), 1)
-          toDate = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59)
-        } else if (filters.time === "This Year") {
-          fromDate = new Date(now.getFullYear(), 0, 1)
-          toDate = new Date(now.getFullYear(), 11, 31, 23, 59, 59)
-        }
+        // Build date range from the chosen preset / custom range (shared helper).
+        const { from: fromDate, to: toDate } = computeDateRange(filters.time, filters.fromDate, filters.toDate)
 
         const params = {
           search: searchQuery || undefined,
@@ -167,6 +200,27 @@ export default function TransactionReport() {
   }
 
   const activeFiltersCount = (filters.zone !== "All Zones" ? 1 : 0) + (filters.restaurant !== "All restaurants" ? 1 : 0) + (filters.time !== "All Time" ? 1 : 0)
+
+  // The exact range being applied, and readable names, for the "showing" line.
+  const appliedRange = useMemo(
+    () => computeDateRange(filters.time, filters.fromDate, filters.toDate),
+    [filters.time, filters.fromDate, filters.toDate],
+  )
+  const dateRangeText = appliedRange.from && appliedRange.to
+    ? `${formatRangeDate(appliedRange.from)} – ${formatRangeDate(appliedRange.to)}`
+    : filters.time === "All Time"
+      ? "All Time"
+      : filters.time
+  const selectedZoneName = useMemo(() => {
+    if (filters.zone === "All Zones") return "All Zones"
+    const z = zones.find((zz) => String(zz._id) === String(filters.zone))
+    return z?.zoneName || z?.name || "Selected zone"
+  }, [filters.zone, zones])
+  const selectedRestaurantName = useMemo(() => {
+    if (filters.restaurant === "All restaurants") return "All restaurants"
+    const r = restaurants.find((rr) => String(rr._id) === String(filters.restaurant))
+    return r?.restaurantName || r?.name || "Selected restaurant"
+  }, [filters.restaurant, restaurants])
 
   const formatCurrency = (amount) => {
     if (amount >= 1000) {
@@ -262,6 +316,7 @@ export default function TransactionReport() {
               >
                 <option value="All Time">All Time</option>
                 <option value="Today">Today</option>
+                <option value="Yesterday">Yesterday</option>
                 <option value="This Week">This Week</option>
                 <option value="This Month">This Month</option>
                 <option value="This Year">This Year</option>
@@ -315,6 +370,27 @@ export default function TransactionReport() {
               </div>
             </div>
           )}
+
+          {/* Clearly show which date range and zone are currently applied. */}
+          <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-slate-600">
+            <span className="inline-flex items-center gap-1">
+              <Calendar className="w-3 h-3 text-blue-500" />
+              <span className="font-semibold text-slate-700">Date:</span> {dateRangeText}
+            </span>
+            <span className="text-slate-300">•</span>
+            <span><span className="font-semibold text-slate-700">Zone:</span> {selectedZoneName}</span>
+            {filters.restaurant !== "All restaurants" && (
+              <>
+                <span className="text-slate-300">•</span>
+                <span><span className="font-semibold text-slate-700">Restaurant:</span> {selectedRestaurantName}</span>
+              </>
+            )}
+            {activeFiltersCount > 0 && (
+              <button type="button" onClick={handleResetFilters} className="ml-auto font-medium text-blue-600 hover:underline">
+                Reset filters
+              </button>
+            )}
+          </div>
         </div>
 
         {/* Summary Cards */}
