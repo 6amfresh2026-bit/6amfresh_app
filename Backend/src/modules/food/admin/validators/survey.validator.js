@@ -13,6 +13,10 @@ const createSurveySchema = z.object({
     description: z.string().optional(),
     questions: z.array(questionSchema).min(1, 'At least one question is required'),
     status: z.enum(['active', 'inactive']).optional(),
+    // Optional ISO date-time; coerced to a Date. Must be in the future.
+    closesAt: z.coerce.date().refine((d) => d.getTime() > Date.now(), {
+        message: 'Closing date must be in the future',
+    }).optional(),
 });
 
 const statusSchema = z.object({

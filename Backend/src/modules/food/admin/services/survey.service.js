@@ -18,6 +18,7 @@ export async function createSurvey(dto) {
         title: dto.title,
         description: dto.description || '',
         questions: dto.questions,
+        closesAt: dto.closesAt || null,
         status: dto.status || 'inactive',
     });
 
@@ -59,6 +60,11 @@ export async function setSurveyStatus(surveyId, status) {
 export async function getActiveSurveyForUser(userId) {
     const survey = await FoodSurvey.findOne({ status: 'active' }).lean();
     if (!survey) return { survey: null };
+
+    // Past its closing date — stop showing it even though it's still active.
+    if (survey.closesAt && new Date(survey.closesAt) < new Date()) {
+        return { survey: null };
+    }
 
     const user = await FoodUser.findById(userId).select('createdAt').lean();
     if (!user) throw new NotFoundError('User not found');

@@ -24,6 +24,7 @@ export default function SurveyManagement() {
 
   const [title, setTitle] = useState("")
   const [description, setDescription] = useState("")
+  const [closesAt, setClosesAt] = useState("")
   const [questions, setQuestions] = useState([emptyQuestion()])
   const [uploadingIndex, setUploadingIndex] = useState(null)
 
@@ -46,6 +47,7 @@ export default function SurveyManagement() {
   const resetForm = () => {
     setTitle("")
     setDescription("")
+    setClosesAt("")
     setQuestions([emptyQuestion()])
   }
 
@@ -109,10 +111,24 @@ export default function SurveyManagement() {
       toast.error("Choice questions need at least 2 comma-separated options")
       return
     }
+    // A closing date, if set, must be in the future — a survey that closes
+    // in the past would never be shown to anyone.
+    if (closesAt) {
+      const end = new Date(`${closesAt}T23:59:59`)
+      if (end.getTime() <= Date.now()) {
+        toast.error("Closing date must be in the future")
+        return
+      }
+    }
 
     setCreating(true)
     try {
-      await adminAPI.createSurvey({ title: title.trim(), description: description.trim(), questions: cleanedQuestions })
+      await adminAPI.createSurvey({
+        title: title.trim(),
+        description: description.trim(),
+        questions: cleanedQuestions,
+        closesAt: closesAt ? new Date(`${closesAt}T23:59:59`).toISOString() : undefined,
+      })
       toast.success("Survey created successfully")
       resetForm()
       setShowForm(false)
@@ -194,6 +210,22 @@ export default function SurveyManagement() {
                   className="w-full px-3 py-2.5 text-sm rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
               </div>
+            </div>
+
+            <div className="sm:max-w-xs">
+              <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
+                Closing date (optional)
+              </label>
+              <input
+                type="date"
+                value={closesAt}
+                min={new Date(Date.now() + 86400000).toISOString().slice(0, 10)}
+                onChange={(e) => setClosesAt(e.target.value)}
+                className="w-full px-3 py-2.5 text-sm rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+              <p className="mt-1 text-xs text-slate-500">
+                After this day the survey stops showing to new users. Leave empty to keep it open.
+              </p>
             </div>
 
             <div>
@@ -305,6 +337,11 @@ export default function SurveyManagement() {
               <div className="mx-auto w-full max-w-sm select-none rounded-2xl border border-slate-200 bg-white p-5 shadow-lg">
                 <h3 className="text-lg font-bold text-slate-900">{title.trim() || "Survey title"}</h3>
                 {description.trim() && <p className="mt-1 text-sm text-slate-500">{description.trim()}</p>}
+                {closesAt && (
+                  <p className="mt-1 text-xs font-medium text-amber-600">
+                    Closes on {new Date(`${closesAt}T23:59:59`).toLocaleDateString()}
+                  </p>
+                )}
 
                 <div className="mt-4 space-y-4">
                   {questions.filter((q) => q.text.trim()).length === 0 ? (
@@ -390,20 +427,21 @@ export default function SurveyManagement() {
                 <th className="px-6 py-4 text-left text-[10px] font-bold text-slate-700 uppercase tracking-wider">Title</th>
                 <th className="px-6 py-4 text-left text-[10px] font-bold text-slate-700 uppercase tracking-wider">Questions</th>
                 <th className="px-6 py-4 text-left text-[10px] font-bold text-slate-700 uppercase tracking-wider">Created</th>
+                <th className="px-6 py-4 text-left text-[10px] font-bold text-slate-700 uppercase tracking-wider">Closes</th>
                 <th className="px-6 py-4 text-left text-[10px] font-bold text-slate-700 uppercase tracking-wider">Status</th>
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-slate-100">
               {loading ? (
                 <tr>
-                  <td colSpan={5} className="px-6 py-16 text-center text-slate-500">
+                  <td colSpan={6} className="px-6 py-16 text-center text-slate-500">
                     <Loader2 className="w-5 h-5 animate-spin mx-auto mb-2" />
                     Loading surveys…
                   </td>
                 </tr>
               ) : surveys.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="px-6 py-16 text-center">
+                  <td colSpan={6} className="px-6 py-16 text-center">
                     <p className="text-lg font-semibold text-slate-700 mb-1">No surveys yet</p>
                     <p className="text-sm text-slate-500">Create one to show it to new users the first time they open the app.</p>
                   </td>
@@ -427,6 +465,16 @@ export default function SurveyManagement() {
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-700">
                       {survey.createdAt ? new Date(survey.createdAt).toLocaleDateString() : "—"}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm">
+                      {survey.closesAt ? (
+                        <span className={new Date(survey.closesAt).getTime() < Date.now() ? "text-red-600 font-medium" : "text-slate-700"}>
+                          {new Date(survey.closesAt).toLocaleDateString()}
+                          {new Date(survey.closesAt).getTime() < Date.now() && " (closed)"}
+                        </span>
+                      ) : (
+                        <span className="text-slate-400">—</span>
+                      )}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       <button

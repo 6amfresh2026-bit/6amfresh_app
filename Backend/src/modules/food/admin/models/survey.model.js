@@ -27,6 +27,10 @@ const surveySchema = new mongoose.Schema(
                 message: 'A survey needs at least one question',
             },
         },
+        // Optional closing date — after this instant the survey stops being
+        // shown to new users even while its status is still "active". Null
+        // means it stays open until an admin deactivates it.
+        closesAt: { type: Date, default: null },
         // Only one survey is ever "active" (shown to new users) at a time —
         // enforced in survey.service.js by deactivating others on activation.
         status: { type: String, enum: ['active', 'inactive'], default: 'inactive', index: true },
