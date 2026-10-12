@@ -65,7 +65,7 @@ export default function EmployeeRole() {
   };
 
   if (!subAdminId) {
-    return <div className="p-6 text-sm text-red-600">Missing sub-admin id in URL. Open from Sub Admin List.</div>;
+    return <div className="p-6 text-sm text-red-600">Missing sub-admin id in URL. Open from Access Control.</div>;
   }
 
   return (

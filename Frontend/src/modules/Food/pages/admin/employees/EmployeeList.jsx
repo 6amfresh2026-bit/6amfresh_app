@@ -179,7 +179,7 @@ export default function EmployeeList() {
   return (
     <div className="p-4 lg:p-6 bg-slate-50 min-h-screen space-y-6">
       <div className="bg-white border border-slate-200 rounded-xl p-5">
-        <h1 className="text-2xl font-bold text-slate-900">Sub Admin Management</h1>
+        <h1 className="text-2xl font-bold text-slate-900">Access Control</h1>
         <p className="text-sm text-slate-600 mt-1">
           Create a sub admin with their email &amp; password, and grant section-wise access right here. They can then log in and will
           see only the sections you allow.

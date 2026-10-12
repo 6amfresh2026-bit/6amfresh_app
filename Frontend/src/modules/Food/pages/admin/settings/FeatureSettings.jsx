@@ -123,7 +123,7 @@ export default function FeatureSettings() {
                 <CardHeader>
                     <CardTitle className="text-lg">Admin Access Section</CardTitle>
                     <CardDescription>
-                        Controls visibility of the Admin Access sidebar section, including Sub Admin List.
+                        Controls visibility of the Admin Access sidebar section, including Access Control.
                     </CardDescription>
                 </CardHeader>
                 <CardContent className="flex items-center justify-between gap-4">

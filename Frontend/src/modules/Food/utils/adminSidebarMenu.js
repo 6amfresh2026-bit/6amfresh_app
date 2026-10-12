@@ -198,7 +198,7 @@ export const adminSidebarMenu = [
           { label: "Delivery Slots", path: "/admin/store/delivery-slots" },
           { label: "Feature Settings", path: "/admin/store/feature-settings" },
           { label: "Power Scanning", path: "/admin/store/power-scanning" },
-          { label: "Sub Admin List", path: "/admin/store/employees" },
+          { label: "Access Control", path: "/admin/store/employees" },
         ],
       },
     ],
