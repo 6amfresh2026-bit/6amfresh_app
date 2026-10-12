@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react"
 import { toast } from "sonner"
-import { Plus, Trash2, ClipboardList, Loader2, X, ImagePlus, Star } from "lucide-react"
+import { Plus, Trash2, ClipboardList, Loader2, X, ImagePlus, Star, Download } from "lucide-react"
 import { adminAPI, uploadAPI } from "@food/api"
 
 const IMAGE_TYPES = ["image/png", "image/jpeg", "image/jpg", "image/webp"]
@@ -21,6 +21,7 @@ export default function SurveyManagement() {
   const [creating, setCreating] = useState(false)
   const [showForm, setShowForm] = useState(false)
   const [statusUpdatingId, setStatusUpdatingId] = useState(null)
+  const [downloadingId, setDownloadingId] = useState(null)
 
   const [title, setTitle] = useState("")
   const [description, setDescription] = useState("")
@@ -155,6 +156,57 @@ export default function SurveyManagement() {
       toast.error(err?.response?.data?.message || "Failed to update survey status")
     } finally {
       setStatusUpdatingId(null)
+    }
+  }
+
+  // Quote a CSV cell only when it contains a comma, quote or newline.
+  const csvEscape = (v) => {
+    const s = v == null ? "" : String(v)
+    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s
+  }
+
+  // Pull a survey's answered responses and save them as a CSV: one row per
+  // respondent, one column per question.
+  const handleDownloadReport = async (survey) => {
+    setDownloadingId(survey._id)
+    try {
+      const res = await adminAPI.getSurveyResponses(survey._id)
+      const data = res?.data?.data
+      const questions = data?.survey?.questions || []
+      const responses = data?.responses || []
+      if (responses.length === 0) {
+        toast.info("No responses to download yet")
+        return
+      }
+      const headers = ["Name", "Phone", "Email", "Answered At", ...questions.map((q) => q.text)]
+      const rows = responses.map((r) => {
+        const byId = new Map((r.answers || []).map((a) => [String(a.questionId), a.answer]))
+        return [
+          r.user?.name || "",
+          r.user?.phone || "",
+          r.user?.email || "",
+          r.answeredAt ? new Date(r.answeredAt).toLocaleString() : "",
+          ...questions.map((q) => {
+            const a = byId.get(String(q._id))
+            return Array.isArray(a) ? a.join("; ") : a ?? ""
+          }),
+        ]
+      })
+      const csv = [headers, ...rows].map((row) => row.map(csvEscape).join(",")).join("\n")
+      const blob = new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8;" })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement("a")
+      a.href = url
+      a.download = `${survey.surveyId || "survey"}-responses.csv`
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      URL.revokeObjectURL(url)
+      toast.success(`Downloaded ${responses.length} response${responses.length === 1 ? "" : "s"}`)
+    } catch (err) {
+      toast.error(err?.response?.data?.message || "Failed to download report")
+    } finally {
+      setDownloadingId(null)
     }
   }
 
@@ -429,19 +481,20 @@ export default function SurveyManagement() {
                 <th className="px-6 py-4 text-left text-[10px] font-bold text-slate-700 uppercase tracking-wider">Created</th>
                 <th className="px-6 py-4 text-left text-[10px] font-bold text-slate-700 uppercase tracking-wider">Closes</th>
                 <th className="px-6 py-4 text-left text-[10px] font-bold text-slate-700 uppercase tracking-wider">Status</th>
+                <th className="px-6 py-4 text-left text-[10px] font-bold text-slate-700 uppercase tracking-wider">Report</th>
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-slate-100">
               {loading ? (
                 <tr>
-                  <td colSpan={6} className="px-6 py-16 text-center text-slate-500">
+                  <td colSpan={7} className="px-6 py-16 text-center text-slate-500">
                     <Loader2 className="w-5 h-5 animate-spin mx-auto mb-2" />
                     Loading surveys…
                   </td>
                 </tr>
               ) : surveys.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="px-6 py-16 text-center">
+                  <td colSpan={7} className="px-6 py-16 text-center">
                     <p className="text-lg font-semibold text-slate-700 mb-1">No surveys yet</p>
                     <p className="text-sm text-slate-500">Create one to show it to new users the first time they open the app.</p>
                   </td>
@@ -490,6 +543,21 @@ export default function SurveyManagement() {
                             survey.status === "active" ? "translate-x-6" : "translate-x-1"
                           }`}
                         />
+                      </button>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <button
+                        onClick={() => handleDownloadReport(survey)}
+                        disabled={downloadingId === survey._id}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border border-slate-300 text-slate-700 bg-white hover:bg-slate-50 disabled:opacity-60"
+                        title="Download responses as CSV"
+                      >
+                        {downloadingId === survey._id ? (
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        ) : (
+                          <Download className="w-3.5 h-3.5" />
+                        )}
+                        Download
                       </button>
                     </td>
                   </tr>

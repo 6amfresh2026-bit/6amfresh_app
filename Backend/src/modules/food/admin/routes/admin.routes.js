@@ -421,6 +421,7 @@ router.delete('/pos/holds/:heldId', discardAdminHeldBillController);
 
 router.get('/surveys', surveyController.listSurveysController);
 router.post('/surveys', surveyController.createSurveyController);
+router.get('/surveys/:id/responses', surveyController.getSurveyResponsesController);
 router.patch('/surveys/:id/status', surveyController.setSurveyStatusController);
 router.patch('/offers/:id/cart-visibility', adminController.updateAdminOfferCartVisibility);
 router.delete('/offers/:id', adminController.deleteAdminOffer);

@@ -1139,6 +1139,10 @@ export const adminAPI = {
       { status },
       { contextModule: "admin" },
     ),
+  getSurveyResponses: (surveyId) =>
+    apiClient.get(`/food/admin/surveys/${String(surveyId)}/responses`, {
+      contextModule: "admin",
+    }),
 
   /** Delivery Partner Bonus (admin) */
   getDeliveryPartnerBonusTransactions: (params = {}) =>

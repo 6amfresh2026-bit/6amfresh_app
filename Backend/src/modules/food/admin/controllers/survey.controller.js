@@ -1,5 +1,5 @@
 import { sendResponse } from '../../../../utils/response.js';
-import { createSurvey, listSurveys, setSurveyStatus } from '../services/survey.service.js';
+import { createSurvey, listSurveys, setSurveyStatus, getSurveyResponses } from '../services/survey.service.js';
 import { validateCreateSurveyDto, validateSurveyStatusDto } from '../validators/survey.validator.js';
 
 export const createSurveyController = async (req, res, next) => {
@@ -16,6 +16,16 @@ export const listSurveysController = async (req, res, next) => {
     try {
         const result = await listSurveys();
         return sendResponse(res, 200, 'Surveys retrieved successfully', result);
+    } catch (err) {
+        next(err);
+    }
+};
+
+export const getSurveyResponsesController = async (req, res, next) => {
+    try {
+        const { id } = req.params;
+        const result = await getSurveyResponses(id);
+        return sendResponse(res, 200, 'Survey responses retrieved successfully', result);
     } catch (err) {
         next(err);
     }

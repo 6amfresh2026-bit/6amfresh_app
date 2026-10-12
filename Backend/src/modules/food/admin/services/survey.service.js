@@ -34,6 +34,47 @@ export async function listSurveys() {
     return { surveys };
 }
 
+/**
+ * Everything the admin needs to download a survey's results: the survey with
+ * its questions, every answered response (with who answered and when), and
+ * headline counts. Only answered responses are returned — rows that were only
+ * shown but never submitted are counted in stats, not listed.
+ */
+export async function getSurveyResponses(surveyId) {
+    const id = toObjectId(surveyId, 'surveyId');
+    const survey = await FoodSurvey.findById(id).lean();
+    if (!survey) throw new NotFoundError('Survey not found');
+
+    const [shown, responses] = await Promise.all([
+        FoodSurveyResponse.countDocuments({ surveyId: id }),
+        FoodSurveyResponse.find({ surveyId: id, answeredAt: { $ne: null } })
+            .populate('userId', 'name phone email')
+            .sort({ answeredAt: -1 })
+            .lean(),
+    ]);
+
+    return {
+        survey: {
+            _id: survey._id,
+            surveyId: survey.surveyId || '',
+            title: survey.title,
+            questions: (survey.questions || []).map((q) => ({
+                _id: q._id,
+                text: q.text,
+                type: q.type,
+            })),
+        },
+        responses: responses.map((r) => ({
+            user: r.userId
+                ? { name: r.userId.name || '', phone: r.userId.phone || '', email: r.userId.email || '' }
+                : { name: '', phone: '', email: '' },
+            answeredAt: r.answeredAt,
+            answers: r.answers || [],
+        })),
+        stats: { shown, answered: responses.length },
+    };
+}
+
 export async function setSurveyStatus(surveyId, status) {
     const id = toObjectId(surveyId, 'surveyId');
     const survey = await FoodSurvey.findById(id);
