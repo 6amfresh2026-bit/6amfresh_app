@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect } from "react"
-import { BarChart3, ChevronDown, Info, Settings, FileText, FileSpreadsheet, Code, Loader2, Calendar } from "lucide-react"
+import { BarChart3, ChevronDown, Settings, FileText, FileSpreadsheet, Code, Loader2, Calendar } from "lucide-react"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@food/components/ui/dropdown-menu"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@food/components/ui/dialog"
 import { exportTransactionReportToCSV, exportTransactionReportToExcel, exportTransactionReportToPDF, exportTransactionReportToJSON } from "@food/components/admin/reports/reportsExportUtils"
@@ -393,99 +393,26 @@ export default function TransactionReport() {
           </div>
         </div>
 
-        {/* Summary Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
-          {/* Left Column - Large Cards */}
-          <div className="space-y-3">
-            {/* Completed Transaction - Green */}
-            <div className="rounded-lg shadow-sm border border-slate-200 p-4" style={{ backgroundColor: '#f1f5f9' }}>
-              <div className="relative mb-3 flex justify-center">
-                <div className="w-16 h-16 rounded-full bg-green-100 flex items-center justify-center">
-                  <img src={completedIcon} alt="Completed" className="w-12 h-12" />
-                </div>
-                <div className="absolute top-0 right-0 w-6 h-6 rounded-full bg-green-500 flex items-center justify-center">
-                  <Info className="w-3 h-3 text-white" />
-                </div>
+        {/* Summary Cards — one uniform, responsive row of stat tiles */}
+        <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-3 mb-3">
+          {[
+            { icon: completedIcon, label: "Completed Transaction", value: summary.completedTransaction, iconBg: "bg-green-100", valueColor: "text-green-600" },
+            { icon: refundedIcon, label: "Refunded Transaction", value: summary.refundedTransaction, iconBg: "bg-red-100", valueColor: "text-red-600" },
+            { icon: adminEarningIcon, label: "Admin Earning", value: summary.adminEarning, iconBg: "bg-emerald-100", valueColor: "text-slate-900" },
+            { icon: restaurantEarningIcon, label: "Restaurant Earning", value: summary.restaurantEarning, iconBg: "bg-blue-100", valueColor: "text-green-600" },
+            { icon: deliverymanEarningIcon, label: "Deliveryman Earning", value: summary.deliverymanEarning, iconBg: "bg-orange-100", valueColor: "text-orange-600" },
+          ].map((card) => (
+            <div
+              key={card.label}
+              className="rounded-lg shadow-sm border border-slate-200 bg-white p-4 flex flex-col items-center justify-center text-center h-full"
+            >
+              <div className={`w-12 h-12 rounded-full ${card.iconBg} flex items-center justify-center mb-2`}>
+                <img src={card.icon} alt={card.label} className="w-8 h-8 object-contain" />
               </div>
-              <div className="text-center">
-                <p className="text-xl font-bold text-green-600 mb-1">{formatCurrency(summary.completedTransaction)}</p>
-                <p className="text-sm text-slate-600 leading-tight">Completed Transaction</p>
-              </div>
+              <p className={`text-lg font-bold ${card.valueColor}`}>{formatCurrency(card.value)}</p>
+              <p className="text-xs text-slate-600 mt-0.5 leading-tight">{card.label}</p>
             </div>
-
-            {/* Refunded Transaction - Red */}
-            <div className="rounded-lg shadow-sm border border-slate-200 p-4" style={{ backgroundColor: '#f1f5f9' }}>
-              <div className="relative mb-3 flex justify-center">
-                <div className="w-16 h-16 rounded-full bg-red-100 flex items-center justify-center">
-                  <img src={refundedIcon} alt="Refunded" className="w-12 h-12" />
-                </div>
-                <div className="absolute top-0 right-0 w-6 h-6 rounded-full bg-red-500 flex items-center justify-center">
-                  <Info className="w-3 h-3 text-white" />
-                </div>
-              </div>
-              <div className="text-center">
-                <p className="text-xl font-bold text-red-600 mb-1">{formatFullCurrency(summary.refundedTransaction)}</p>
-                <p className="text-sm text-slate-600 leading-tight">Refunded Transaction</p>
-              </div>
-            </div>
-          </div>
-
-          {/* Right Column - Small Cards */}
-          <div className="space-y-3">
-            {/* Admin Earning */}
-            <div className="rounded-lg shadow-sm border border-slate-200 p-3" style={{ backgroundColor: '#f1f5f9' }}>
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-lg bg-green-100 flex items-center justify-center">
-                    <img src={adminEarningIcon} alt="Admin Earning" className="w-6 h-6" />
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <p className="text-sm font-semibold text-slate-900">Admin Earning</p>
-                    <div className="w-5 h-5 rounded-full bg-green-500 flex items-center justify-center">
-                      <Info className="w-3 h-3 text-white" />
-                    </div>
-                  </div>
-                </div>
-                <p className="text-base font-bold text-slate-900">{formatCurrency(summary.adminEarning)}</p>
-              </div>
-            </div>
-
-            {/* Restaurant Earning */}
-            <div className="rounded-lg shadow-sm border border-slate-200 p-3" style={{ backgroundColor: '#f1f5f9' }}>
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-lg bg-blue-100 flex items-center justify-center">
-                    <img src={restaurantEarningIcon} alt="Restaurant Earning" className="w-6 h-6" />
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <p className="text-sm font-semibold text-slate-900">Restaurant Earning</p>
-                    <div className="w-5 h-5 rounded-full bg-blue-500 flex items-center justify-center">
-                      <Info className="w-3 h-3 text-white" />
-                    </div>
-                  </div>
-                </div>
-                <p className="text-base font-bold text-green-600">{formatCurrency(summary.restaurantEarning)}</p>
-              </div>
-            </div>
-
-            {/* Deliveryman Earning */}
-            <div className="rounded-lg shadow-sm border border-slate-200 p-3" style={{ backgroundColor: '#f1f5f9' }}>
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-lg bg-green-100 flex items-center justify-center">
-                    <img src={deliverymanEarningIcon} alt="Deliveryman Earning" className="w-6 h-6" />
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <p className="text-sm font-semibold text-slate-900">Deliveryman Earning</p>
-                    <div className="w-5 h-5 rounded-full bg-red-500 flex items-center justify-center">
-                      <Info className="w-3 h-3 text-white" />
-                    </div>
-                  </div>
-                </div>
-                <p className="text-base font-bold text-orange-600">{formatCurrency(summary.deliverymanEarning)}</p>
-              </div>
-            </div>
-          </div>
+          ))}
         </div>
 
         {/* Order Transactions Section */}
