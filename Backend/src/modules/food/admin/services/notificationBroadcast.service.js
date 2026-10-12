@@ -3,6 +3,7 @@ import { ValidationError, NotFoundError } from '../../../../core/auth/errors.js'
 import { FoodUser } from '../../../../core/users/user.model.js';
 import { FoodRestaurant } from '../../restaurant/models/restaurant.model.js';
 import { FoodDeliveryPartner } from '../../delivery/models/deliveryPartner.model.js';
+import { FoodZone } from '../models/zone.model.js';
 import { BroadcastNotification } from '../../../../core/notifications/models/notificationBroadcast.model.js';
 import { FoodNotification } from '../../../../core/notifications/models/notification.model.js';
 import { createInboxNotifications } from '../../../../core/notifications/notification.service.js';
@@ -14,7 +15,8 @@ const TARGET_TYPE_MAP = {
     USER: 'USER',
     RESTAURANT: 'RESTAURANT',
     DELIVERY: 'DELIVERY',
-    CUSTOM: 'CUSTOM'
+    CUSTOM: 'CUSTOM',
+    ZONE: 'ZONE'
 };
 
 const OWNER_LABEL_MAP = {
@@ -134,6 +136,54 @@ const resolveCustomTargets = async ({ targets = [], targetIds = [] } = {}) => {
     }));
 };
 
+// A zone is a hand-drawn lat/lng polygon; users carry GeoJSON address points
+// with a 2dsphere index, so $geoWithin finds everyone whose saved address
+// falls inside the chosen zones. Returns the matched users as USER targets
+// plus the zones themselves (for the history label).
+const resolveZoneTargets = async (zoneIds = []) => {
+    const ids = [...new Set((Array.isArray(zoneIds) ? zoneIds : []).map((value) => String(value || '').trim()).filter(Boolean))];
+    if (!ids.length) {
+        throw new ValidationError('Please select at least one zone for zone broadcast');
+    }
+
+    const objectIds = ids.map((id) => toObjectId(id, 'zoneId'));
+    const zones = await FoodZone.find({ _id: { $in: objectIds } }).lean();
+    if (!zones.length) {
+        throw new ValidationError('Selected zone(s) not found');
+    }
+
+    const geoConditions = zones
+        .map((zone) => {
+            const ring = (Array.isArray(zone.coordinates) ? zone.coordinates : [])
+                .filter((c) => Number.isFinite(c?.longitude) && Number.isFinite(c?.latitude))
+                .map((c) => [c.longitude, c.latitude]);
+            if (ring.length < 3) return null;
+            // A GeoJSON linear ring must be closed — repeat the first point.
+            const [fx, fy] = ring[0];
+            const [lx, ly] = ring[ring.length - 1];
+            if (fx !== lx || fy !== ly) ring.push([fx, fy]);
+            return { 'addresses.location': { $geoWithin: { $geometry: { type: 'Polygon', coordinates: [ring] } } } };
+        })
+        .filter(Boolean);
+
+    if (!geoConditions.length) {
+        throw new ValidationError('Selected zone(s) have no valid boundary');
+    }
+
+    const users = await FoodUser.find({ isActive: true, $or: geoConditions })
+        .select('_id name phone email')
+        .lean();
+
+    return {
+        targets: users.map((row) => ({
+            ownerType: 'USER',
+            ownerId: String(row._id),
+            ...buildUserLabel(row)
+        })),
+        zones: zones.map((zone) => ({ zoneId: zone._id, name: zone.name || zone.zoneName || 'Zone' }))
+    };
+};
+
 const resolveTargets = async ({ targetType, targetIds = [], targets = [] } = {}) => {
     if (targetType === 'ALL') {
         const [users, restaurants, deliveryPartners] = await Promise.all([
@@ -211,13 +261,25 @@ export const createBroadcastNotification = async ({ body = {}, adminId } = {}) =
     const message = normalizeText(body?.message, 'message');
     const link = normalizeText(body?.link, 'link', false);
     const targetType = normalizeTargetType(body?.targetType);
-    const resolvedTargets = await resolveTargets({
-        targetType,
-        targetIds: body?.targetIds,
-        targets: body?.targets
-    });
+
+    let resolvedTargets;
+    let targetZones = [];
+    if (targetType === 'ZONE') {
+        const zoneResult = await resolveZoneTargets(body?.zoneIds);
+        resolvedTargets = zoneResult.targets;
+        targetZones = zoneResult.zones;
+    } else {
+        resolvedTargets = await resolveTargets({
+            targetType,
+            targetIds: body?.targetIds,
+            targets: body?.targets
+        });
+    }
 
     if (!resolvedTargets.length) {
+        if (targetType === 'ZONE') {
+            throw new ValidationError('No users have a saved address inside the selected zone(s)');
+        }
         throw new ValidationError(`No recipients found for ${targetType.toLowerCase()} broadcast`);
     }
 
@@ -228,6 +290,7 @@ export const createBroadcastNotification = async ({ body = {}, adminId } = {}) =
         message,
         targetType,
         targetIds: targetType === 'CUSTOM' ? targetIds : [],
+        targetZones,
         targets: resolvedTargets.map((target) => ({
             ownerType: target.ownerType,
             ownerId: toObjectId(target.ownerId, 'ownerId'),
@@ -294,7 +357,9 @@ export const getBroadcastNotifications = async ({ page = 1, limit = 10 } = {}) =
             targetLabel:
                 item.targetType === 'CUSTOM'
                     ? `${Number(item.targetCount || item.targets?.length || 0)} selected recipients`
-                    : OWNER_LABEL_MAP[item.targetType] || item.targetType
+                    : item.targetType === 'ZONE'
+                        ? `Zone: ${(item.targetZones || []).map((z) => z.name).filter(Boolean).join(', ') || '—'}`
+                        : OWNER_LABEL_MAP[item.targetType] || item.targetType
         })),
         pagination: {
             page: meta.page,

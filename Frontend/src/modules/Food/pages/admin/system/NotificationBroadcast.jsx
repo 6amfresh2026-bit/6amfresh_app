@@ -7,6 +7,7 @@ const TARGET_OPTIONS = [
   { value: "USER", label: "Users" },
   { value: "RESTAURANT", label: "Restaurants" },
   { value: "DELIVERY", label: "Delivery Partners" },
+  { value: "ZONE", label: "Zone-wise" },
   { value: "CUSTOM", label: "Particular Persons" },
 ];
 
@@ -56,6 +57,9 @@ export default function NotificationBroadcast() {
   const [search, setSearch] = useState("");
   const [allRecipients, setAllRecipients] = useState([]);
   const [selectedRecipients, setSelectedRecipients] = useState([]);
+  const [zones, setZones] = useState([]);
+  const [zonesLoading, setZonesLoading] = useState(false);
+  const [selectedZoneIds, setSelectedZoneIds] = useState([]);
 
   const loadHistory = async () => {
     try {
@@ -122,7 +126,31 @@ export default function NotificationBroadcast() {
       setSelectedRecipients([]);
       setSearch("");
     }
+    if (form.targetType !== "ZONE") {
+      setSelectedZoneIds([]);
+    }
   }, [form.targetType]);
+
+  useEffect(() => {
+    if (form.targetType !== "ZONE") return;
+    if (zones.length > 0) return;
+    (async () => {
+      try {
+        setZonesLoading(true);
+        const res = await adminAPI.getZones({ limit: 1000, isActive: true });
+        setZones(res?.data?.data?.zones || []);
+      } catch {
+        setZones([]);
+      } finally {
+        setZonesLoading(false);
+      }
+    })();
+  }, [form.targetType, zones.length]);
+
+  const toggleZone = (id) =>
+    setSelectedZoneIds((prev) =>
+      prev.includes(id) ? prev.filter((z) => z !== id) : [...prev, id]
+    );
 
   const filteredRecipients = useMemo(() => {
     const keyword = String(search || "").trim().toLowerCase();
@@ -153,6 +181,7 @@ export default function NotificationBroadcast() {
     event.preventDefault();
     if (!form.title.trim() || !form.message.trim()) return;
     if (form.targetType === "CUSTOM" && selectedRecipients.length === 0) return;
+    if (form.targetType === "ZONE" && selectedZoneIds.length === 0) return;
 
     try {
       setSubmitting(true);
@@ -173,9 +202,11 @@ export default function NotificationBroadcast() {
                 subLabel: item.subLabel,
               }))
             : [],
+        zoneIds: form.targetType === "ZONE" ? selectedZoneIds : [],
       });
       setForm({ title: "", message: "", targetType: "ALL" });
       setSelectedRecipients([]);
+      setSelectedZoneIds([]);
       setSearch("");
       window.dispatchEvent(new Event("adminBroadcastUpdated"));
       await loadHistory();
@@ -294,6 +325,52 @@ export default function NotificationBroadcast() {
                             {recipient.ownerType.replaceAll("_", " ")}
                             {recipient.subLabel ? ` • ${recipient.subLabel}` : ""}
                           </div>
+                        </div>
+                      </label>
+                    );
+                  })
+                )}
+              </div>
+            </div>
+          )}
+
+          {form.targetType === "ZONE" && (
+            <div className="rounded-3xl border border-slate-200 bg-slate-50/80 p-4 space-y-3">
+              <div className="text-xs font-medium text-slate-500">
+                Pick the zones to notify — every customer with a saved address inside them receives it.
+                Selected zones: {selectedZoneIds.length}
+              </div>
+
+              <div className="max-h-72 overflow-y-auto rounded-2xl border border-slate-200 bg-white divide-y divide-slate-100">
+                {zonesLoading ? (
+                  <div className="p-6 text-sm text-slate-500 flex items-center gap-2">
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    Loading zones...
+                  </div>
+                ) : zones.length === 0 ? (
+                  <div className="p-6 text-sm text-slate-500">No active zones found.</div>
+                ) : (
+                  zones.map((zone) => {
+                    const id = String(zone?._id || "");
+                    const checked = selectedZoneIds.includes(id);
+                    return (
+                      <label
+                        key={id}
+                        className="flex items-start gap-3 px-4 py-3 cursor-pointer hover:bg-slate-50"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={() => toggleZone(id)}
+                          className="mt-1 h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                        />
+                        <div className="min-w-0">
+                          <div className="text-sm font-semibold text-slate-900">
+                            {zone?.name || zone?.zoneName || "Zone"}
+                          </div>
+                          {zone?.serviceLocation && (
+                            <div className="text-xs text-slate-500">{zone.serviceLocation}</div>
+                          )}
                         </div>
                       </label>
                     );

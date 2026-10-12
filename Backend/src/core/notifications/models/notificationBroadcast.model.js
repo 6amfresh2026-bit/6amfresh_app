@@ -39,9 +39,15 @@ const notificationBroadcastSchema = new mongoose.Schema(
         },
         targetType: {
             type: String,
-            enum: ['ALL', 'USER', 'RESTAURANT', 'DELIVERY', 'CUSTOM'],
+            enum: ['ALL', 'USER', 'RESTAURANT', 'DELIVERY', 'CUSTOM', 'ZONE'],
             required: true,
             index: true
+        },
+        // For ZONE broadcasts: which zones were chosen, kept for the history
+        // label since the resolved targets are individual users.
+        targetZones: {
+            type: [{ zoneId: mongoose.Schema.Types.ObjectId, name: String }],
+            default: []
         },
         targetIds: {
             type: [mongoose.Schema.Types.ObjectId],
