@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react"
 import { toast } from "sonner"
-import { Plus, Trash2, ClipboardList, Loader2 } from "lucide-react"
+import { Plus, Trash2, ClipboardList, Loader2, X } from "lucide-react"
 import { adminAPI } from "@food/api"
 
 const QUESTION_TYPES = [
@@ -132,7 +132,7 @@ export default function SurveyManagement() {
             onClick={() => setShowForm((v) => !v)}
             className="px-4 py-2.5 text-sm font-medium rounded-lg bg-blue-600 text-white hover:bg-blue-700 flex items-center gap-2 transition-all shadow-md"
           >
-            <Plus className="w-4 h-4" />
+            {showForm ? <X className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
             {showForm ? "Cancel" : "Create Survey"}
           </button>
         </div>
