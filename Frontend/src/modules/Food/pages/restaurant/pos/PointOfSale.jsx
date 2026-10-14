@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { Lock } from "lucide-react"
 import { toast } from "sonner"
 import { restaurantAPI } from "@food/api"
 import { getMenuFromResponse, flattenMenuItems } from "@food/utils/menuItems"
@@ -307,6 +308,23 @@ export default function PointOfSale() {
 
   const couponApplied = Boolean(couponCode) && Boolean(quote?.pricing?.appliedCoupon)
   const disabled = cart.lines.length === 0 || busy
+
+  // Admin can switch POS off for this store — the backend already blocks
+  // quote/create, so show a clear notice instead of a broken screen.
+  if (restaurant && restaurant.posEnabled === false) {
+    return (
+      <div className="flex h-screen flex-col items-center justify-center bg-[#f4f7fb] p-6 text-center text-gray-700">
+        <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-slate-200">
+          <Lock className="h-8 w-8 text-slate-500" />
+        </div>
+        <h2 className="mt-4 text-xl font-bold text-slate-900">Point of Sale is disabled</h2>
+        <p className="mt-1 max-w-sm text-sm text-slate-500">
+          POS has been turned off for your store by the admin. Please contact the
+          admin if you need counter billing enabled.
+        </p>
+      </div>
+    )
+  }
 
   return (
     <div className="flex h-screen flex-col bg-[#f4f7fb] text-gray-800">

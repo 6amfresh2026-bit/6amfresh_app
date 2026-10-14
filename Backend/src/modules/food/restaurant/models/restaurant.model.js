@@ -166,6 +166,16 @@ const restaurantSchema = new mongoose.Schema(
       index: true,
     },
     /**
+     * Whether this seller may use Point of Sale (counter billing). Admin
+     * decides per seller. Default true so existing sellers keep POS until an
+     * admin turns it off; set false to block POS quote/create for this store.
+     */
+    posEnabled: {
+      type: Boolean,
+      default: true,
+      index: true,
+    },
+    /**
      * Legacy field. No longer used to keep a restaurant online outside outlet hours.
      * Cleared whenever the Online/Offline toggle is updated.
      */

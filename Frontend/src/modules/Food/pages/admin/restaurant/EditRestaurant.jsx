@@ -118,6 +118,9 @@ const normalizeDetailsFormFromRestaurant = (restaurant) => {
     // Defaults to false rather than true: a seller who predates this field has
     // no value stored, and defaulting to exempt would quietly stop billing them.
     billingExempt: restaurant?.billingExempt === true,
+    // Defaults to true: a seller who predates this field keeps POS access
+    // until an admin turns it off here.
+    posEnabled: restaurant?.posEnabled !== false,
     openingTime: restaurant?.openingTime || restaurant?.deliveryTimings?.openingTime || "",
     closingTime: restaurant?.closingTime || restaurant?.deliveryTimings?.closingTime || "",
     isActive: restaurant?.isActive !== false,
@@ -411,6 +414,7 @@ export default function EditRestaurant() {
         name: detailsForm.name,
         pureVegRestaurant: detailsForm.pureVegRestaurant === true,
         billingExempt: detailsForm.billingExempt === true,
+        posEnabled: detailsForm.posEnabled === true,
         ownerName: detailsForm.ownerName,
         ownerEmail: detailsForm.ownerEmail,
         ownerPhone: detailsForm.ownerPhone,
@@ -694,6 +698,37 @@ export default function EditRestaurant() {
                   <p className="mt-1.5 text-[11px] text-slate-500">
                     Exempt sellers are skipped by the monthly invoice run. Use for demo
                     stores, trials and bespoke arrangements — it does not stop them trading.
+                  </p>
+                </div>
+                <div>
+                  <Label>Point of Sale Access</Label>
+                  <div className="mt-2 flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setDetailsForm((p) => ({ ...p, posEnabled: true }))}
+                      className={`px-3 py-1.5 text-xs rounded-full border ${
+                        detailsForm.posEnabled === true
+                          ? "bg-emerald-600 text-white border-emerald-600"
+                          : "bg-white text-slate-700 border-slate-300"
+                      }`}
+                    >
+                      Enabled
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setDetailsForm((p) => ({ ...p, posEnabled: false }))}
+                      className={`px-3 py-1.5 text-xs rounded-full border ${
+                        detailsForm.posEnabled === false
+                          ? "bg-slate-900 text-white border-slate-900"
+                          : "bg-white text-slate-700 border-slate-300"
+                      }`}
+                    >
+                      Disabled
+                    </button>
+                  </div>
+                  <p className="mt-1.5 text-[11px] text-slate-500">
+                    When disabled, this seller cannot open or bill through Point of Sale —
+                    the POS menu is hidden and counter orders are blocked.
                   </p>
                 </div>
                 <div>

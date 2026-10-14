@@ -200,9 +200,14 @@ function resolveTenders(dto, total) {
 async function loadRestaurant(restaurantId) {
     if (!isId(restaurantId)) throw new NotFoundError('Restaurant not found');
     const restaurant = await FoodRestaurant.findById(restaurantId)
-        .select('restaurantName ownerName ownerPhone primaryContactNumber addressLine1 addressLine2 area city state pincode location gstNumber fssaiNumber')
+        .select('restaurantName ownerName ownerPhone primaryContactNumber addressLine1 addressLine2 area city state pincode location gstNumber fssaiNumber posEnabled')
         .lean();
     if (!restaurant) throw new NotFoundError('Restaurant not found');
+    // Admin can switch POS off per seller — one choke point covers every POS
+    // path (quote, create, holds, last bill) since they all load through here.
+    if (restaurant.posEnabled === false) {
+        throw new ValidationError('Point of Sale is disabled for this store. Contact the admin to enable it.');
+    }
     return restaurant;
 }
 

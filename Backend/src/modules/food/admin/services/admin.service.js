@@ -3349,6 +3349,10 @@ export async function updateRestaurantById(id, body = {}) {
     if (body.billingExempt !== undefined) {
         doc.billingExempt = parseBooleanLike(body.billingExempt, 'billingExempt');
     }
+    // Admin-controlled POS access for this seller.
+    if (body.posEnabled !== undefined) {
+        doc.posEnabled = parseBooleanLike(body.posEnabled, 'posEnabled');
+    }
     if (body.isAcceptingOrders !== undefined) {
         doc.isAcceptingOrders = parseBooleanLike(body.isAcceptingOrders, 'isAcceptingOrders');
         doc.outsideHoursOverride = false;

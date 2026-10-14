@@ -313,6 +313,10 @@ export default function DesktopSidebar() {
             </h3>
             <ul className="space-y-1">
               {section.items.map((item) => {
+                // Hide POS when the admin has disabled it for this seller.
+                if (item.name === "POS" && restaurantData?.posEnabled === false) {
+                  return null
+                }
                 if (item.type === "expandable") {
                   const isExpanded = expandedSections[item.name] || false
                   const hasActiveSub = item.subItems.some((sub) =>
