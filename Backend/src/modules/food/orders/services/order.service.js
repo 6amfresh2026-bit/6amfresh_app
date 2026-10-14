@@ -850,7 +850,10 @@ export async function createOrder(userId, dto) {
     }
 
     const feeSettings = await loadActiveFeeSettings();
-    const riderEarning = calculateRiderEarning(feeSettings, distanceKm) || 0;
+    // A counter sale (walk-in / dine-in / take-away POS) is handed over at the
+    // till — there is no rider, so no rider earning. A POS *delivery* and every
+    // app order still pays the rider as usual.
+    const riderEarning = counterSale ? 0 : (calculateRiderEarning(feeSettings, distanceKm) || 0);
     
     // Calculate restaurant commission from subtotal
     let restaurantCommission = 0;
