@@ -1,5 +1,6 @@
 import { useState, useMemo, useEffect, useRef } from "react"
 import { useNavigate, useSearchParams } from "react-router-dom"
+import { toast } from "sonner"
 import { Search, Download, ChevronDown, ChevronLeft, ChevronRight, Eye, Settings, ArrowUpDown, Loader2, X, MapPin, Phone, Mail, Clock, Star, Building2, User, FileText, FileSpreadsheet, CreditCard, Calendar, Image as ImageIcon, ExternalLink, ShieldX, AlertTriangle, Trash2, Plus } from "lucide-react"
 import { adminAPI, restaurantAPI, uploadAPI } from "@food/api"
 import { clearModuleAuth } from "@food/utils/auth"
@@ -57,6 +58,7 @@ const mapRawRestaurant = (restaurant, index, zones) => ({
   zone: zoneLabelFromRestaurant(restaurant, zones),
   approvalStatus: normalizeApprovalStatus(restaurant),
   isActive: restaurant.isActive !== false && restaurant.status === "approved",
+  posEnabled: restaurant.posEnabled !== false,
   rating: restaurant.rating || restaurant.ratings?.average || 0,
   logo: getPrimaryRestaurantImage(restaurant, PLACEHOLDER_40),
   originalData: restaurant,
@@ -1160,6 +1162,25 @@ export default function RestaurantsList() {
     setBanConfirmDialog(null)
   }
 
+  // Flip Point-of-Sale access for one seller, in place. Optimistic: the row
+  // updates immediately and reverts if the save fails.
+  const [posTogglingId, setPosTogglingId] = useState(null)
+  const handleTogglePos = async (restaurant) => {
+    const id = restaurant._id || restaurant.id
+    const next = !restaurant.posEnabled
+    setPosTogglingId(id)
+    setRestaurants((prev) => prev.map((r) => (r.id === restaurant.id ? { ...r, posEnabled: next } : r)))
+    try {
+      await adminAPI.updateRestaurant(restaurant._id || restaurant.id, { posEnabled: next })
+      toast.success(next ? "POS enabled for this seller" : "POS disabled for this seller")
+    } catch (err) {
+      setRestaurants((prev) => prev.map((r) => (r.id === restaurant.id ? { ...r, posEnabled: !next } : r)))
+      toast.error(err?.response?.data?.message || "Could not update POS access")
+    } finally {
+      setPosTogglingId(null)
+    }
+  }
+
   // Handle delete restaurant
   const handleDeleteRestaurant = (restaurant) => {
     setDeleteConfirmDialog({ restaurant })
@@ -1417,13 +1438,14 @@ export default function RestaurantsList() {
                         <ArrowUpDown className={`w-3 h-3 ${sortConfig.key === 'status' ? 'text-blue-600' : 'text-slate-400'}`} />
                       </div>
                     </th>
+                    <th className="px-6 py-4 text-center text-[10px] font-bold text-slate-700 uppercase tracking-wider">POS</th>
                     <th className="px-6 py-4 text-center text-[10px] font-bold text-slate-700 uppercase tracking-wider">Action</th>
                   </tr>
                 </thead>
                 <tbody className="bg-white divide-y divide-slate-100">
                   {filteredRestaurants.length === 0 ? (
                     <tr>
-                      <td colSpan={7} className="px-6 py-20 text-center">
+                      <td colSpan={8} className="px-6 py-20 text-center">
                         <div className="flex flex-col items-center justify-center">
                           <p className="text-lg font-semibold text-slate-700 mb-1">No Data Found</p>
                           <p className="text-sm text-slate-500">No restaurants match your search</p>
@@ -1492,6 +1514,22 @@ export default function RestaurantsList() {
                               Outlet: {restaurant.isActive ? "Active" : "Inactive"}
                             </span>
                           </div>
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-center">
+                          <button
+                            onClick={() => handleTogglePos(restaurant)}
+                            disabled={posTogglingId === (restaurant._id || restaurant.id)}
+                            className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-2 disabled:opacity-60 ${
+                              restaurant.posEnabled ? "bg-emerald-600" : "bg-slate-300"
+                            }`}
+                            title={restaurant.posEnabled ? "POS enabled — click to disable" : "POS disabled — click to enable"}
+                          >
+                            <span
+                              className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                                restaurant.posEnabled ? "translate-x-6" : "translate-x-1"
+                              }`}
+                            />
+                          </button>
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-center">
                           <div className="flex items-center justify-center gap-2">
