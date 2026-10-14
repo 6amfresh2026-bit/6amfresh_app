@@ -172,6 +172,20 @@ export const adminSidebarMenu = [
   },
   {
     type: "section",
+    label: "REPORTS & OPERATIONS",
+    items: [
+      { type: "link", label: "Product report", path: "/admin/store/reports/product-report", icon: "Package" },
+      { type: "link", label: "Customer report", path: "/admin/store/customers", icon: "Users" },
+      { type: "link", label: "Customer ledger", path: "/admin/store/reports/customer-ledger", icon: "FileText" },
+      { type: "link", label: "Delivery team", path: "/admin/store/delivery-partners", icon: "Truck" },
+      { type: "link", label: "Rider invoices", path: "/admin/store/reports/rider-invoices", icon: "Receipt" },
+      { type: "link", label: "Cash ledger", path: "/admin/store/reports/cash-ledger", icon: "Wallet" },
+      { type: "link", label: "Store-wise profit", path: "/admin/store/reports/store-wise-profit", icon: "PiggyBank" },
+      { type: "link", label: "POS", path: "/admin/store/pos", icon: "CreditCard" },
+    ],
+  },
+  {
+    type: "section",
     label: "CONFIGURATION",
     items: [
       {

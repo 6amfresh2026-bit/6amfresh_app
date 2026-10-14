@@ -69,6 +69,7 @@ const PATH_PREFIX_TO_SECTION = [
   { prefix: "/admin/store/tax-report", section: "report_management" },
   { prefix: "/admin/store/restaurant-report", section: "report_management" },
   { prefix: "/admin/store/customer-report", section: "report_management" },
+  { prefix: "/admin/store/reports", section: "report_management" },
   { prefix: "/admin/store/restaurant-withdraws", section: "transaction_management" },
   { prefix: "/admin/store/hero-banner-management", section: "banner_management" },
   { prefix: "/admin/store/promotional-banner", section: "banner_management" },

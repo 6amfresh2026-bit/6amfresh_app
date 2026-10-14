@@ -98,6 +98,7 @@ const DeliveryEarnings = lazy(() => import("@food/pages/admin/delivery-partners/
 // Report Management
 const TransactionReport = lazy(() => import("@food/pages/admin/reports/TransactionReport"));
 const PosStatement = lazy(() => import("@food/pages/admin/reports/PosStatement"));
+const ReportStub = lazy(() => import("@food/pages/admin/reports/ReportStub"));
 const WalletDashboard = lazy(() => import("@food/pages/admin/reports/WalletDashboard"));
 const ExpenseReport = lazy(() => import("@food/pages/admin/reports/ExpenseReport"));
 const DisbursementReportRestaurants = lazy(() => import("@food/pages/admin/reports/DisbursementReportRestaurants"));
@@ -442,6 +443,12 @@ export default function AdminRouter() {
             {/* REPORTS & SETTINGS */}
             <Route path="transaction-report" element={<TransactionReport />} />
             <Route path="pos-statement" element={<PosStatement />} />
+            {/* Reports & Operations — stubs for reports on the roadmap. */}
+            <Route path="reports/product-report" element={<ReportStub title="Product report" description="Sales and stock movement per product." />} />
+            <Route path="reports/customer-ledger" element={<ReportStub title="Customer ledger" description="Running balance of charges and payments per customer." />} />
+            <Route path="reports/rider-invoices" element={<ReportStub title="Rider invoices" description="Payout invoices generated per delivery rider." />} />
+            <Route path="reports/cash-ledger" element={<ReportStub title="Cash ledger" description="Cash collected and settled across the operation." />} />
+            <Route path="reports/store-wise-profit" element={<ReportStub title="Store-wise profit" description="Revenue, cost and net profit per store." />} />
             <Route path="wallet-dashboard" element={<WalletDashboard />} />
             <Route path="expense-report" element={<ExpenseReport />} />
             <Route path="disbursement-report/restaurants" element={<DisbursementReportRestaurants />} />
