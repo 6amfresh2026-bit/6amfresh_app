@@ -40,6 +40,30 @@ const label = "mb-1.5 block text-[15px] text-gray-800"
 const field =
   "h-11 w-full rounded border border-gray-300 bg-white px-3 text-[15px] text-gray-800 outline-none focus:border-sky-400 placeholder:text-gray-400"
 
+// Defined at module scope, not inside the modal: a component declared inside
+// another re-renders as a brand-new type on every keystroke, so React remounts
+// its <input> and the field loses focus after a single character.
+function Phone({ code, onCode, value, onValue, placeholder }) {
+  return (
+    <div className="flex">
+      <select
+        value={code}
+        onChange={(e) => onCode(e.target.value)}
+        className="h-11 shrink-0 rounded-l border border-r-0 border-gray-300 bg-neutral-100 px-2 text-[15px] text-gray-800 outline-none"
+      >
+        {["+91"].map((c) => <option key={c} value={c}>🇮🇳 {c}</option>)}
+      </select>
+      <input
+        className={`${field} rounded-l-none`}
+        value={value}
+        onChange={(e) => onValue(e.target.value)}
+        placeholder={placeholder}
+        inputMode="numeric"
+      />
+    </div>
+  )
+}
+
 const empty = {
   name: "",
   countryCode: "+91",
@@ -129,25 +153,6 @@ export default function PosNewCustomerModal({ initial, onClose, onSaved }) {
       setSaving(false)
     }
   }
-
-  const Phone = ({ code, onCode, value, onValue, placeholder }) => (
-    <div className="flex">
-      <select
-        value={code}
-        onChange={(e) => onCode(e.target.value)}
-        className="h-11 shrink-0 rounded-l border border-r-0 border-gray-300 bg-neutral-100 px-2 text-[15px] text-gray-800 outline-none"
-      >
-        {["+91"].map((c) => <option key={c} value={c}>🇮🇳 {c}</option>)}
-      </select>
-      <input
-        className={`${field} rounded-l-none`}
-        value={value}
-        onChange={(e) => onValue(e.target.value)}
-        placeholder={placeholder}
-        inputMode="numeric"
-      />
-    </div>
-  )
 
   return (
     <PosModal
