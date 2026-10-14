@@ -9,6 +9,8 @@ export default function StoreProfit() {
       description="Revenue, commission, store payout and net platform profit per store, from the transaction ledger."
       icon={PiggyBank}
       csvName="store-wise-profit"
+      showZone
+      showSeller
       rowKey={(r) => r.storeId}
       fetchReport={async (params) => {
         const res = await adminAPI.getStoreProfitReport(params)

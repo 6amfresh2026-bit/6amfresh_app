@@ -9,6 +9,8 @@ export default function ProductReport() {
       description="Units sold and revenue per product, with live stock. Cancelled orders are excluded."
       icon={Package}
       csvName="product-report"
+      showZone
+      showSeller
       rowKey={(r) => r.itemId || r.product}
       fetchReport={async (params) => {
         const res = await adminAPI.getProductReport(params)

@@ -1114,9 +1114,44 @@ const reportDateMatch = (query = {}) => {
     return fromDate && toDate ? { createdAt: { $gte: new Date(fromDate), $lte: new Date(toDate) } } : {};
 };
 
+/**
+ * Resolve the zone / restaurant filter inputs to a set of restaurantIds.
+ * Returns null (no filter), [] (filter matched nothing), or [ids].
+ */
+const resolveRestaurantSet = async (query = {}) => {
+    const { zone, restaurant } = query;
+    const hasZone = zone && String(zone).trim();
+    const hasRestaurant = restaurant && String(restaurant).trim() && restaurant !== 'All restaurants';
+    if (!hasZone && !hasRestaurant) return null;
+
+    const restFilter = {};
+    let noMatch = false;
+
+    if (hasZone) {
+        const z = String(zone).trim();
+        if (mongoose.Types.ObjectId.isValid(z)) restFilter.zoneId = new mongoose.Types.ObjectId(z);
+        else {
+            const mz = await FoodZone.findOne({ $or: [{ name: z }, { zoneName: z }] }).select('_id').lean();
+            if (mz?._id) restFilter.zoneId = mz._id; else noMatch = true;
+        }
+    }
+    if (!noMatch && hasRestaurant) {
+        const r = String(restaurant).trim();
+        const rd = mongoose.Types.ObjectId.isValid(r)
+            ? await FoodRestaurant.findById(r).select('_id').lean()
+            : await FoodRestaurant.findOne({ $or: [{ restaurantName: r }, { name: r }] }).select('_id').lean();
+        if (rd?._id) restFilter._id = rd._id; else noMatch = true;
+    }
+    if (noMatch) return [];
+    const list = await FoodRestaurant.find(restFilter).select('_id').lean();
+    return list.map((r) => r._id);
+};
+
 /** Units sold and revenue per product, from order line snapshots. */
 export async function getProductReport(query = {}) {
     const match = { orderStatus: { $nin: POS_CANCELLED_STATUSES }, ...reportDateMatch(query) };
+    const restSet = await resolveRestaurantSet(query);
+    if (restSet) match.restaurantId = { $in: restSet };
     const rows = await FoodOrder.aggregate([
         { $match: match },
         { $unwind: '$items' },
@@ -1157,6 +1192,8 @@ export async function getProductReport(query = {}) {
 /** Per-customer orders, total spent and last order. */
 export async function getCustomerLedgerReport(query = {}) {
     const match = { orderStatus: { $nin: POS_CANCELLED_STATUSES }, ...reportDateMatch(query) };
+    const restSet = await resolveRestaurantSet(query);
+    if (restSet) match.restaurantId = { $in: restSet };
     const customers = await FoodOrder.aggregate([
         { $match: match },
         {
@@ -1278,7 +1315,9 @@ export async function getCashLedgerReport(query = {}) {
 /** Per-store revenue, commission, payout and net profit from the ledger. */
 export async function getStoreProfitReport(query = {}) {
     const match = reportDateMatch(query);
-    const stores = await FoodTransaction.aggregate([
+    const restSet = await resolveRestaurantSet(query);
+    if (restSet) match.restaurantId = { $in: restSet };
+    const rawStores = await FoodTransaction.aggregate([
         { $match: match },
         {
             $group: {
@@ -1306,6 +1345,24 @@ export async function getStoreProfitReport(query = {}) {
         },
         { $sort: { revenue: -1 } }
     ]);
+
+    // Fold ledger rows whose restaurant no longer exists (deleted stores) into a
+    // single "Removed / unknown stores" line instead of many identical ones.
+    const stores = [];
+    let unknown = null;
+    for (const s of rawStores) {
+        if (!s.storeId || s.store === 'Unknown store') {
+            if (!unknown) unknown = { ...s, store: 'Removed / unknown stores', storeId: null };
+            else {
+                unknown.orders += s.orders || 0; unknown.revenue += s.revenue || 0; unknown.commission += s.commission || 0; unknown.storePayout += s.storePayout || 0; unknown.netProfit += s.netProfit || 0;
+            }
+        } else {
+            stores.push(s);
+        }
+    }
+    if (unknown) stores.push(unknown);
+    stores.sort((a, b) => b.revenue - a.revenue);
+
     const summary = stores.reduce((a, r) => {
         a.stores += 1; a.orders += r.orders || 0; a.revenue += r.revenue || 0; a.commission += r.commission || 0; a.storePayout += r.storePayout || 0; a.netProfit += r.netProfit || 0;
         return a;

@@ -9,6 +9,8 @@ export default function CustomerLedger() {
       description="Orders, total spent and last order per customer. Cancelled orders are excluded."
       icon={Users}
       csvName="customer-ledger"
+      showZone
+      showSeller
       rowKey={(r) => r.userId}
       fetchReport={async (params) => {
         const res = await adminAPI.getCustomerLedgerReport(params)

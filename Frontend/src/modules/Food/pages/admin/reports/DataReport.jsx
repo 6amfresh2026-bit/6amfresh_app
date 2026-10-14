@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useMemo } from "react"
 import { Loader2, Download, Inbox } from "lucide-react"
 import { toast } from "sonner"
+import { adminAPI } from "@food/api"
 
 /**
  * Generic admin report: a period filter, summary tiles, a sortable-less table
@@ -65,11 +66,29 @@ const csvEscape = (v) => {
  * @param {Function} [p.footer]    (summary) => cell values aligned to columns
  * @param {string}   p.csvName
  */
-export default function DataReport({ title, description, icon: Icon, fetchReport, columns, tiles, rowKey, footer, csvName }) {
+export default function DataReport({ title, description, icon: Icon, fetchReport, columns, tiles, rowKey, footer, csvName, showZone = false, showSeller = false }) {
   const [rows, setRows] = useState([])
   const [summary, setSummary] = useState(null)
   const [loading, setLoading] = useState(true)
-  const [filters, setFilters] = useState({ time: "All Time", fromDate: "", toDate: "" })
+  const [filters, setFilters] = useState({ time: "All Time", fromDate: "", toDate: "", zone: "All Zones", restaurant: "All restaurants" })
+  const [zones, setZones] = useState([])
+  const [restaurants, setRestaurants] = useState([])
+
+  useEffect(() => {
+    if (!showZone && !showSeller) return
+    (async () => {
+      try {
+        const calls = []
+        if (showZone) calls.push(adminAPI.getZones({ limit: 1000 })); else calls.push(Promise.resolve(null))
+        if (showSeller) calls.push(adminAPI.getRestaurants({ limit: 1000 })); else calls.push(Promise.resolve(null))
+        const [zres, rres] = await Promise.all(calls)
+        if (zres) setZones(zres?.data?.data?.zones || [])
+        if (rres) setRestaurants(rres?.data?.data?.restaurants || [])
+      } catch {
+        /* filters are optional */
+      }
+    })()
+  }, [showZone, showSeller])
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -78,6 +97,8 @@ export default function DataReport({ title, description, icon: Icon, fetchReport
       const params = {
         fromDate: from ? from.toISOString() : undefined,
         toDate: to ? to.toISOString() : undefined,
+        zone: showZone && filters.zone !== "All Zones" ? filters.zone : undefined,
+        restaurant: showSeller && filters.restaurant !== "All restaurants" ? filters.restaurant : undefined,
       }
       const { rows: r, summary: s } = await fetchReport(params)
       setRows(r || [])
@@ -157,6 +178,32 @@ export default function DataReport({ title, description, icon: Icon, fetchReport
               {TIME_PRESETS.map((t) => <option key={t} value={t}>{t}</option>)}
             </select>
           </div>
+          {showZone && (
+            <div>
+              <label className="block text-[11px] font-bold text-slate-600 uppercase tracking-wider mb-1">Zone</label>
+              <select
+                value={filters.zone}
+                onChange={(e) => setFilters((p) => ({ ...p, zone: e.target.value }))}
+                className="w-full px-3 py-2.5 text-sm rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                <option>All Zones</option>
+                {zones.map((z) => <option key={z._id} value={z.name}>{z.name}</option>)}
+              </select>
+            </div>
+          )}
+          {showSeller && (
+            <div>
+              <label className="block text-[11px] font-bold text-slate-600 uppercase tracking-wider mb-1">Seller</label>
+              <select
+                value={filters.restaurant}
+                onChange={(e) => setFilters((p) => ({ ...p, restaurant: e.target.value }))}
+                className="w-full px-3 py-2.5 text-sm rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                <option>All restaurants</option>
+                {restaurants.map((r) => <option key={r._id} value={r.restaurantName}>{r.restaurantName}</option>)}
+              </select>
+            </div>
+          )}
           {filters.time === "Custom Range" && (
             <div className="grid grid-cols-2 gap-2 lg:col-span-2">
               <div>
