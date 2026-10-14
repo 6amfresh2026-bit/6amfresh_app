@@ -1044,6 +1044,17 @@ export const adminAPI = {
       params,
       contextModule: "admin",
     }),
+  /** Reports & Operations (admin). */
+  getProductReport: (params = {}) =>
+    apiClient.get("/food/admin/reports/products", { params, contextModule: "admin" }),
+  getCustomerLedgerReport: (params = {}) =>
+    apiClient.get("/food/admin/reports/customer-ledger", { params, contextModule: "admin" }),
+  getRiderInvoicesReport: (params = {}) =>
+    apiClient.get("/food/admin/reports/rider-invoices", { params, contextModule: "admin" }),
+  getCashLedgerReport: (params = {}) =>
+    apiClient.get("/food/admin/reports/cash-ledger", { params, contextModule: "admin" }),
+  getStoreProfitReport: (params = {}) =>
+    apiClient.get("/food/admin/reports/store-profit", { params, contextModule: "admin" }),
   getWalletDashboard: (params = {}) =>
     apiClient.get("/food/admin/reports/wallet-dashboard", {
       params,

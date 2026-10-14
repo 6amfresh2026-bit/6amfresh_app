@@ -307,6 +307,21 @@ export async function getPosStatementReport(req, res, next) {
     }
 }
 
+const reportController = (serviceFn, message) => async (req, res, next) => {
+    try {
+        const data = await serviceFn(req.query || {});
+        res.status(200).json({ success: true, message, data });
+    } catch (error) {
+        next(error);
+    }
+};
+
+export const getProductReport = reportController(adminService.getProductReport, 'Product report fetched successfully');
+export const getCustomerLedgerReport = reportController(adminService.getCustomerLedgerReport, 'Customer ledger fetched successfully');
+export const getRiderInvoicesReport = reportController(adminService.getRiderInvoicesReport, 'Rider invoices fetched successfully');
+export const getCashLedgerReport = reportController(adminService.getCashLedgerReport, 'Cash ledger fetched successfully');
+export const getStoreProfitReport = reportController(adminService.getStoreProfitReport, 'Store-wise profit fetched successfully');
+
 const ensureSuperAdmin = (req, res) => {
     const adminType = req.adminAccess?.adminType || req.user?.adminType;
     if (adminType && adminType !== 'super_admin') {

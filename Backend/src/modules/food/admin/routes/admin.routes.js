@@ -231,6 +231,11 @@ router.get('/dashboard-operations/login-log', dashboardOperations.getLoginLogCon
 router.get('/reports/restaurants', adminController.getRestaurantReport);
 router.get('/reports/transactions', adminController.getTransactionReport);
 router.get('/reports/pos-statement', adminController.getPosStatementReport);
+router.get('/reports/products', adminController.getProductReport);
+router.get('/reports/customer-ledger', adminController.getCustomerLedgerReport);
+router.get('/reports/rider-invoices', adminController.getRiderInvoicesReport);
+router.get('/reports/cash-ledger', adminController.getCashLedgerReport);
+router.get('/reports/store-profit', adminController.getStoreProfitReport);
 router.get('/reports/tax', adminController.getTaxReport);
 router.get('/reports/tax/:id', adminController.getTaxReportDetail);
 router.get('/restaurants/pending', adminController.getPendingRestaurants);

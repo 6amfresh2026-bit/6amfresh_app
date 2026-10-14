@@ -1109,6 +1109,210 @@ export async function getPosStatementReport(query = {}) {
     return { sellers, summary };
 }
 
+const reportDateMatch = (query = {}) => {
+    const { fromDate, toDate } = query;
+    return fromDate && toDate ? { createdAt: { $gte: new Date(fromDate), $lte: new Date(toDate) } } : {};
+};
+
+/** Units sold and revenue per product, from order line snapshots. */
+export async function getProductReport(query = {}) {
+    const match = { orderStatus: { $nin: POS_CANCELLED_STATUSES }, ...reportDateMatch(query) };
+    const rows = await FoodOrder.aggregate([
+        { $match: match },
+        { $unwind: '$items' },
+        {
+            $group: {
+                _id: '$items.name',
+                itemId: { $first: '$items.itemId' },
+                category: { $first: '$items.categoryName' },
+                units: { $sum: { $ifNull: ['$items.quantity', 0] } },
+                revenue: { $sum: { $multiply: [{ $ifNull: ['$items.price', 0] }, { $ifNull: ['$items.quantity', 0] }] } },
+                cost: { $sum: { $multiply: [{ $ifNull: ['$items.purchasePrice', 0] }, { $ifNull: ['$items.quantity', 0] }] } },
+                orders: { $sum: 1 }
+            }
+        },
+        { $project: { _id: 0, product: '$_id', itemId: 1, category: 1, units: 1, revenue: 1, cost: 1, orders: 1, margin: { $subtract: ['$revenue', '$cost'] } } },
+        { $sort: { revenue: -1 } }
+    ]);
+
+    // Merge live stock from the catalogue (items.itemId is a string id).
+    const ids = rows.map((r) => r.itemId).filter((id) => mongoose.Types.ObjectId.isValid(String(id)));
+    const stockMap = new Map();
+    if (ids.length) {
+        const foods = await FoodItem.find({ _id: { $in: ids.map((i) => new mongoose.Types.ObjectId(String(i))) } }).select('stockQty sku').lean();
+        foods.forEach((f) => stockMap.set(String(f._id), f));
+    }
+    const products = rows.map((r) => ({
+        ...r,
+        stock: stockMap.get(String(r.itemId))?.stockQty ?? null,
+        sku: stockMap.get(String(r.itemId))?.sku || ''
+    }));
+    const summary = products.reduce((a, r) => {
+        a.products += 1; a.units += r.units || 0; a.revenue += r.revenue || 0; a.cost += r.cost || 0; a.margin += r.margin || 0;
+        return a;
+    }, { products: 0, units: 0, revenue: 0, cost: 0, margin: 0 });
+    return { products, summary };
+}
+
+/** Per-customer orders, total spent and last order. */
+export async function getCustomerLedgerReport(query = {}) {
+    const match = { orderStatus: { $nin: POS_CANCELLED_STATUSES }, ...reportDateMatch(query) };
+    const customers = await FoodOrder.aggregate([
+        { $match: match },
+        {
+            $group: {
+                _id: '$userId',
+                orders: { $sum: 1 },
+                totalSpent: { $sum: { $ifNull: ['$pricing.total', 0] } },
+                lastOrder: { $max: '$createdAt' },
+                nameSnap: { $first: '$customerName' },
+                phoneSnap: { $first: '$customerPhone' }
+            }
+        },
+        { $lookup: { from: 'food_users', localField: '_id', foreignField: '_id', as: 'user' } },
+        { $unwind: { path: '$user', preserveNullAndEmptyArrays: true } },
+        {
+            $project: {
+                _id: 0,
+                userId: '$_id',
+                name: { $ifNull: ['$user.name', { $ifNull: ['$nameSnap', 'Guest'] }] },
+                phone: { $ifNull: ['$user.phone', { $ifNull: ['$phoneSnap', ''] }] },
+                email: { $ifNull: ['$user.email', ''] },
+                orders: 1,
+                totalSpent: 1,
+                avgOrder: { $cond: [{ $gt: ['$orders', 0] }, { $divide: ['$totalSpent', '$orders'] }, 0] },
+                lastOrder: 1
+            }
+        },
+        { $sort: { totalSpent: -1 } }
+    ]);
+    const summary = customers.reduce((a, r) => {
+        a.customers += 1; a.orders += r.orders || 0; a.totalSpent += r.totalSpent || 0;
+        return a;
+    }, { customers: 0, orders: 0, totalSpent: 0 });
+    return { customers, summary };
+}
+
+/** Per-rider deliveries and earnings from the transaction ledger. */
+export async function getRiderInvoicesReport(query = {}) {
+    const match = { deliveryPartnerId: { $ne: null }, ...reportDateMatch(query) };
+    const riders = await FoodTransaction.aggregate([
+        { $match: match },
+        {
+            $group: {
+                _id: '$deliveryPartnerId',
+                deliveries: { $sum: 1 },
+                earnings: { $sum: { $ifNull: ['$amounts.riderShare', 0] } },
+                settled: { $sum: { $cond: ['$settlement.isRiderSettled', { $ifNull: ['$amounts.riderShare', 0] }, 0] } }
+            }
+        },
+        { $lookup: { from: 'food_delivery_partners', localField: '_id', foreignField: '_id', as: 'rider' } },
+        { $unwind: { path: '$rider', preserveNullAndEmptyArrays: true } },
+        {
+            $project: {
+                _id: 0,
+                riderId: '$_id',
+                rider: { $ifNull: ['$rider.name', 'Unknown rider'] },
+                phone: { $ifNull: ['$rider.phone', ''] },
+                deliveries: 1,
+                earnings: 1,
+                settled: 1,
+                pending: { $subtract: ['$earnings', '$settled'] }
+            }
+        },
+        { $sort: { earnings: -1 } }
+    ]);
+    const summary = riders.reduce((a, r) => {
+        a.riders += 1; a.deliveries += r.deliveries || 0; a.earnings += r.earnings || 0; a.settled += r.settled || 0; a.pending += r.pending || 0;
+        return a;
+    }, { riders: 0, deliveries: 0, earnings: 0, settled: 0, pending: 0 });
+    return { riders, summary };
+}
+
+/** COD cash collected (delivered cash orders) vs settled (completed deposits), per rider. */
+export async function getCashLedgerReport(query = {}) {
+    const dateMatch = reportDateMatch(query);
+    const [collectedRows, settledRows] = await Promise.all([
+        FoodOrder.aggregate([
+            { $match: { ...dateMatch, 'payment.method': 'cash', orderStatus: 'delivered', 'dispatch.deliveryPartnerId': { $ne: null } } },
+            { $group: { _id: '$dispatch.deliveryPartnerId', collected: { $sum: { $ifNull: ['$pricing.total', 0] } }, codOrders: { $sum: 1 } } }
+        ]),
+        FoodDeliveryCashDeposit.aggregate([
+            { $match: { ...dateMatch, status: 'Completed' } },
+            { $group: { _id: '$deliveryPartnerId', settled: { $sum: { $ifNull: ['$amount', 0] } } } }
+        ])
+    ]);
+
+    const map = new Map();
+    collectedRows.forEach((r) => map.set(String(r._id), { riderId: r._id, collected: r.collected || 0, codOrders: r.codOrders || 0, settled: 0 }));
+    settledRows.forEach((r) => {
+        const k = String(r._id);
+        const e = map.get(k) || { riderId: r._id, collected: 0, codOrders: 0, settled: 0 };
+        e.settled = r.settled || 0;
+        map.set(k, e);
+    });
+
+    const riderIds = [...map.values()].map((v) => v.riderId).filter((id) => id && mongoose.Types.ObjectId.isValid(String(id)));
+    const riderDocs = riderIds.length ? await FoodDeliveryPartner.find({ _id: { $in: riderIds } }).select('name phone').lean() : [];
+    const riderMap = new Map(riderDocs.map((r) => [String(r._id), r]));
+
+    const rows = [...map.values()]
+        .map((v) => ({
+            riderId: v.riderId,
+            rider: riderMap.get(String(v.riderId))?.name || 'Unknown rider',
+            phone: riderMap.get(String(v.riderId))?.phone || '',
+            codOrders: v.codOrders,
+            collected: v.collected,
+            settled: v.settled,
+            outstanding: (v.collected || 0) - (v.settled || 0)
+        }))
+        .sort((a, b) => b.collected - a.collected);
+
+    const summary = rows.reduce((a, r) => {
+        a.riders += 1; a.codOrders += r.codOrders || 0; a.collected += r.collected || 0; a.settled += r.settled || 0; a.outstanding += r.outstanding || 0;
+        return a;
+    }, { riders: 0, codOrders: 0, collected: 0, settled: 0, outstanding: 0 });
+    return { rows, summary };
+}
+
+/** Per-store revenue, commission, payout and net profit from the ledger. */
+export async function getStoreProfitReport(query = {}) {
+    const match = reportDateMatch(query);
+    const stores = await FoodTransaction.aggregate([
+        { $match: match },
+        {
+            $group: {
+                _id: '$restaurantId',
+                orders: { $sum: 1 },
+                revenue: { $sum: { $ifNull: ['$amounts.totalCustomerPaid', 0] } },
+                commission: { $sum: { $ifNull: ['$amounts.restaurantCommission', 0] } },
+                storePayout: { $sum: { $ifNull: ['$amounts.restaurantShare', 0] } },
+                netProfit: { $sum: { $ifNull: ['$amounts.platformNetProfit', 0] } }
+            }
+        },
+        { $lookup: { from: 'food_restaurants', localField: '_id', foreignField: '_id', as: 'restaurant' } },
+        { $unwind: { path: '$restaurant', preserveNullAndEmptyArrays: true } },
+        {
+            $project: {
+                _id: 0,
+                storeId: '$_id',
+                store: { $ifNull: ['$restaurant.restaurantName', 'Unknown store'] },
+                orders: 1,
+                revenue: 1,
+                commission: 1,
+                storePayout: 1,
+                netProfit: 1
+            }
+        },
+        { $sort: { revenue: -1 } }
+    ]);
+    const summary = stores.reduce((a, r) => {
+        a.stores += 1; a.orders += r.orders || 0; a.revenue += r.revenue || 0; a.commission += r.commission || 0; a.storePayout += r.storePayout || 0; a.netProfit += r.netProfit || 0;
+        return a;
+    }, { stores: 0, orders: 0, revenue: 0, commission: 0, storePayout: 0, netProfit: 0 });
+    return { stores, summary };
+}
+
 export async function getRestaurantReport(query = {}) {
     const parseTimeRange = (timeLabel) => {
         const now = new Date();
