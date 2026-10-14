@@ -21,6 +21,9 @@ export const ADMIN_PERMISSION_SECTIONS = [
 ];
 
 const PATH_PREFIX_TO_SECTION = [
+  // Must precede "/admin/store/pos" — it is a report, gated by report_management,
+  // and the resolver matches the first startsWith hit.
+  { prefix: "/admin/store/pos-statement", section: "report_management" },
   { prefix: "/admin/store/pos", section: "point_of_sale" },
   { prefix: "/admin/store/fee-settings", section: "delivery_management" },
   { prefix: "/admin/store/delivery-cash-limit", section: "delivery_management" },

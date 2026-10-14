@@ -1038,6 +1038,12 @@ export const adminAPI = {
       params: { page: 1, limit: 1000, ...params },
       contextModule: "admin",
     }),
+  /** Seller-wise Point-of-Sale statement (admin). */
+  getPosStatementReport: (params = {}) =>
+    apiClient.get("/food/admin/reports/pos-statement", {
+      params,
+      contextModule: "admin",
+    }),
   getWalletDashboard: (params = {}) =>
     apiClient.get("/food/admin/reports/wallet-dashboard", {
       params,

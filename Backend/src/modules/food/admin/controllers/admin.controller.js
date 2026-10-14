@@ -294,6 +294,19 @@ export async function getTransactionReport(req, res, next) {
     }
 }
 
+export async function getPosStatementReport(req, res, next) {
+    try {
+        const data = await adminService.getPosStatementReport(req.query || {});
+        res.status(200).json({
+            success: true,
+            message: 'POS statement fetched successfully',
+            data
+        });
+    } catch (error) {
+        next(error);
+    }
+}
+
 const ensureSuperAdmin = (req, res) => {
     const adminType = req.adminAccess?.adminType || req.user?.adminType;
     if (adminType && adminType !== 'super_admin') {

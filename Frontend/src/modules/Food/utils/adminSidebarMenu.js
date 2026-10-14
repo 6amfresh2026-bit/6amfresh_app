@@ -152,6 +152,7 @@ export const adminSidebarMenu = [
     items: [
       { type: "link", label: "Wallet Dashboard", path: "/admin/store/wallet-dashboard", icon: "Wallet" },
       { type: "link", label: "Transaction Report", path: "/admin/store/transaction-report", icon: "FileText" },
+      { type: "link", label: "POS Statement", path: "/admin/store/pos-statement", icon: "Receipt" },
       { type: "link", label: "Order Report", path: "/admin/store/order-report/regular", icon: "FileText" },
       { type: "link", label: "Tax Report", path: "/admin/store/tax-report", icon: "Receipt" },
       { type: "link", label: "Restaurant Withdraws", path: "/admin/store/restaurant-withdraws", icon: "CreditCard" },

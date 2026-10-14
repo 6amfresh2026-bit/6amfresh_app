@@ -97,6 +97,7 @@ const DeliveryEarnings = lazy(() => import("@food/pages/admin/delivery-partners/
 // Disbursement Management
 // Report Management
 const TransactionReport = lazy(() => import("@food/pages/admin/reports/TransactionReport"));
+const PosStatement = lazy(() => import("@food/pages/admin/reports/PosStatement"));
 const WalletDashboard = lazy(() => import("@food/pages/admin/reports/WalletDashboard"));
 const ExpenseReport = lazy(() => import("@food/pages/admin/reports/ExpenseReport"));
 const DisbursementReportRestaurants = lazy(() => import("@food/pages/admin/reports/DisbursementReportRestaurants"));
@@ -440,6 +441,7 @@ export default function AdminRouter() {
 
             {/* REPORTS & SETTINGS */}
             <Route path="transaction-report" element={<TransactionReport />} />
+            <Route path="pos-statement" element={<PosStatement />} />
             <Route path="wallet-dashboard" element={<WalletDashboard />} />
             <Route path="expense-report" element={<ExpenseReport />} />
             <Route path="disbursement-report/restaurants" element={<DisbursementReportRestaurants />} />

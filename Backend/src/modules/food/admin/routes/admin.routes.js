@@ -230,6 +230,7 @@ router.get('/dashboard-operations/payables', dashboardOperations.getPayablesCont
 router.get('/dashboard-operations/login-log', dashboardOperations.getLoginLogController);
 router.get('/reports/restaurants', adminController.getRestaurantReport);
 router.get('/reports/transactions', adminController.getTransactionReport);
+router.get('/reports/pos-statement', adminController.getPosStatementReport);
 router.get('/reports/tax', adminController.getTaxReport);
 router.get('/reports/tax/:id', adminController.getTaxReportDetail);
 router.get('/restaurants/pending', adminController.getPendingRestaurants);

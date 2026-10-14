@@ -989,6 +989,126 @@ export async function getTransactionReport(query = {}) {
     return { transactions, summary };
 }
 
+/**
+ * Seller-wise statement of Point-of-Sale (counter) orders. POS orders run
+ * through the same order collection as app orders but carry source:'pos';
+ * this groups them per seller and sums what was rung up, split by tender,
+ * over an optional date / zone / restaurant filter. Cancelled orders are
+ * excluded — they are not sales.
+ */
+const POS_CANCELLED_STATUSES = ['cancelled_by_user', 'cancelled_by_restaurant', 'cancelled_by_admin'];
+
+export async function getPosStatementReport(query = {}) {
+    const { fromDate, toDate, zone, restaurant } = query;
+    const match = { source: 'pos', orderStatus: { $nin: POS_CANCELLED_STATUSES } };
+
+    if (fromDate && toDate) {
+        match.createdAt = { $gte: new Date(fromDate), $lte: new Date(toDate) };
+    }
+
+    // Resolve zone / restaurant filters to a concrete set of restaurantIds,
+    // mirroring getTransactionReport so the same filter inputs behave alike.
+    if (zone || (restaurant && restaurant !== 'All restaurants')) {
+        const restFilter = {};
+        let noMatch = false;
+
+        if (zone) {
+            const zoneRaw = String(zone).trim();
+            if (zoneRaw) {
+                if (mongoose.Types.ObjectId.isValid(zoneRaw)) {
+                    restFilter.zoneId = new mongoose.Types.ObjectId(zoneRaw);
+                } else {
+                    const matchedZone = await FoodZone.findOne({ $or: [{ name: zoneRaw }, { zoneName: zoneRaw }] })
+                        .select('_id').lean();
+                    if (matchedZone?._id) restFilter.zoneId = matchedZone._id;
+                    else noMatch = true;
+                }
+            }
+        }
+
+        if (!noMatch && restaurant && restaurant !== 'All restaurants') {
+            const restaurantRaw = String(restaurant).trim();
+            if (restaurantRaw) {
+                const restDoc = mongoose.Types.ObjectId.isValid(restaurantRaw)
+                    ? await mongoose.model('FoodRestaurant').findById(restaurantRaw).select('_id').lean()
+                    : await mongoose.model('FoodRestaurant').findOne({ $or: [{ restaurantName: restaurantRaw }, { name: restaurantRaw }] }).select('_id').lean();
+                if (restDoc?._id) restFilter._id = restDoc._id;
+                else noMatch = true;
+            }
+        }
+
+        if (noMatch) {
+            match.restaurantId = { $in: [] };
+        } else if (Object.keys(restFilter).length > 0) {
+            const restaurantsList = await mongoose.model('FoodRestaurant').find(restFilter).select('_id').lean();
+            match.restaurantId = { $in: restaurantsList.map((r) => r._id) };
+        }
+    }
+
+    const totalOf = { $ifNull: ['$pricing.total', 0] };
+    const sellers = await FoodOrder.aggregate([
+        { $match: match },
+        {
+            $group: {
+                _id: '$restaurantId',
+                orders: { $sum: 1 },
+                subtotal: { $sum: { $ifNull: ['$pricing.subtotal', 0] } },
+                tax: { $sum: { $ifNull: ['$pricing.tax', 0] } },
+                discount: { $sum: { $add: [{ $ifNull: ['$pricing.discount', 0] }, { $ifNull: ['$pricing.manualDiscount', 0] }] } },
+                total: { $sum: totalOf },
+                due: { $sum: { $ifNull: ['$pos.dueAmount', 0] } },
+                cash: { $sum: { $cond: [{ $eq: ['$pos.paymentMode', 'cash'] }, totalOf, 0] } },
+                upi: { $sum: { $cond: [{ $eq: ['$pos.paymentMode', 'upi'] }, totalOf, 0] } },
+                card: { $sum: { $cond: [{ $eq: ['$pos.paymentMode', 'card'] }, totalOf, 0] } },
+                other: { $sum: { $cond: [{ $in: ['$pos.paymentMode', ['multiple', 'pay_later']] }, totalOf, 0] } },
+                lastOrderAt: { $max: '$createdAt' }
+            }
+        },
+        { $lookup: { from: 'food_restaurants', localField: '_id', foreignField: '_id', as: 'restaurant' } },
+        { $unwind: { path: '$restaurant', preserveNullAndEmptyArrays: true } },
+        {
+            $project: {
+                _id: 0,
+                sellerId: '$_id',
+                sellerName: { $ifNull: ['$restaurant.restaurantName', 'Unknown seller'] },
+                ownerName: { $ifNull: ['$restaurant.ownerName', ''] },
+                storeType: '$restaurant.storeType',
+                orders: 1,
+                subtotal: 1,
+                tax: 1,
+                discount: 1,
+                total: 1,
+                due: 1,
+                collected: { $subtract: ['$total', '$due'] },
+                cash: 1,
+                upi: 1,
+                card: 1,
+                other: 1,
+                lastOrderAt: 1
+            }
+        },
+        { $sort: { total: -1 } }
+    ]);
+
+    const summary = sellers.reduce((acc, r) => {
+        acc.sellers += 1;
+        acc.orders += r.orders || 0;
+        acc.subtotal += r.subtotal || 0;
+        acc.tax += r.tax || 0;
+        acc.discount += r.discount || 0;
+        acc.total += r.total || 0;
+        acc.due += r.due || 0;
+        acc.collected += r.collected || 0;
+        acc.cash += r.cash || 0;
+        acc.upi += r.upi || 0;
+        acc.card += r.card || 0;
+        acc.other += r.other || 0;
+        return acc;
+    }, { sellers: 0, orders: 0, subtotal: 0, tax: 0, discount: 0, total: 0, due: 0, collected: 0, cash: 0, upi: 0, card: 0, other: 0 });
+
+    return { sellers, summary };
+}
+
 export async function getRestaurantReport(query = {}) {
     const parseTimeRange = (timeLabel) => {
         const now = new Date();
