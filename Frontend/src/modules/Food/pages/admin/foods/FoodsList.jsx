@@ -1,12 +1,13 @@
 import { useState, useMemo, useEffect, useCallback } from "react"
 import { useSearchParams } from "react-router-dom"
-import { Search, Trash2, Loader2, Eye, Pencil, Plus, Save, ChevronDown, ChevronLeft, ChevronRight, FileUp, Download, X, Upload } from "lucide-react"
+import { Search, Trash2, Loader2, Eye, Pencil, Plus, Save, ChevronDown, ChevronLeft, ChevronRight, FileUp, Download, X, Upload, ScanBarcode } from "lucide-react"
 import { adminAPI, uploadAPI } from "@food/api"
 import { toast } from "sonner"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@food/components/ui/dialog"
 import { Popover, PopoverContent, PopoverTrigger } from "@food/components/ui/popover"
 import { getFoodDisplayOtherPrice, getFoodDisplayPrice, getFoodVariants } from "@food/utils/foodVariants"
 import { canCurrentAdminAction } from "@food/utils/adminRbac"
+import BarcodeLabelsModal from "@food/components/BarcodeLabelsModal"
 const debugLog = (...args) => {}
 const debugWarn = (...args) => {}
 const debugError = (...args) => {}
@@ -131,6 +132,7 @@ export default function FoodsList() {
   const [selectedFoodIds, setSelectedFoodIds] = useState(() => new Set())
   const [selectAllForRestaurant, setSelectAllForRestaurant] = useState(false)
   const [isBulkDeleting, setIsBulkDeleting] = useState(false)
+  const [isLabelsOpen, setIsLabelsOpen] = useState(false)
   const ensureActionAccess = (action) => {
     if (canCurrentAdminAction(action)) return true
     toast.error("Insufficient permissions for this action")
@@ -214,6 +216,9 @@ export default function FoodsList() {
             categoryName: f.categoryName || "",
             price: getFoodDisplayPrice(f),
             otherPrice: getFoodDisplayOtherPrice(f),
+            mrp: f.mrp ?? null,
+            barcode: f.barcode || "",
+            itemCode: f.itemCode || "",
             variants: getFoodVariants(f),
             foodType: f.foodType || "Non-Veg",
             approvalStatus: f.approvalStatus || "approved",
@@ -863,6 +868,15 @@ export default function FoodsList() {
             >
               <Upload className="w-4 h-4" />
               <span>Bulk Upload</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setIsLabelsOpen(true)}
+              className="px-4 py-2.5 rounded-lg border border-slate-300 bg-white text-slate-700 text-sm font-medium hover:bg-slate-50 inline-flex items-center gap-2"
+              title="Print barcode labels for the products on this page"
+            >
+              <ScanBarcode className="w-4 h-4" />
+              <span>Barcode Labels</span>
             </button>
             {isRestaurantSelected && selectedDeleteCount > 0 && (
               <button
@@ -1738,6 +1752,19 @@ export default function FoodsList() {
           </div>
         </DialogContent>
       </Dialog>
+
+      {isLabelsOpen ? (
+        <BarcodeLabelsModal
+          items={foods}
+          initialSelected={[...selectedFoodIds]}
+          assignBarcodes={async (ids) => (await adminAPI.assignFoodBarcodes(ids)).data?.data?.items || []}
+          onAssigned={(rows) => {
+            const fresh = new Map(rows.map((r) => [String(r.id), r.barcode]))
+            setFoods((prev) => prev.map((f) => (fresh.has(String(f.id)) ? { ...f, barcode: fresh.get(String(f.id)) } : f)))
+          }}
+          onClose={() => setIsLabelsOpen(false)}
+        />
+      ) : null}
     </div>
   )
 }

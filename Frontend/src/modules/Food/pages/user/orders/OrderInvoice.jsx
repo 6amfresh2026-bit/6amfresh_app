@@ -9,15 +9,49 @@ import { Button } from "@food/components/ui/button"
 import { Badge } from "@food/components/ui/badge"
 import { useOrders } from "@food/context/OrdersContext"
 import { useCompanyName } from "@food/hooks/useCompanyName"
+import { barcodeSvg } from "@food/utils/barcode"
+import { orderAPI } from "@food/api"
+
+/**
+ * The invoice reads an order in one flat shape (subtotal, deliveryFee, tax, total, address),
+ * but the API sends the amounts under `pricing`, the address as `deliveryAddress` and the
+ * customer-facing number as `orderId`. Reading the API order as-is crashed the page, so
+ * every order is mapped into the flat shape first; an order already in it is left alone.
+ */
+const toInvoiceOrder = (o) => {
+  if (!o) return o
+  const p = o.pricing || {}
+  const num = (v) => Number(v) || 0
+  return {
+    ...o,
+    id: o.orderId || o.order_id || o.id || o._id,
+    items: (o.items || []).map((it, i) => ({
+      ...it,
+      id: it.id || it.itemId || i,
+      price: num(it.price),
+      quantity: num(it.quantity),
+    })),
+    subtotal: num(o.subtotal ?? p.subtotal),
+    deliveryFee: num(o.deliveryFee ?? p.deliveryFee),
+    tax: num(o.tax ?? p.tax),
+    total: num(o.total ?? p.total),
+    address: o.address || o.deliveryAddress || {},
+  }
+}
+
+const rupees = (n) => `₹${(Number(n) || 0).toFixed(2)}`
 
 export default function OrderInvoice() {
   const companyName = useCompanyName()
   const { orderId } = useParams()
   const { getOrderById } = useOrders()
-  const [order, setOrder] = useState(() => getOrderById(orderId))
+  const [order, setOrder] = useState(() => toInvoiceOrder(getOrderById(orderId)))
   const [loading, setLoading] = useState(!order)
   const [error, setError] = useState(null)
   const invoiceRef = useRef(null)
+  // Our own SVG, built from the invoice number alone (rect geometry; no markup from the order).
+  // Whole-pixel bars (module 2): a fractional bar width blurs when drawn on a screen and stops scanning.
+  const invoiceBarcode = order?.id ? barcodeSvg(String(order.id), { height: 40, module: 2 }) : ""
 
   useEffect(() => {
     if (order) return
@@ -27,7 +61,7 @@ export default function OrderInvoice() {
         setLoading(true)
         const response = await orderAPI.getOrderDetails(orderId)
         if (response.data?.success && response.data.data?.order) {
-          setOrder(response.data.data.order)
+          setOrder(toInvoiceOrder(response.data.data.order))
         } else {
           setError("Order not found")
         }
@@ -247,8 +281,12 @@ export default function OrderInvoice() {
                 <div className="text-left sm:text-right">
                   <h3 className="font-bold mb-2 text-sm sm:text-base">Invoice Details:</h3>
                   <p className="text-xs sm:text-sm"><strong>Invoice #:</strong> {order.id}</p>
+                  {/* The invoice number as a scannable barcode, so support or a returns desk can pull the order up with a scan. */}
+                  {invoiceBarcode ? (
+                    <div className="mt-1 sm:flex sm:justify-end [&>svg]:h-auto [&>svg]:max-w-full" aria-label={`Barcode for invoice ${order.id}`} dangerouslySetInnerHTML={{ __html: invoiceBarcode }} />
+                  ) : null}
                   <p className="text-xs sm:text-sm"><strong>Date:</strong> {formatDate(order.createdAt)}</p>
-                  <p className="text-xs sm:text-sm"><strong>Payment:</strong> {order.paymentMethod?.type?.toUpperCase() || "Card"}</p>
+                  <p className="text-xs sm:text-sm"><strong>Payment:</strong> {String(order.paymentMethod?.type || order.payment?.method || (typeof order.paymentMethod === "string" ? order.paymentMethod : "") || "Card").toUpperCase()}</p>
                 </div>
               </div>
 
@@ -281,14 +319,14 @@ export default function OrderInvoice() {
                                   <span className="text-xs text-gray-500">{item.variantName}</span>
                                 ) : null}
                                 <span className="text-muted-foreground sm:hidden text-xs">
-                                  Qty: {item.quantity} � ${item.price.toFixed(2)}
+                                  Qty: {item.quantity} × {rupees(item.price)}
                                 </span>
                               </div>
                             </div>
                           </td>
                           <td className="px-2 sm:px-3 py-2 sm:py-3 text-center hidden sm:table-cell">{item.quantity}</td>
-                          <td className="px-2 sm:px-3 py-2 sm:py-3 text-right hidden md:table-cell">${item.price.toFixed(2)}</td>
-                          <td className="px-2 sm:px-3 py-2 sm:py-3 text-right font-medium">${(item.price * item.quantity).toFixed(2)}</td>
+                          <td className="px-2 sm:px-3 py-2 sm:py-3 text-right hidden md:table-cell">{rupees(item.price)}</td>
+                          <td className="px-2 sm:px-3 py-2 sm:py-3 text-right font-medium">{rupees(item.price * item.quantity)}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -300,19 +338,19 @@ export default function OrderInvoice() {
               <div className="total-section mt-4 sm:mt-6">
                 <div className="total-row flex justify-between text-xs sm:text-sm sm:text-base py-1 sm:py-2">
                   <span>Subtotal:</span>
-                  <span>${order.subtotal.toFixed(2)}</span>
+                  <span>{rupees(order.subtotal)}</span>
                 </div>
                 <div className="total-row flex justify-between text-xs sm:text-sm sm:text-base py-1 sm:py-2">
                   <span>Delivery Fee:</span>
-                  <span>${order.deliveryFee.toFixed(2)}</span>
+                  <span>{rupees(order.deliveryFee)}</span>
                 </div>
                 <div className="total-row flex justify-between text-xs sm:text-sm sm:text-base py-1 sm:py-2">
                   <span>Tax:</span>
-                  <span>${order.tax.toFixed(2)}</span>
+                  <span>{rupees(order.tax)}</span>
                 </div>
                 <div className="grand-total flex justify-between text-base sm:text-lg md:text-xl md:text-2xl pt-2 sm:pt-3 mt-2 sm:mt-3 border-t-2 border-[#EB590E]">
                   <span>Total:</span>
-                  <span>${order.total.toFixed(2)}</span>
+                  <span>{rupees(order.total)}</span>
                 </div>
               </div>
 
