@@ -59,6 +59,9 @@ export default defineConfig({
           if (id.includes('jspdf') || id.includes('jspdf-autotable')) return 'vendor-export-pdf'
           if (id.includes('exceljs')) return 'vendor-export-excel'
           if (id.includes('html2canvas')) return 'vendor-export-canvas'
+          // Camera barcode decoder: only the till's scan dialog imports it, so keep it out of the
+          // catch-all chunk every page loads.
+          if (id.includes('@zxing/')) return 'vendor-barcode-scanner'
           return 'vendor-core'
         },
       },
