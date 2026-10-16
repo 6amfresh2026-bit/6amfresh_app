@@ -4456,6 +4456,7 @@ function serializeAdminFoodRow(f, restaurantMap, brandMap, unitMap = new Map()) 
         name: f.name,
         printName: f.printName || '',
         itemCode: f.itemCode || '',
+        barcode: f.barcode || '',
         productType: f.productType || 'Finished',
         description: f.description || '',
         shortDescription: f.shortDescription || '',

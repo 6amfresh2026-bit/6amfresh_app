@@ -1,4 +1,5 @@
 import mongoose from 'mongoose';
+import { assignMissingBarcodes } from '../../shared/productBarcode.js';
 import * as adminService from '../services/admin.service.js';
 import * as featureSettingsService from '../services/featureSettings.service.js';
 import * as adminFleetService from '../services/adminFleet.service.js';
@@ -1953,6 +1954,16 @@ export async function bulkApproveFoodItems(req, res, next) {
             message: `Successfully approved ${result.modifiedCount} items`,
             data: result
         });
+    } catch (error) {
+        next(error);
+    }
+}
+
+/** POST /foods/barcodes - barcodes for products that have none, for label printing. */
+export async function assignFoodBarcodes(req, res, next) {
+    try {
+        const items = await assignMissingBarcodes(req.body?.itemIds);
+        res.status(200).json({ success: true, message: 'Barcodes ready', data: { items } });
     } catch (error) {
         next(error);
     }

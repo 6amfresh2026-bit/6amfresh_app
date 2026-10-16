@@ -382,6 +382,7 @@ const invalidatePublicMenus = async (_req, _res, next) => {
 };
 
 router.post('/foods', invalidatePublicMenus, adminController.createFood);
+router.post('/foods/barcodes', invalidatePublicMenus, adminController.assignFoodBarcodes);
 router.patch('/foods/:id/restore', invalidatePublicMenus, adminController.restoreFood);
 router.delete('/foods/:id/purge', adminController.purgeFood);
 router.patch('/foods/:id/show-online', invalidatePublicMenus, adminController.toggleFoodShowOnline);

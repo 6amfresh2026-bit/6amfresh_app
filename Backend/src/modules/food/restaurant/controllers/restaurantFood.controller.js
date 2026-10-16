@@ -6,6 +6,7 @@ import {
     updateRestaurantFoodStock,
     listLowStockFoods
 } from '../services/restaurantFood.service.js';
+import { assignMissingBarcodes } from '../../shared/productBarcode.js';
 import { getRestaurantAnalytics, getRestaurantDashboardSummary } from '../services/restaurantAnalytics.service.js';
 
 export const createRestaurantFoodController = async (req, res, next) => {
@@ -13,6 +14,20 @@ export const createRestaurantFoodController = async (req, res, next) => {
         const restaurantId = req.user?.userId;
         const food = await createRestaurantFood(restaurantId, req.body || {});
         return sendResponse(res, 201, 'Food created successfully', { food });
+    } catch (error) {
+        next(error);
+    }
+};
+
+/**
+ * POST /foods/barcodes - gives the named products a barcode if they have none and
+ * returns every one's barcode, which is what the label printer needs.
+ */
+export const assignRestaurantFoodBarcodesController = async (req, res, next) => {
+    try {
+        const restaurantId = req.user?.userId;
+        const items = await assignMissingBarcodes(req.body?.itemIds, { restaurantId });
+        return sendResponse(res, 200, 'Barcodes ready', { items });
     } catch (error) {
         next(error);
     }
