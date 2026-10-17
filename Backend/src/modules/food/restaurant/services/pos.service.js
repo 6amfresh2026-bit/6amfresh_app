@@ -17,6 +17,7 @@ import {
 } from '../../orders/services/coupon-eligibility.service.js';
 import { updateTransactionStatus } from '../../orders/services/foodTransaction.service.js';
 import { FoodOrder } from '../../orders/models/order.model.js';
+import { barcodesForItems } from '../../shared/productBarcode.js';
 
 /**
  * The seller's till.
@@ -409,7 +410,7 @@ export async function createPosOrder(restaurantId, dto = {}) {
     }
 
     const saved = await FoodOrder.findById(result.order._id).lean();
-    return { order: result.order, receipt: toReceipt(saved, restaurant) };
+    return { order: result.order, receipt: await withItemBarcodes(toReceipt(saved, restaurant)) };
 }
 
 // ───────────────────────────── coupons ─────────────────────────────
@@ -801,6 +802,22 @@ function taxSummaryOf({ items = [], pricing = {} } = {}) {
     return rows;
 }
 
+/**
+ * Adds each line's barcode (or item code, for products that only have that) so the bill
+ * can print it under the item. Takes one receipt or a list; looks the products up once.
+ * Read from the product, not the order, so bills printed before a barcode was assigned
+ * pick it up on reprint.
+ */
+export async function withItemBarcodes(receipts) {
+    const list = (Array.isArray(receipts) ? receipts : [receipts]).filter(Boolean);
+    const ids = list.flatMap((r) => (r.items || []).map((it) => it.itemId));
+    const codes = await barcodesForItems(ids);
+    for (const receipt of list) {
+        for (const it of receipt.items || []) it.barcode = codes.get(String(it.itemId)) || '';
+    }
+    return receipts;
+}
+
 /** The shape a printed receipt and the "Last Bill" box read from. */
 export function toReceipt(order, restaurant = null) {
     if (!order) return null;
@@ -830,6 +847,7 @@ export function toReceipt(order, restaurant = null) {
             phone: isWalkInPhone(order.customerPhone) ? '' : order.customerPhone || ''
         },
         items: (order.items || []).map((line) => ({
+            itemId: String(line.itemId || ''),
             name: line.name,
             variantName: line.variantName || '',
             quantity: line.quantity,
@@ -870,7 +888,7 @@ export async function getLastPosBill(restaurantId) {
         FoodOrder.findOne({ restaurantId, source: 'pos' }).sort({ createdAt: -1 }).lean(),
         loadRestaurant(restaurantId)
     ]);
-    return toReceipt(order, restaurant);
+    return withItemBarcodes(toReceipt(order, restaurant));
 }
 
 /** By id, or by the bill number printed on the receipt — that is what gets scanned. */
@@ -885,7 +903,7 @@ export async function getPosBill(restaurantId, ref) {
     // "not found" and nothing about whether that shop exists.
     const order = await FoodOrder.findOne(filter).lean();
     if (!order) throw new NotFoundError('Bill not found');
-    return toReceipt(order, await loadRestaurant(restaurantId));
+    return withItemBarcodes(toReceipt(order, await loadRestaurant(restaurantId)));
 }
 
 /** Today's counter sales by default; a date narrows to that day, `all` lifts it. */
@@ -903,7 +921,7 @@ export async function listPosOrders(restaurantId, query = {}) {
     if (String(query.due) === 'true') filter['pos.dueAmount'] = { $gt: 0 };
 
     const rows = await FoodOrder.find(filter).sort({ createdAt: -1 }).limit(limit).lean();
-    const items = rows.map((o) => toReceipt(o));
+    const items = await withItemBarcodes(rows.map((o) => toReceipt(o)));
     return {
         items,
         total: round2(items.reduce((s, r) => s + r.pricing.total, 0)),
@@ -980,7 +998,7 @@ export async function holdPosBill(restaurantId, dto = {}) {
     });
 
     const saved = held.toObject();
-    return { held: { ...saved, id: String(saved._id) }, receipt: heldToReceipt(saved, restaurant) };
+    return { held: { ...saved, id: String(saved._id) }, receipt: await withItemBarcodes(heldToReceipt(saved, restaurant)) };
 }
 
 /**
@@ -994,6 +1012,7 @@ export function heldToReceipt(held, restaurant = null) {
     if (!held) return null;
     const pricing = held.pricing || {};
     const items = (held.items || []).map((line) => ({
+        itemId: String(line.itemId || ''),
         name: line.name,
         variantName: '',
         quantity: line.quantity,
@@ -1054,7 +1073,7 @@ export async function getHeldBillReceipt(restaurantId, heldId) {
     if (!isId(heldId)) throw new NotFoundError('Held bill not found');
     const held = await FoodPosHeldBill.findOne({ _id: heldId, restaurantId }).lean();
     if (!held) throw new NotFoundError('Held bill not found');
-    return heldToReceipt(held, await loadRestaurant(restaurantId));
+    return withItemBarcodes(heldToReceipt(held, await loadRestaurant(restaurantId)));
 }
 
 /** Resuming removes the hold: a bill is either parked or on the screen, never both. */

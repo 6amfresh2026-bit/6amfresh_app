@@ -10,6 +10,7 @@ import {
   Minus,
   Plus,
   Upload,
+  ScanBarcode,
   ChevronLeft,
   ChevronRight,
   X,
@@ -27,6 +28,7 @@ import EditItemDrawer from "@food/components/restaurant/EditItemDrawer"
 import { Switch } from "@food/components/ui/switch"
 import { useNavigate } from "react-router-dom"
 import { restaurantAPI, uploadAPI } from "@food/api"
+import BarcodeLabelsModal from "@food/components/BarcodeLabelsModal"
 import { isFlutterBridgeAvailable, openGallery } from "@food/utils/imageUploadUtils"
 import { toast } from "sonner"
 const debugLog = (...args) => {}
@@ -804,6 +806,7 @@ export default function Inventory() {
   const [isMenuOpen, setIsMenuOpen] = useState(false)
   const [isAddPopupOpen, setIsAddPopupOpen] = useState(false)
   const [isBulkUploadModalOpen, setIsBulkUploadModalOpen] = useState(false)
+  const [isLabelsOpen, setIsLabelsOpen] = useState(false)
   const [bulkUploadFile, setBulkUploadFile] = useState(null)
   const [isUploading, setIsUploading] = useState(false)
   const [bulkUploadResults, setBulkUploadResults] = useState(null)
@@ -1011,6 +1014,9 @@ export default function Inventory() {
                 stockQuantity: item.stock || "Unlimited",
                 unit: item.itemSizeUnit || "piece",
                 sku: item.sku || "",
+                barcode: item.barcode || "",
+                itemCode: item.itemCode || "",
+                packSize: item.packSize || "",
                 mrp: item.mrp ?? null,
                 gstRate: item.gstRate ?? null,
                 stockQty: item.stockQty ?? null,
@@ -1043,6 +1049,9 @@ export default function Inventory() {
                     stockQuantity: item.stock || "Unlimited",
                     unit: item.itemSizeUnit || "piece",
                     sku: item.sku || "",
+                    barcode: item.barcode || "",
+                    itemCode: item.itemCode || "",
+                    packSize: item.packSize || "",
                     mrp: item.mrp ?? null,
                     gstRate: item.gstRate ?? null,
                     stockQty: item.stockQty ?? null,
@@ -2045,6 +2054,17 @@ export default function Inventory() {
               />
             ) : null}
           </button>
+          {activeTab !== "add-ons" ? (
+            <button
+              type="button"
+              onClick={() => setIsLabelsOpen(true)}
+              className="h-11 px-4 rounded-xl border border-slate-200 bg-white text-sm font-semibold text-slate-700 hover:bg-slate-50 flex items-center gap-2 shrink-0"
+              title="Print barcode labels for your products"
+            >
+              <ScanBarcode className="w-4 h-4" />
+              Labels
+            </button>
+          ) : null}
           <button
             type="button"
             onClick={() => {
@@ -3385,6 +3405,25 @@ export default function Inventory() {
           </AnimatePresence>
         )}
       </div>
+
+      {/* Barcode labels */}
+      {isLabelsOpen ? (
+        <BarcodeLabelsModal
+          items={categories.flatMap((c) => c.items || [])}
+          assignBarcodes={async (ids) => (await restaurantAPI.assignFoodBarcodes(ids)).data?.data?.items || []}
+          onAssigned={(rows) => {
+            // Show the barcodes that were just generated without a reload.
+            const fresh = new Map(rows.map((r) => [String(r.id), r.barcode]))
+            setCategories((prev) =>
+              prev.map((c) => ({
+                ...c,
+                items: (c.items || []).map((it) => (fresh.has(String(it.id)) ? { ...it, barcode: fresh.get(String(it.id)) } : it)),
+              })),
+            )
+          }}
+          onClose={() => setIsLabelsOpen(false)}
+        />
+      ) : null}
 
       {/* Bulk Upload Modal */}
       <AnimatePresence>

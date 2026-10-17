@@ -60,6 +60,7 @@ import {
     deleteRestaurantFoodController,
     updateRestaurantFoodController,
     updateRestaurantFoodStockController,
+    assignRestaurantFoodBarcodesController,
     listLowStockFoodsController,
     getAnalyticsController,
     getDashboardSummaryController
@@ -289,6 +290,13 @@ router.post('/foods', authMiddleware, requireRestaurant, async (req, res, next) 
     await invalidateCache('restaurant_menu:*');
     next();
 }, createRestaurantFoodController);
+// Barcodes for products that have none, for label printing. Written to the products, so
+// the cached menus are dropped like any other product edit.
+router.post('/foods/barcodes', authMiddleware, requireRestaurant, async (req, res, next) => {
+    await invalidateCache('restaurant_menu:*');
+    await invalidateCache('search_products:*');
+    next();
+}, assignRestaurantFoodBarcodesController);
 // Declared before /foods/:id so "stock" and "low-stock" are not swallowed as ids.
 router.patch('/foods/stock', authMiddleware, requireRestaurant, async (req, res, next) => {
     await invalidateCache('restaurant_menu:*');

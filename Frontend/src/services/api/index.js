@@ -851,6 +851,9 @@ export const adminAPI = {
     apiClient.patch(`/food/admin/foods/${id}`, body ?? {}, {
       contextModule: "admin",
     }),
+  /** Barcodes for products that have none (saved), and every chosen product's barcode - for label printing. */
+  assignFoodBarcodes: (itemIds) =>
+    apiClient.post("/food/admin/foods/barcodes", { itemIds }, { contextModule: "admin" }),
   deleteFood: (id) =>
     apiClient.delete(`/food/admin/foods/${id}`, { contextModule: "admin" }),
   /** Food approvals (admin) - pending items created by restaurants */
@@ -1794,6 +1797,9 @@ export const restaurantAPI = {
     apiClient.patch(`/food/restaurant/foods/${String(id)}`, body ?? {}, {
       contextModule: "restaurant",
     }),
+  /** Barcodes for this seller's products that have none (saved), and every chosen product's barcode - for label printing. */
+  assignFoodBarcodes: (itemIds) =>
+    apiClient.post("/food/restaurant/foods/barcodes", { itemIds }, { contextModule: "restaurant" }),
   deleteFood: (id) =>
     apiClient.delete(`/food/restaurant/foods/${String(id)}`, {
       contextModule: "restaurant",

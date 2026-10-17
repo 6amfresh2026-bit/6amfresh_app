@@ -7,6 +7,11 @@
  * which is the same engine that will write the order.
  */
 
+import { barcodeSvg } from "@food/utils/barcode"
+
+// The drawing lives in utils/barcode.js; re-exported for the callers that import it here.
+export { barcodeSvg }
+
 export const ORDER_TYPES = [
   { value: "dine_in", label: "Dine In" },
   { value: "take_away", label: "Take Away" },
@@ -102,6 +107,15 @@ export const matchesCode = (item, code) => {
   return [item.barcode, item.sku, item.itemCode].some((v) => v && String(v).trim().toLowerCase() === c)
 }
 
+/**
+ * The product a scanned code names: an exact barcode / SKU / item-code match, preferring
+ * one that can be sold when several share the code. Null when nothing matches.
+ */
+export const findItemByCode = (items, code) => {
+  const hits = (items || []).filter((it) => matchesCode(it, code))
+  return hits.find((it) => it.isAvailable !== false) || hits[0] || null
+}
+
 const escapeHtml = (s) =>
   String(s ?? "").replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[ch])
 
@@ -142,48 +156,6 @@ export const amountInWords = (value) => {
   return paise ? `${head}, Paise ${twoDigits(paise)} Only` : `${head} Only`
 }
 
-// Code 128 bar/space widths, values 0-106. Standard table; the last entry is
-// the 7-module stop pattern.
-const CODE128_PATTERNS = ("212222222122222221121223121322131222122213122312132212221213221312231212112232122132122231113222123122" +
-  "123221223211221132221231213212223112312131311222321122321221312212322112322211212123212321232121111323131123131321" +
-  "112313132113132311211313231113231311112133112331132131113123113321133121313121211331231131213113213311213131311123" +
-  "311321331121312113312311332111314111221411431111111224111422121124121421141122141221112214112412122114122411142112" +
-  "142211241211221114413111241112134111111242121142121241114212124112124211411212421112421211212141214121412121111143" +
-  "111341131141114113114311411113411311113141114131311141411131211412211214211232").match(/.{6}/g).concat(["2331112"])
-
-/**
- * A scannable Code 128-B barcode of the bill number, as inline SVG.
- *
- * Not decoration: the till's "Scan Sales Invoice" box looks a bill up by this
- * number, so without a barcode on the paper that box has nothing to scan and a
- * reprint means typing fourteen characters off a thermal print.
- */
-export const barcodeSvg = (text, { height = 44, module = 1.4 } = {}) => {
-  const value = String(text || "").replace(/[^\x20-\x7e]/g, "")
-  if (!value) return ""
-
-  const codes = [104] // Start B
-  for (const ch of value) codes.push(ch.charCodeAt(0) - 32)
-  // Checksum is position-weighted from the start character, which counts as 1.
-  const checksum = codes.reduce((sum, code, i) => sum + code * (i === 0 ? 1 : i), 0) % 103
-  codes.push(checksum, 106) // and Stop
-
-  let x = 0
-  const bars = []
-  for (const code of codes) {
-    const widths = CODE128_PATTERNS[code]
-    if (!widths) continue
-    for (let i = 0; i < widths.length; i += 1) {
-      const w = Number(widths[i]) * module
-      if (i % 2 === 0) bars.push(`<rect x="${x.toFixed(2)}" y="0" width="${w.toFixed(2)}" height="${height}"/>`)
-      x += w
-    }
-  }
-  // A quiet zone either side, without which many scanners will not read it.
-  const quiet = 10 * module
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${(x + quiet * 2).toFixed(2)}" height="${height}" viewBox="${(-quiet).toFixed(2)} 0 ${(x + quiet * 2).toFixed(2)} ${height}" fill="#000">${bars.join("")}</svg>`
-}
-
 /**
  * An 80mm receipt. Opened in its own window and printed from there, the same
  * way the customer-side invoice does it, so the till's own layout never has
@@ -221,7 +193,13 @@ export const receiptHtml = (r, { title = "Invoice", held = false } = {}) => {
         <td class="r">${money(it.price, 2)}</td>
         <td class="r">${money(it.discount || 0, 2)}</td>
         <td class="r">${money(it.amount, 2)}</td>
-      </tr>`,
+      </tr>${
+        // The item's own barcode, under its line: scanning it at the counter looks the product
+        // up again, which is how a return or an exchange is rung up without typing a name.
+        it.barcode
+          ? `<tr><td></td><td colspan="5" class="ibc">${barcodeSvg(it.barcode, { height: 16, module: 1 })}<span class="hsn">${escapeHtml(it.barcode)}</span></td></tr>`
+          : ""
+      }`,
     )
     .join("")
 
@@ -262,6 +240,7 @@ export const receiptHtml = (r, { title = "Invoice", held = false } = {}) => {
   .c { text-align: center; } .r { text-align: right; } .b { font-weight: bold; }
   .muted { font-size: 10px; }
   .hsn { font-size: 9px; }
+  .ibc svg { display: block; height: 16px; width: auto; max-width: 100%; }
   hr { border: 0; border-top: 1px dashed #000; margin: 4px 0; }
   table { width: 100%; border-collapse: collapse; }
   td, th { padding: 1px 0; vertical-align: top; }
