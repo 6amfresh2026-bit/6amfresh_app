@@ -32,3 +32,6 @@ dist-ssr
 
 # Vite
 *.timestamp-*
+
+# Production environment secrets — never commit
+.env.production

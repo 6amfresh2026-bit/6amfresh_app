@@ -28,6 +28,11 @@ export async function createProductRequestController(req, res, next) {
             category: String(body.category || '').trim(),
             quantity: String(body.quantity || '').trim(),
             note: String(body.note || body.description || '').trim(),
+            size: String(body.size || '').trim(),
+            expectedPrice: String(body.expectedPrice || '').trim(),
+            dietType: String(body.dietType || '').trim(),
+            frequency: String(body.frequency || '').trim(),
+            autoSubscribe: body.autoSubscribe === true || body.autoSubscribe === 'true',
             customerName: user?.name || '',
             customerPhone: user?.phone || '',
         });
@@ -59,6 +64,39 @@ export async function listMyProductRequestsController(req, res, next) {
         ]);
 
         return sendResponse(res, 200, 'Product requests fetched', { requests, total, page, limit });
+    } catch (e) {
+        next(e);
+    }
+}
+
+/**
+ * Customer withdraws their own request. Only allowed while it is still
+ * pending/reviewed — once it has been approved, rejected or fulfilled the
+ * admin has acted on it and it stays on record.
+ * DELETE /food/user/product-requests/:requestId
+ */
+export async function withdrawMyProductRequestController(req, res, next) {
+    try {
+        const userId = req.user?.userId;
+        if (!userId || !mongoose.Types.ObjectId.isValid(userId)) {
+            return sendError(res, 401, 'Unauthorized or invalid user');
+        }
+        const { requestId } = req.params;
+        if (!requestId || !mongoose.Types.ObjectId.isValid(requestId)) {
+            return sendError(res, 400, 'Invalid request id');
+        }
+
+        const request = await FoodProductRequest.findOne({
+            _id: new mongoose.Types.ObjectId(requestId),
+            userId: new mongoose.Types.ObjectId(userId),
+        });
+        if (!request) return sendError(res, 404, 'Product request not found');
+        if (!['pending', 'reviewed'].includes(request.status)) {
+            return sendError(res, 400, 'This request can no longer be withdrawn');
+        }
+
+        await request.deleteOne();
+        return sendResponse(res, 200, 'Product request withdrawn', { success: true });
     } catch (e) {
         next(e);
     }

@@ -68,16 +68,58 @@ export async function createMonthlyList(userId, dto) {
     return { list: doc.toObject() };
 }
 
+/**
+ * Attaches the current image / price / MRP / pack-size to each list item so the
+ * customer app renders real product thumbnails and prices. Items only store an
+ * itemId + name snapshot; everything else is re-read fresh from FoodItem.
+ */
+async function attachItemDetailsToLists(lists) {
+    const many = Array.isArray(lists);
+    const arr = many ? lists : [lists];
+    const itemIds = [
+        ...new Set(
+            arr.flatMap((l) => (l.items || []).map((i) => String(i.itemId))).filter(Boolean),
+        ),
+    ];
+    if (!itemIds.length) return lists;
+
+    const items = await FoodItem.find({ _id: { $in: itemIds } })
+        .select('name image images price mrp otherPrice packSize variants')
+        .lean();
+    const byId = new Map(items.map((i) => [String(i._id), i]));
+
+    const enrichItem = (item) => {
+        const it = byId.get(String(item.itemId));
+        if (!it) return item;
+        let price = typeof it.price === 'number' ? it.price : 0;
+        const mrp = typeof it.mrp === 'number' ? it.mrp : 0;
+        if (item.variantId && Array.isArray(it.variants)) {
+            const v = it.variants.find((variant) => String(variant._id) === String(item.variantId));
+            if (v && typeof v.price === 'number') price = v.price;
+        }
+        return {
+            ...item,
+            image: it.image || (Array.isArray(it.images) && it.images.length ? it.images[0] : ''),
+            price,
+            mrp,
+            packSize: it.packSize || '',
+        };
+    };
+
+    const enrichList = (l) => ({ ...l, items: (l.items || []).map(enrichItem) });
+    return many ? arr.map(enrichList) : enrichList(lists);
+}
+
 export async function listMonthlyLists(userId) {
     const lists = await FoodMonthlyList.find({ userId }).sort({ createdAt: -1 }).lean();
-    return { lists };
+    return { lists: await attachItemDetailsToLists(lists) };
 }
 
 export async function getMonthlyList(userId, listId) {
     const id = toObjectId(listId, 'listId');
     const list = await FoodMonthlyList.findOne({ _id: id, userId }).lean();
     if (!list) throw new NotFoundError('Monthly list not found');
-    return { list };
+    return { list: await attachItemDetailsToLists(list) };
 }
 
 export async function updateMonthlyList(userId, listId, dto) {

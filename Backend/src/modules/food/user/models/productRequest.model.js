@@ -16,6 +16,12 @@ const productRequestSchema = new mongoose.Schema(
         category: { type: String, default: '', trim: true },
         quantity: { type: String, default: '', trim: true },
         note: { type: String, default: '', trim: true },
+        // Extra detail the customer app's request form captures.
+        size: { type: String, default: '', trim: true },
+        expectedPrice: { type: String, default: '', trim: true },
+        dietType: { type: String, default: '', trim: true },
+        frequency: { type: String, default: '', trim: true },
+        autoSubscribe: { type: Boolean, default: false },
         // Snapshot of who asked, so the admin list reads without a populate and
         // still shows something if the account is later removed.
         customerName: { type: String, default: '', trim: true },

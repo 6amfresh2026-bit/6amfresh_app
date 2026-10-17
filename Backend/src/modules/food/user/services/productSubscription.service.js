@@ -169,9 +169,46 @@ export async function createSubscription(userId, dto) {
     return { subscription: subscription.toObject() };
 }
 
+/**
+ * Attaches the current item image / price / MRP / pack-size to each
+ * subscription so the customer app renders real product thumbnails and prices.
+ * The subscription document itself only stores itemId + a name snapshot.
+ */
+async function attachItemDetails(subscriptions) {
+    const many = Array.isArray(subscriptions);
+    const list = many ? subscriptions : [subscriptions];
+    const itemIds = [...new Set(list.map((s) => String(s.itemId)).filter(Boolean))];
+    if (!itemIds.length) return subscriptions;
+
+    const items = await FoodItem.find({ _id: { $in: itemIds } })
+        .select('name image images price mrp otherPrice packSize variants')
+        .lean();
+    const byId = new Map(items.map((i) => [String(i._id), i]));
+
+    const enrich = (s) => {
+        const it = byId.get(String(s.itemId));
+        if (!it) return s;
+        let price = typeof it.price === 'number' ? it.price : 0;
+        const mrp = typeof it.mrp === 'number' ? it.mrp : 0;
+        if (s.variantId && Array.isArray(it.variants)) {
+            const v = it.variants.find((variant) => String(variant._id) === String(s.variantId));
+            if (v && typeof v.price === 'number') price = v.price;
+        }
+        return {
+            ...s,
+            itemImage: it.image || (Array.isArray(it.images) && it.images.length ? it.images[0] : ''),
+            itemPrice: price,
+            itemMrp: mrp,
+            itemPackSize: it.packSize || '',
+        };
+    };
+
+    return many ? list.map(enrich) : enrich(subscriptions);
+}
+
 export async function listSubscriptions(userId) {
     const subscriptions = await FoodProductSubscription.find({ userId }).sort({ createdAt: -1 }).lean();
-    return { subscriptions };
+    return { subscriptions: await attachItemDetails(subscriptions) };
 }
 
 export async function getSubscription(userId, subscriptionId) {
@@ -181,7 +218,7 @@ export async function getSubscription(userId, subscriptionId) {
     const occurrences = await FoodSubscriptionOccurrence.find({ subscriptionId: id })
         .sort({ scheduledDate: 1 })
         .lean();
-    return { subscription, occurrences };
+    return { subscription: await attachItemDetails(subscription), occurrences };
 }
 
 export async function updateSubscription(userId, subscriptionId, dto) {
