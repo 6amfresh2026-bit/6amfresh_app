@@ -102,7 +102,8 @@ import {
     getCurrentShiftController,
     openShiftController,
     getShiftSummaryController,
-    closeShiftController
+    closeShiftController,
+    recordCashMovementController
 } from '../controllers/pos.controller.js';
 import { authMiddleware, optionalAuth } from '../../../../core/auth/auth.middleware.js';
 import { sendError } from '../../../../utils/response.js';
@@ -385,5 +386,6 @@ router.get('/pos/shift/current', authMiddleware, requireRestaurant, getCurrentSh
 router.post('/pos/shift/open', authMiddleware, requireRestaurant, openShiftController);
 router.get('/pos/shift/summary', authMiddleware, requireRestaurant, getShiftSummaryController);
 router.post('/pos/shift/close', authMiddleware, requireRestaurant, closeShiftController);
+router.post('/pos/shift/cash-movement', authMiddleware, requireRestaurant, recordCashMovementController);
 
 export default router;

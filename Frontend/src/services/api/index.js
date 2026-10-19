@@ -2077,6 +2077,8 @@ export const restaurantAPI = {
     apiClient.get("/food/restaurant/pos/shift/summary", { contextModule: "restaurant" }),
   posCloseShift: (body = {}) =>
     apiClient.post("/food/restaurant/pos/shift/close", body, { contextModule: "restaurant" }),
+  posCashMovement: (body = {}) =>
+    apiClient.post("/food/restaurant/pos/shift/cash-movement", body, { contextModule: "restaurant" }),
   /** List restaurant complaints (for current restaurant dashboard) */
   getComplaints: (params = {}) =>
     apiClient.get("/food/restaurant/complaints", {

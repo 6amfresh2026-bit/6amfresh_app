@@ -20,7 +20,8 @@ import {
     getCurrentShift,
     openShift,
     getShiftSummary,
-    closeShift
+    closeShift,
+    recordCashMovement
 } from '../services/pos.service.js';
 
 /** Every handler here acts as the signed-in seller, on their own shop only. */
@@ -185,6 +186,14 @@ export const getShiftSummaryController = async (req, res, next) => {
 export const closeShiftController = async (req, res, next) => {
     try {
         return sendResponse(res, 200, 'Register closed', await closeShift(shopOf(req), req.body || {}));
+    } catch (err) {
+        next(err);
+    }
+};
+
+export const recordCashMovementController = async (req, res, next) => {
+    try {
+        return sendResponse(res, 200, 'Cash movement recorded', await recordCashMovement(shopOf(req), req.body || {}));
     } catch (err) {
         next(err);
     }

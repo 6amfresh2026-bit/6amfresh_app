@@ -1203,3 +1203,28 @@ export async function closeShift(restaurantId, dto = {}) {
     await shift.save();
     return { shift: shift.toObject() };
 }
+
+/** Record cash paid into or out of the open drawer during the shift. */
+export async function recordCashMovement(restaurantId, dto = {}) {
+    await loadRestaurant(restaurantId);
+    const shift = await FoodPosShift.findOne({ restaurantId, status: 'open' });
+    if (!shift) throw new ValidationError('Open a register before moving cash');
+
+    const type = String(dto.type || '').trim().toLowerCase();
+    if (type !== 'in' && type !== 'out') throw new ValidationError('type must be "in" or "out"');
+    const amount = round2(dto.amount);
+    if (!(amount > 0)) throw new ValidationError('Amount must be above zero');
+
+    if (type === 'in') shift.cashReceived = round2((shift.cashReceived || 0) + amount);
+    else {
+        // Can't take out more than the drawer holds (opening + sales + in − out).
+        const { cashSales } = await computeShiftCash(restaurantId, shift.openedAt);
+        const available = round2((shift.openingCash || 0) + cashSales + (shift.cashReceived || 0) - (shift.cashOut || 0));
+        if (amount > available) throw new ValidationError(`Only ₹${available.toFixed(2)} is in the drawer`);
+        shift.cashOut = round2((shift.cashOut || 0) + amount);
+    }
+    await shift.save();
+
+    const { cashSales, billsCount } = await computeShiftCash(restaurantId, shift.openedAt);
+    return { shift: { ...shift.toObject(), cashSales, billsCount, expectedCash: expectedCashOf(shift, cashSales) } };
+}

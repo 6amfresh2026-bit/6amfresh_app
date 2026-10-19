@@ -22,6 +22,7 @@ import { PosChargesModal } from "@food/components/restaurant/pos/PosSmallModals"
 import { KEY_ACTIONS, lineDiscount, printReceipt } from "@food/components/restaurant/pos/posUtils"
 import PosOpenRegisterModal from "@food/components/restaurant/pos/PosOpenRegisterModal"
 import PosCloseRegisterModal from "@food/components/restaurant/pos/PosCloseRegisterModal"
+import PosCashControlModal from "@food/components/restaurant/pos/PosCashControlModal"
 import { useNavigate } from "react-router-dom"
 import { logoutRestaurantSession } from "@food/utils/restaurantLogout"
 
@@ -50,6 +51,7 @@ export default function PointOfSale() {
   const [shift, setShift] = useState(null)        // open shift, or null
   const [shiftLoaded, setShiftLoaded] = useState(false)
   const [closeSummary, setCloseSummary] = useState(null) // summary shown in the close modal
+  const [cashCtrlSummary, setCashCtrlSummary] = useState(null) // summary shown in cash-control modal
 
   // Every till sale is a walk-in counter sale. The four-way selector is gone:
   // this is a grocery counter, not a restaurant floor — dine-in and take-away
@@ -133,6 +135,14 @@ export default function PointOfSale() {
       .catch(() => {})
       .finally(() => setShiftLoaded(true))
   }, [loadMenu, loadLastBill])
+
+  // Load the live shift summary into the cash-control modal when it opens.
+  useEffect(() => {
+    if (modal !== "cashControl") return
+    restaurantAPI.posShiftSummary()
+      .then((res) => setCashCtrlSummary(res?.data?.data?.shift || null))
+      .catch(() => setCashCtrlSummary(shift))
+  }, [modal, shift])
 
   const handleOpenRegister = async (openingCash) => {
     try {
@@ -529,6 +539,15 @@ export default function PointOfSale() {
           summary={closeSummary}
           onClose={() => setCloseSummary(null)}
           onConfirm={handleCloseRegister}
+        />
+      ) : null}
+
+      {/* Cash control — pay cash in / out of the drawer during the shift. */}
+      {modal === "cashControl" ? (
+        <PosCashControlModal
+          summary={cashCtrlSummary}
+          onClose={() => setModal(null)}
+          onUpdated={(s) => { if (s) setShift((prev) => ({ ...prev, cashReceived: s.cashReceived, cashOut: s.cashOut })) }}
         />
       ) : null}
     </div>
