@@ -747,6 +747,8 @@ export const adminAPI = {
   // ─── Stocks & Stock Verification ───
   getStocks: (params = {}) =>
     apiClient.get("/food/admin/stocks", { params, contextModule: "admin" }),
+  getStockComparison: (restaurantIds = []) =>
+    apiClient.get("/food/admin/stocks/compare", { params: { restaurantIds: restaurantIds.join(",") }, contextModule: "admin" }),
   adjustStock: (body) =>
     apiClient.post("/food/admin/stocks/adjust", body ?? {}, { contextModule: "admin" }),
   getStockMovements: (params = {}) =>

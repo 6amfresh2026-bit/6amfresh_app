@@ -458,3 +458,48 @@ export async function deleteVerification(id) {
     await FoodStockVerification.deleteOne({ _id: v._id });
     return { id: String(v._id) };
 }
+
+/** Side-by-side inventory snapshot for a set of stores. */
+export async function getStoreStockComparison(restaurantIds = []) {
+    const ids = (Array.isArray(restaurantIds) ? restaurantIds : [])
+        .filter((id) => mongoose.Types.ObjectId.isValid(String(id)))
+        .map((id) => new mongoose.Types.ObjectId(String(id)));
+    if (!ids.length) return { stores: [] };
+
+    const restaurants = await FoodRestaurant.find({ _id: { $in: ids } }).select('restaurantName').lean();
+    const rMap = new Map(restaurants.map((r) => [String(r._id), r.restaurantName]));
+
+    const outAt = { $ifNull: ['$outOfStockThreshold', DEFAULT_STOCK_THRESHOLDS.out] };
+    const lowAt = { $ifNull: ['$lowStockThreshold', DEFAULT_STOCK_THRESHOLDS.low] };
+    const rows = await FoodItem.aggregate([
+        { $match: { restaurantId: { $in: ids }, isDeleted: { $ne: true } } },
+        {
+            $group: {
+                _id: '$restaurantId',
+                products: { $sum: 1 },
+                tracked: { $sum: { $cond: [{ $eq: ['$stockQty', null] }, 0, 1] } },
+                availableQty: { $sum: { $ifNull: ['$stockQty', 0] } },
+                stockValue: { $sum: { $multiply: [{ $ifNull: ['$stockQty', 0] }, { $ifNull: ['$purchasePrice', 0] }] } },
+                out: { $sum: { $cond: [{ $and: [{ $ne: ['$stockQty', null] }, { $lte: ['$stockQty', outAt] }] }, 1, 0] } },
+                low: { $sum: { $cond: [{ $and: [{ $ne: ['$stockQty', null] }, { $gt: ['$stockQty', outAt] }, { $lte: ['$stockQty', lowAt] }] }, 1, 0] } }
+            }
+        }
+    ]);
+    const byId = new Map(rows.map((r) => [String(r._id), r]));
+
+    const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+    const stores = ids.map((id) => {
+        const r = byId.get(String(id)) || {};
+        return {
+            storeId: String(id),
+            store: rMap.get(String(id)) || 'Store',
+            products: r.products || 0,
+            tracked: r.tracked || 0,
+            availableQty: round2(r.availableQty),
+            stockValue: round2(r.stockValue),
+            low: r.low || 0,
+            out: r.out || 0
+        };
+    });
+    return { stores };
+}

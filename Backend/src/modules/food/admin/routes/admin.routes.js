@@ -314,6 +314,7 @@ router.patch('/units/:id/toggle', productMasters.toggleUnitStatusController);
 router.delete('/units/:id', productMasters.deleteUnitController);
 
 // ----- Stocks & Stock Verification -----
+router.get('/stocks/compare', stockAdmin.getStockComparisonController);
 router.get('/stocks/movements', stockAdmin.listMovementsController);
 router.get('/stocks/:itemId/movements', stockAdmin.listItemMovementsController);
 router.get('/stocks', stockAdmin.listStocksController);

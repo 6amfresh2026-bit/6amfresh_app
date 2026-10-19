@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react"
-import { ChevronDown, Download, Filter, Info, Loader2, Search } from "lucide-react"
+import { ChevronDown, Download, Filter, Info, Loader2, Search, X } from "lucide-react"
 import { toast } from "sonner"
 
 import { adminAPI } from "@food/api"
@@ -65,6 +65,7 @@ export default function Stocks() {
   const [exportMenu, setExportMenu] = useState(false)
 
   const [filterOpen, setFilterOpen] = useState(true)
+  const [compare, setCompare] = useState(null)  // { picking:Set, data:[], loading } or null
   const [filters, setFilters] = useState({ restaurantId: "", departmentId: "", categoryId: "", brandId: "", unitId: "", status: "" })
   const [applied, setApplied] = useState(filters)
   const [lookups, setLookups] = useState({ restaurants: [], departments: [], categories: [], brands: [], units: [] })
@@ -177,6 +178,25 @@ export default function Stocks() {
     const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = `stock-${new Date().toISOString().slice(0, 10)}.csv`; a.click(); URL.revokeObjectURL(a.href)
   }
 
+  const toggleCompareStore = (id) =>
+    setCompare((c) => {
+      const picking = new Set(c?.picking || [])
+      picking.has(id) ? picking.delete(id) : picking.add(id)
+      return { ...c, picking }
+    })
+  const runCompare = async () => {
+    const ids = [...(compare?.picking || [])]
+    if (ids.length < 2) { toast.error("Pick at least two stores to compare"); return }
+    setCompare((c) => ({ ...c, loading: true }))
+    try {
+      const res = await adminAPI.getStockComparison(ids)
+      setCompare((c) => ({ ...c, data: res?.data?.data?.stores || [], loading: false }))
+    } catch (err) {
+      toast.error(err?.response?.data?.message || "Failed to compare stores")
+      setCompare((c) => ({ ...c, loading: false }))
+    }
+  }
+
   // Store-first: picking a store applies immediately (no Apply click needed).
   const selectStore = (id) => {
     setFilters((f) => ({ ...f, restaurantId: id }))
@@ -222,6 +242,9 @@ export default function Stocks() {
                 <option key={r._id || r.id} value={r._id || r.id}>{r.restaurantName || r.name}</option>
               ))}
             </select>
+            <button type="button" onClick={() => setCompare({ picking: new Set(), data: [], loading: false })} className="inline-flex h-9 items-center gap-1.5 rounded border border-sky-500 px-3 text-sm font-medium text-sky-600 hover:bg-sky-50">
+              Compare stores
+            </button>
           </div>
           <div className="relative">
             <button type="button" onClick={() => setColsOpen((v) => !v)} className="inline-flex h-9 items-center gap-2 rounded bg-sky-500 px-3 text-sm font-medium text-white hover:bg-sky-600">
@@ -392,6 +415,59 @@ export default function Stocks() {
           )}
         </DialogContent>
       </Dialog>
+
+      {/* Compare stores — side-by-side inventory snapshot. */}
+      {compare && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onMouseDown={() => setCompare(null)}>
+          <div className="w-full max-w-3xl rounded-lg bg-white shadow-xl flex flex-col max-h-[90vh]" onMouseDown={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between border-b px-4 py-3">
+              <h2 className="text-base font-semibold text-neutral-800">Compare stores</h2>
+              <button type="button" onClick={() => setCompare(null)} className="rounded p-1 text-neutral-500 hover:bg-neutral-100"><X size={18} /></button>
+            </div>
+            <div className="overflow-y-auto px-4 py-3">
+              <div className="mb-3 flex flex-wrap gap-2">
+                {lookups.restaurants.map((r) => {
+                  const id = String(r._id || r.id)
+                  const on = compare.picking?.has(id)
+                  return (
+                    <button key={id} type="button" onClick={() => toggleCompareStore(id)} className={`rounded-full border px-3 py-1.5 text-sm ${on ? "border-sky-500 bg-sky-50 text-sky-700" : "border-neutral-300 bg-white text-neutral-600"}`}>
+                      {r.restaurantName || r.name}
+                    </button>
+                  )
+                })}
+              </div>
+              <button type="button" onClick={runCompare} disabled={compare.loading} className="mb-3 inline-flex items-center gap-2 rounded bg-sky-500 px-4 py-2 text-sm font-medium text-white disabled:opacity-60">
+                {compare.loading && <Loader2 className="h-4 w-4 animate-spin" />} Compare ({compare.picking?.size || 0})
+              </button>
+
+              {compare.data?.length > 0 && (
+                <div className="overflow-x-auto rounded border border-neutral-200">
+                  <table className="w-full text-sm">
+                    <thead className="bg-neutral-50">
+                      <tr><th className="px-3 py-2 text-left font-semibold text-neutral-700">Metric</th>{compare.data.map((s) => <th key={s.storeId} className="px-3 py-2 text-right font-semibold text-neutral-900">{s.store}</th>)}</tr>
+                    </thead>
+                    <tbody className="divide-y divide-neutral-100">
+                      {[
+                        ["Products", (s) => s.products],
+                        ["Tracked", (s) => s.tracked],
+                        ["Available qty", (s) => num(s.availableQty)],
+                        ["Stock value (₹)", (s) => `₹${Number(s.stockValue || 0).toLocaleString("en-IN")}`],
+                        ["Low stock", (s) => s.low],
+                        ["Out of stock", (s) => s.out],
+                      ].map(([label, fn]) => (
+                        <tr key={label}>
+                          <td className="px-3 py-2 text-neutral-600">{label}</td>
+                          {compare.data.map((s) => <td key={s.storeId} className={`px-3 py-2 text-right ${label === "Out of stock" && fn(s) > 0 ? "text-rose-600 font-medium" : label === "Low stock" && fn(s) > 0 ? "text-amber-600" : "text-neutral-800"}`}>{fn(s)}</td>)}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

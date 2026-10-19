@@ -14,6 +14,10 @@ const handler = (fn, message, status = 200) => async (req, res, next) => {
 
 // ─── Stocks ───
 export const listStocksController = handler((req) => service.listStocks(req.query || {}), 'Stocks fetched');
+export const getStockComparisonController = handler(
+    (req) => service.getStoreStockComparison(String(req.query.restaurantIds || '').split(',').map((s) => s.trim()).filter(Boolean)),
+    'Store comparison fetched'
+);
 export const adjustStockController = handler((req) => service.adjustStock(req.body || {}, req.user), 'Stock adjusted');
 export const listMovementsController = handler((req) => service.listMovements(req.query || {}), 'Stock movements fetched');
 export const listItemMovementsController = handler(
