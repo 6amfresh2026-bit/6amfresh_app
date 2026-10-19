@@ -7,7 +7,7 @@ import PosModal from "./PosModal"
  * cash already in the drawer (the opening float); everything rung up after
  * rolls into this shift until it is closed and counted.
  */
-export default function PosOpenRegisterModal({ cashierName, onOpen }) {
+export default function PosOpenRegisterModal({ cashierName, onOpen, onExit }) {
   const [amount, setAmount] = useState("")
   const [busy, setBusy] = useState(false)
 
@@ -26,15 +26,30 @@ export default function PosOpenRegisterModal({ cashierName, onOpen }) {
       onClose={null}
       width="max-w-md"
       footer={
-        <button
-          type="button"
-          disabled={busy}
-          onClick={submit}
-          className="mx-auto block rounded bg-[#1f1f1f] px-8 py-2.5 text-[15px] font-medium text-white hover:bg-black disabled:opacity-50 flex items-center gap-2"
-        >
-          {busy && <Loader2 className="h-4 w-4 animate-spin" />}
-          {busy ? "Opening…" : "Open register"}
-        </button>
+        // The modal covers the whole till, so without a way out here a cashier
+        // who opened the POS by mistake would be stuck with nowhere to go but
+        // opening a register. "Back to dashboard" is that way out.
+        <div className="flex items-center justify-center gap-3">
+          {onExit ? (
+            <button
+              type="button"
+              disabled={busy}
+              onClick={onExit}
+              className="rounded border border-gray-300 bg-white px-6 py-2.5 text-[15px] font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+            >
+              Back to dashboard
+            </button>
+          ) : null}
+          <button
+            type="button"
+            disabled={busy}
+            onClick={submit}
+            className="flex items-center gap-2 rounded bg-[#1f1f1f] px-8 py-2.5 text-[15px] font-medium text-white hover:bg-black disabled:opacity-50"
+          >
+            {busy && <Loader2 className="h-4 w-4 animate-spin" />}
+            {busy ? "Opening…" : "Open register"}
+          </button>
+        </div>
       }
     >
       <p className="text-sm text-gray-600">

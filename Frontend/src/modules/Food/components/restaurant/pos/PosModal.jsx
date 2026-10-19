@@ -21,9 +21,13 @@ export default function PosModal({ title, onClose, children, width = "max-w-2xl"
       >
         <div className="flex items-center justify-between border-b px-4 py-3">
           <h2 className="text-base font-semibold text-gray-800">{title}</h2>
-          <button type="button" onClick={onClose} className="rounded p-1 text-gray-500 hover:bg-gray-100" aria-label="Close">
-            <X size={18} />
-          </button>
+          {/* A modal that can't be dismissed (onClose null) shouldn't show a
+              dead X — its footer carries the only ways out. */}
+          {onClose ? (
+            <button type="button" onClick={onClose} className="rounded p-1 text-gray-500 hover:bg-gray-100" aria-label="Close">
+              <X size={18} />
+            </button>
+          ) : null}
         </div>
         <div className="overflow-y-auto px-4 py-3 text-sm">{children}</div>
         {footer ? <div className="border-t px-4 py-3">{footer}</div> : null}

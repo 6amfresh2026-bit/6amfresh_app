@@ -162,7 +162,12 @@ export default function PointOfSale() {
     if (!shift) { navigate("/seller/dashboard"); return }
     try {
       const res = await restaurantAPI.posShiftSummary()
-      setCloseSummary(res?.data?.data?.shift || null)
+      const open = res?.data?.data?.shift
+      // The register may have been closed elsewhere since this screen loaded;
+      // with nothing to count, don't trap the cashier behind a dead modal —
+      // just leave.
+      if (!open) { setShift(null); navigate("/seller/dashboard"); return }
+      setCloseSummary(open)
     } catch {
       setCloseSummary(shift)
     }
@@ -567,7 +572,7 @@ export default function PointOfSale() {
 
       {/* Open the register on entry when none is running. */}
       {shiftLoaded && !shift ? (
-        <PosOpenRegisterModal cashierName={salesman} onOpen={handleOpenRegister} />
+        <PosOpenRegisterModal cashierName={salesman} onOpen={handleOpenRegister} onExit={() => navigate("/seller/dashboard")} />
       ) : null}
 
       {/* Close the register (count the drawer) on exit / logout. */}
