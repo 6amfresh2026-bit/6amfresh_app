@@ -20,6 +20,7 @@ const COLUMNS = [
   { key: "srNo", label: "Sr. No.", always: true },
   { key: "itemCode", label: "Item Code" },
   { key: "name", label: "Product Name", always: true },
+  { key: "restaurantName", label: "Store" },
   { key: "departmentName", label: "Department Name" },
   { key: "categoryName", label: "Category Name" },
   { key: "subCategoryName", label: "Sub Category Name" },
@@ -176,6 +177,12 @@ export default function Stocks() {
     const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = `stock-${new Date().toISOString().slice(0, 10)}.csv`; a.click(); URL.revokeObjectURL(a.href)
   }
 
+  // Store-first: picking a store applies immediately (no Apply click needed).
+  const selectStore = (id) => {
+    setFilters((f) => ({ ...f, restaurantId: id }))
+    setApplied((a) => ({ ...a, restaurantId: id }))
+    setPage(1)
+  }
   const applyFilters = () => { setApplied(filters); setPage(1) }
   const clearFilters = () => { const e = { restaurantId: "", departmentId: "", categoryId: "", brandId: "", unitId: "", status: "" }; setFilters(e); setApplied(e); setPage(1) }
   const nFilters = Object.values(applied).filter(Boolean).length
@@ -202,6 +209,20 @@ export default function Stocks() {
 
       <div className="rounded-md border border-neutral-200 bg-white p-4 shadow-sm">
         <div className="mb-4 flex flex-wrap items-center gap-2">
+          {/* Store-wise: pick a store to manage just its inventory. */}
+          <div className="flex items-center gap-2">
+            <span className="text-sm font-medium text-neutral-600">Store</span>
+            <select
+              value={applied.restaurantId}
+              onChange={(e) => selectStore(e.target.value)}
+              className="h-9 min-w-[12rem] rounded border border-neutral-300 bg-white px-2 text-sm font-medium outline-none focus:border-sky-500"
+            >
+              <option value="">All stores</option>
+              {lookups.restaurants.map((r) => (
+                <option key={r._id || r.id} value={r._id || r.id}>{r.restaurantName || r.name}</option>
+              ))}
+            </select>
+          </div>
           <div className="relative">
             <button type="button" onClick={() => setColsOpen((v) => !v)} className="inline-flex h-9 items-center gap-2 rounded bg-sky-500 px-3 text-sm font-medium text-white hover:bg-sky-600">
               Columns <ChevronDown className="h-3.5 w-3.5" />
