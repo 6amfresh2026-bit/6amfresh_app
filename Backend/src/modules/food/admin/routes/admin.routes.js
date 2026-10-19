@@ -456,6 +456,8 @@ router.get('/pos/credit-notes/:code', adminPos.lookupAdminCreditNoteController);
 router.post('/pos/credit-notes/:id/void', adminPos.voidAdminCreditNoteController);
 // loyalty
 router.get('/pos/loyalty/:userId', adminPos.getAdminLoyaltyAccountController);
+// register report — cash-drawer sessions (opening/closing amounts) across stores
+router.get('/pos/shifts', adminPos.listAdminPosShiftsController);
 
 router.get('/surveys', surveyController.listSurveysController);
 router.post('/surveys', surveyController.createSurveyController);

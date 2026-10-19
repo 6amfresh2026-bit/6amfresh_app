@@ -841,6 +841,9 @@ export const adminAPI = {
     }),
   listAdminPosHolds: (restaurantId) =>
     apiClient.get("/food/admin/pos/holds", { params: { restaurantId }, contextModule: "admin" }),
+  /** Register (cash drawer) sessions across stores — opening/closing amounts for the admin report. */
+  getPosShifts: (params = {}) =>
+    apiClient.get("/food/admin/pos/shifts", { params, contextModule: "admin" }),
   holdAdminPosBill: (body) =>
     apiClient.post("/food/admin/pos/holds", body ?? {}, { contextModule: "admin" }),
   resumeAdminPosHold: (heldId, restaurantId) =>

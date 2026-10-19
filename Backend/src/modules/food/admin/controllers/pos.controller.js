@@ -70,3 +70,8 @@ export const voidAdminCreditNoteController = handler((req) => pos.voidCreditNote
 
 // ─── loyalty ───
 export const getAdminLoyaltyAccountController = handler((req) => pos.getLoyaltyAccount(restaurantOf(req), req.params.userId), 'Loyalty account');
+
+// ─── register report (cash drawer sessions across stores) ───
+// Reads across stores, so it takes no restaurantId by default; a restaurantId
+// query param narrows it to one store.
+export const listAdminPosShiftsController = handler((req) => pos.listPosShifts(req.query || {}), 'Register sessions');

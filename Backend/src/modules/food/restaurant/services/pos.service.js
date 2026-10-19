@@ -1292,6 +1292,83 @@ export async function recordCashMovement(restaurantId, dto = {}) {
     return { shift: { ...shift.toObject(), cashSales, billsCount, expectedCash: expectedCashOf(shift, cashSales) } };
 }
 
+/**
+ * Register sessions for the admin's cash-drawer report: every shift's opening
+ * float and closing count, with the expected-vs-counted difference and who
+ * signed off a mismatch. Spans stores (or one, filtered) and a date range. An
+ * open shift has no snapshot yet, so its cash sales and expected cash are
+ * computed live; a closed one shows exactly what was recorded at close.
+ */
+export async function listPosShifts(query = {}) {
+    const filter = {};
+    if (query.restaurantId && isId(query.restaurantId)) {
+        filter.restaurantId = new mongoose.Types.ObjectId(String(query.restaurantId));
+    }
+    const status = String(query.status || '').trim().toLowerCase();
+    if (status === 'open' || status === 'closed') filter.status = status;
+    if (query.from || query.to) {
+        filter.openedAt = {};
+        if (query.from) filter.openedAt.$gte = new Date(query.from);
+        if (query.to) filter.openedAt.$lte = new Date(new Date(query.to).getTime() + 86400000 - 1);
+    }
+
+    const page = Math.max(1, Number(query.page) || 1);
+    const limit = Math.min(200, Math.max(1, Number(query.limit) || 50));
+    const [rows, total] = await Promise.all([
+        FoodPosShift.find(filter).sort({ openedAt: -1 }).skip((page - 1) * limit).limit(limit).lean(),
+        FoodPosShift.countDocuments(filter)
+    ]);
+
+    const rids = [...new Set(rows.map((r) => String(r.restaurantId)))];
+    const names = {};
+    (await FoodRestaurant.find({ _id: { $in: rids } }).select('restaurantName').lean())
+        .forEach((r) => { names[String(r._id)] = r.restaurantName; });
+
+    const shifts = [];
+    for (const s of rows) {
+        let cashSales = s.cashSales;
+        let billsCount = s.billsCount;
+        let expectedCash = s.expectedCash;
+        if (s.status === 'open') {
+            const live = await computeShiftCash(s.restaurantId, s.openedAt);
+            cashSales = live.cashSales;
+            billsCount = live.billsCount;
+            expectedCash = expectedCashOf(s, cashSales);
+        }
+        shifts.push({
+            id: String(s._id),
+            restaurantId: String(s.restaurantId),
+            restaurantName: names[String(s.restaurantId)] || '',
+            shiftCode: s.shiftCode,
+            cashierName: s.cashierName || '',
+            status: s.status,
+            openedAt: s.openedAt,
+            closedAt: s.closedAt,
+            openingCash: round2(s.openingCash || 0),
+            cashReceived: round2(s.cashReceived || 0),
+            cashOut: round2(s.cashOut || 0),
+            refunds: round2(s.refunds || 0),
+            cashSales: round2(cashSales || 0),
+            billsCount: billsCount || 0,
+            expectedCash: expectedCash == null ? null : round2(expectedCash),
+            countedCash: s.countedCash == null ? null : round2(s.countedCash),
+            difference: s.difference == null ? null : round2(s.difference),
+            denominations: s.denominations || null,
+            closeReason: s.closeReason || '',
+            closeApprovedBy: s.closeApprovedBy || ''
+        });
+    }
+
+    const totals = shifts.reduce((a, s) => ({
+        openingCash: round2(a.openingCash + (s.openingCash || 0)),
+        expectedCash: round2(a.expectedCash + (s.expectedCash || 0)),
+        countedCash: round2(a.countedCash + (s.countedCash || 0)),
+        difference: round2(a.difference + (s.difference || 0))
+    }), { openingCash: 0, expectedCash: 0, countedCash: 0, difference: 0 });
+
+    return { shifts, total, page, limit, totals };
+}
+
 // ───────────────────────────── credit notes ─────────────────────────────
 
 const CREDIT_NOTE_OPEN = ['active', 'partially_redeemed'];

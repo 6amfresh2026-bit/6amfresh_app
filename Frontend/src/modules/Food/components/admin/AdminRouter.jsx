@@ -98,6 +98,7 @@ const DeliveryEarnings = lazy(() => import("@food/pages/admin/delivery-partners/
 // Report Management
 const TransactionReport = lazy(() => import("@food/pages/admin/reports/TransactionReport"));
 const PosStatement = lazy(() => import("@food/pages/admin/reports/PosStatement"));
+const Registers = lazy(() => import("@food/pages/admin/reports/Registers"));
 const ProductReport = lazy(() => import("@food/pages/admin/reports/ProductReport"));
 const CustomerLedger = lazy(() => import("@food/pages/admin/reports/CustomerLedger"));
 const RiderInvoices = lazy(() => import("@food/pages/admin/reports/RiderInvoices"));
@@ -447,6 +448,7 @@ export default function AdminRouter() {
             {/* REPORTS & SETTINGS */}
             <Route path="transaction-report" element={<TransactionReport />} />
             <Route path="pos-statement" element={<PosStatement />} />
+            <Route path="registers" element={<Registers />} />
             {/* Reports & Operations */}
             <Route path="reports/product-report" element={<ProductReport />} />
             <Route path="reports/customer-ledger" element={<CustomerLedger />} />
