@@ -23,6 +23,7 @@ import { KEY_ACTIONS, lineDiscount, printReceipt } from "@food/components/restau
 import PosOpenRegisterModal from "@food/components/restaurant/pos/PosOpenRegisterModal"
 import PosCloseRegisterModal from "@food/components/restaurant/pos/PosCloseRegisterModal"
 import PosCashControlModal from "@food/components/restaurant/pos/PosCashControlModal"
+import PosCreditNoteModal from "@food/components/restaurant/pos/PosCreditNoteModal"
 import { useNavigate } from "react-router-dom"
 import { logoutRestaurantSession } from "@food/utils/restaurantLogout"
 
@@ -489,6 +490,10 @@ export default function PointOfSale() {
           // on the bill. The auto-print toggle governs the quick F-keys, which
           // is what the separate Cash / Cash & Print pair is for.
           onProceed={(tenders) => pay("multiple", { tenders, print: true })}
+          onLookupCreditNote={async (code) => {
+            const res = await restaurantAPI.posLookupCreditNote(code)
+            return res?.data?.data?.creditNote || res?.data?.creditNote || null
+          }}
         />
       ) : null}
       {modal === "coupon" ? (
@@ -549,6 +554,11 @@ export default function PointOfSale() {
           onClose={() => setModal(null)}
           onUpdated={(s) => { if (s) setShift((prev) => ({ ...prev, cashReceived: s.cashReceived, cashOut: s.cashOut })) }}
         />
+      ) : null}
+
+      {/* Credit notes — issue a return as a redeemable balance, or review notes. */}
+      {modal === "creditNotes" ? (
+        <PosCreditNoteModal onClose={() => setModal(null)} />
       ) : null}
     </div>
   )

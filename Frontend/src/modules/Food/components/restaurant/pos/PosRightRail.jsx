@@ -28,7 +28,7 @@ export default function PosRightRail({ onOpen, summary, customer, lastBill, onPr
         <button type="button" className={tile} onClick={() => onOpen("payments")}><Receipt size={26} className="text-sky-600" />Payments</button>
         <button type="button" className={tile} disabled title={NOT_YET}><Gift size={26} className="text-sky-600" />Reedem<br />Loyalty</button>
         <button type="button" className={tile} onClick={() => onOpen("payments")}><Banknote size={26} className="text-sky-600" />Add Payment</button>
-        <button type="button" className={tile} disabled title={NOT_YET}><FileText size={26} className="text-sky-600" />Credit Notes</button>
+        <button type="button" className={tile} onClick={() => onOpen("creditNotes")} title="Issue or review credit notes"><FileText size={26} className="text-sky-600" />Credit Notes</button>
         <button type="button" className={tile} onClick={() => onOpen("orders")}><List size={26} className="text-sky-600" />Orders</button>
         <button type="button" className={tile} onClick={() => onOpen("cashControl")} title="Pay cash in or out of the drawer"><HandCoins size={26} className="text-sky-600" />Cash Control</button>
       </div>

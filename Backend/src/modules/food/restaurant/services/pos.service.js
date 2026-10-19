@@ -3,6 +3,7 @@ import { FoodUser } from '../../../../core/users/user.model.js';
 import { FoodRestaurant } from '../models/restaurant.model.js';
 import { FoodPosHeldBill } from '../models/posHeldBill.model.js';
 import { FoodPosShift } from '../models/posShift.model.js';
+import { FoodPosCreditNote } from '../models/posCreditNote.model.js';
 import { FoodAdmin } from '../../../../core/admin/admin.model.js';
 import { ValidationError, NotFoundError } from '../../../../core/auth/errors.js';
 import { createOrder } from '../../orders/services/order.service.js';
@@ -175,11 +176,19 @@ function resolveTenders(dto, total) {
     if (!raw.length) throw new ValidationError('A split payment needs at least one tender');
     const tenders = raw.map((t) => {
         const tenderMode = String(t?.mode || '').trim().toLowerCase();
-        if (!TENDER_MODES.includes(tenderMode)) {
-            throw new ValidationError(`Tender mode must be one of ${TENDER_MODES.join(', ')}`);
-        }
         const amount = round2(t?.amount);
         if (!(amount > 0)) throw new ValidationError('Every tender needs an amount above zero');
+        // A credit note is money already held for this customer, redeemed by
+        // code. It is a tender like any other but settles from the note's
+        // balance, not the drawer, so it carries a code instead of card fields.
+        if (tenderMode === 'credit_note') {
+            const code = String(t?.code || t?.creditNoteCode || '').trim().toUpperCase();
+            if (!code) throw new ValidationError('A credit-note tender needs its code');
+            return { mode: tenderMode, amount, at: new Date(), note: String(t?.note || '').slice(0, 300), creditNoteCode: code };
+        }
+        if (!TENDER_MODES.includes(tenderMode)) {
+            throw new ValidationError(`Tender mode must be one of ${TENDER_MODES.join(', ')}, credit_note`);
+        }
         return {
             mode: tenderMode,
             amount,
@@ -191,11 +200,17 @@ function resolveTenders(dto, total) {
     const received = round2(tenders.reduce((s, t) => s + t.amount, 0));
     const dueAmount = round2(Math.max(0, total - received));
     const changeGiven = round2(Math.max(0, received - total));
+    // Change is cash handed back, so it can only come out of cash that came
+    // in — never out of a card, UPI or credit-note tender.
     const cashIn = round2(tenders.filter((t) => t.mode === 'cash').reduce((s, t) => s + t.amount, 0));
     if (changeGiven > cashIn + 0.001) {
         throw new ValidationError(`₹${changeGiven.toFixed(2)} change cannot be given — only ₹${cashIn.toFixed(2)} came in as cash`);
     }
-    return { paymentMode: mode, tenders, paymentMethod: dominantTenderMode(tenders), dueAmount, changeGiven };
+    // payment.method must stay a settlement the order schema knows; a credit
+    // note is a store adjustment, not one of them, so it never wins the method.
+    const settleTenders = tenders.filter((t) => t.mode !== 'credit_note');
+    const paymentMethod = settleTenders.length ? dominantTenderMode(settleTenders) : 'cash';
+    return { paymentMode: mode, tenders, paymentMethod, dueAmount, changeGiven };
 }
 
 // ───────────────────────────── customers ─────────────────────────────
@@ -357,6 +372,11 @@ export async function createPosOrder(restaurantId, dto = {}) {
         throw new ValidationError('Pay later needs a named customer — pick one or enter a phone number');
     }
 
+    // Credit-note tenders spend a stored balance, so they must clear before a
+    // single rupee is committed. Load and check each here; redeem only once the
+    // order is written, so a failed sale never burns a note.
+    const creditNotes = await reserveCreditNoteTenders(restaurantId, tenders);
+
     const result = await createOrder(String(customer._id), {
         restaurantId: String(restaurantId),
         items,
@@ -406,10 +426,13 @@ export async function createPosOrder(restaurantId, dto = {}) {
 
     // The bill number is the order number; kept on the pos block so it
     // survives any future renumbering of order_id.
-    if (result?.order?._id) {
-        const billNo = String(result.order.order_id || result.order.orderId || '');
-        if (billNo) await FoodOrder.updateOne({ _id: result.order._id }, { $set: { 'pos.billNo': billNo } });
+    const billNo = String(result?.order?.order_id || result?.order?.orderId || '');
+    if (result?.order?._id && billNo) {
+        await FoodOrder.updateOne({ _id: result.order._id }, { $set: { 'pos.billNo': billNo } });
     }
+
+    // The order stuck, so the reserved credit notes can be drawn down for real.
+    await redeemCreditNoteTenders(creditNotes, { orderId: result?.order?._id, billNo });
 
     const saved = await FoodOrder.findById(result.order._id).lean();
     return { order: result.order, receipt: await withItemBarcodes(toReceipt(saved, restaurant)) };
@@ -1227,4 +1250,130 @@ export async function recordCashMovement(restaurantId, dto = {}) {
 
     const { cashSales, billsCount } = await computeShiftCash(restaurantId, shift.openedAt);
     return { shift: { ...shift.toObject(), cashSales, billsCount, expectedCash: expectedCashOf(shift, cashSales) } };
+}
+
+// ───────────────────────────── credit notes ─────────────────────────────
+
+const CREDIT_NOTE_OPEN = ['active', 'partially_redeemed'];
+
+/** Readable per-store per-day credit-note code, e.g. "CN-20261019-01". */
+async function nextCreditNoteCode(restaurantId) {
+    const d = new Date();
+    const ymd = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
+    const seq = await nextSequence(`pos_cn_${restaurantId}_${ymd}`);
+    return `CN-${ymd}-${String(seq).padStart(2, '0')}`;
+}
+
+/**
+ * Issue a credit note against this store — usually for returned goods. The
+ * amount becomes a spendable balance the customer redeems on a later bill.
+ */
+export async function issueCreditNote(restaurantId, dto = {}) {
+    await loadRestaurant(restaurantId);
+    const amount = round2(dto.amount);
+    if (!(amount > 0)) throw new ValidationError('Credit note amount must be above zero');
+
+    let sourceOrderId = null;
+    let sourceBillNo = '';
+    if (dto.sourceOrderId && isId(dto.sourceOrderId)) {
+        const src = await FoodOrder.findOne({ _id: dto.sourceOrderId, restaurantId }).select('order_id pos.billNo').lean();
+        if (!src) throw new NotFoundError('That order was not found at this store');
+        sourceOrderId = src._id;
+        sourceBillNo = src.pos?.billNo || src.order_id || '';
+    }
+
+    const note = await FoodPosCreditNote.create({
+        restaurantId,
+        code: await nextCreditNoteCode(restaurantId),
+        amount,
+        balance: amount,
+        reason: String(dto.reason || '').trim().slice(0, 300),
+        customerPhone: digitsOf(dto.customerPhone),
+        customerName: String(dto.customerName || '').trim(),
+        sourceOrderId,
+        sourceBillNo,
+        issuedBy: String(dto.issuedBy || '').trim()
+    });
+    return { creditNote: note.toObject() };
+}
+
+/** Look one note up by code to show its balance before it is applied. */
+export async function lookupCreditNote(restaurantId, code) {
+    await loadRestaurant(restaurantId);
+    const clean = String(code || '').trim().toUpperCase();
+    if (!clean) throw new ValidationError('Enter a credit-note code');
+    const note = await FoodPosCreditNote.findOne({ restaurantId, code: clean }).lean();
+    if (!note) throw new NotFoundError('No credit note with that code at this store');
+    return { creditNote: note };
+}
+
+/** Credit notes for this store, newest first, optionally filtered by status. */
+export async function listCreditNotes(restaurantId, query = {}) {
+    await loadRestaurant(restaurantId);
+    const filter = { restaurantId };
+    const status = String(query.status || '').trim().toLowerCase();
+    if (status === 'open') filter.status = { $in: CREDIT_NOTE_OPEN };
+    else if (['active', 'partially_redeemed', 'redeemed', 'void'].includes(status)) filter.status = status;
+    const phone = digitsOf(query.customerPhone);
+    if (phone) filter.customerPhone = phone;
+    const limit = Math.min(200, Math.max(1, Number(query.limit) || 50));
+    const notes = await FoodPosCreditNote.find(filter).sort({ createdAt: -1 }).limit(limit).lean();
+    return { creditNotes: notes };
+}
+
+/** Void an unspent note (e.g. issued by mistake). Partly used ones can't be voided. */
+export async function voidCreditNote(restaurantId, id) {
+    await loadRestaurant(restaurantId);
+    if (!isId(id)) throw new NotFoundError('Credit note not found');
+    const note = await FoodPosCreditNote.findOne({ _id: id, restaurantId });
+    if (!note) throw new NotFoundError('Credit note not found');
+    if (note.status === 'void') return { creditNote: note.toObject() };
+    if (note.redemptions.length || note.balance !== note.amount) {
+        throw new ValidationError('This note has already been used and cannot be voided');
+    }
+    note.status = 'void';
+    note.balance = 0;
+    note.voidedAt = new Date();
+    await note.save();
+    return { creditNote: note.toObject() };
+}
+
+/**
+ * Load and check the credit notes behind any credit_note tenders on a sale,
+ * before the order is written. Returns the live docs keyed to their tender
+ * amount so the sale can redeem them once it sticks. Throws if any code is
+ * unknown, closed, or short of balance.
+ */
+async function reserveCreditNoteTenders(restaurantId, tenders) {
+    const lines = (tenders || []).filter((t) => t.mode === 'credit_note');
+    if (!lines.length) return [];
+
+    // Sum per code first, so two lines quoting one note can't each pass on the
+    // full balance and together overspend it.
+    const wanted = new Map();
+    for (const t of lines) wanted.set(t.creditNoteCode, round2((wanted.get(t.creditNoteCode) || 0) + t.amount));
+
+    const reserved = [];
+    for (const [code, amount] of wanted) {
+        const note = await FoodPosCreditNote.findOne({ restaurantId, code });
+        if (!note) throw new ValidationError(`Credit note ${code} was not found at this store`);
+        if (!CREDIT_NOTE_OPEN.includes(note.status)) {
+            throw new ValidationError(`Credit note ${code} is ${note.status === 'void' ? 'void' : 'already fully redeemed'}`);
+        }
+        if (amount > round2(note.balance) + 0.001) {
+            throw new ValidationError(`Credit note ${code} has only ₹${round2(note.balance).toFixed(2)} left`);
+        }
+        reserved.push({ note, amount });
+    }
+    return reserved;
+}
+
+/** Draw the reserved amount off each note and close it when it hits zero. */
+async function redeemCreditNoteTenders(reserved, { orderId = null, billNo = '' } = {}) {
+    for (const { note, amount } of (reserved || [])) {
+        note.balance = round2(Math.max(0, note.balance - amount));
+        note.redemptions.push({ orderId: orderId || null, billNo: billNo || '', amount, at: new Date() });
+        note.status = note.balance <= 0.001 ? 'redeemed' : 'partially_redeemed';
+        await note.save();
+    }
 }

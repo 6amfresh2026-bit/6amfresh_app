@@ -2081,6 +2081,15 @@ export const restaurantAPI = {
     apiClient.post("/food/restaurant/pos/shift/close", body, { contextModule: "restaurant" }),
   posCashMovement: (body = {}) =>
     apiClient.post("/food/restaurant/pos/shift/cash-movement", body, { contextModule: "restaurant" }),
+  /** POS credit notes (returns redeemable against a later bill) */
+  posListCreditNotes: (params = {}) =>
+    apiClient.get("/food/restaurant/pos/credit-notes", { params, contextModule: "restaurant" }),
+  posIssueCreditNote: (body = {}) =>
+    apiClient.post("/food/restaurant/pos/credit-notes", body, { contextModule: "restaurant" }),
+  posLookupCreditNote: (code) =>
+    apiClient.get(`/food/restaurant/pos/credit-notes/${encodeURIComponent(String(code || "").trim().toUpperCase())}`, { contextModule: "restaurant" }),
+  posVoidCreditNote: (id) =>
+    apiClient.post(`/food/restaurant/pos/credit-notes/${String(id)}/void`, {}, { contextModule: "restaurant" }),
   /** List restaurant complaints (for current restaurant dashboard) */
   getComplaints: (params = {}) =>
     apiClient.get("/food/restaurant/complaints", {

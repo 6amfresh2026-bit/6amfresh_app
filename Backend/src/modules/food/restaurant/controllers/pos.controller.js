@@ -21,7 +21,11 @@ import {
     openShift,
     getShiftSummary,
     closeShift,
-    recordCashMovement
+    recordCashMovement,
+    issueCreditNote,
+    lookupCreditNote,
+    listCreditNotes,
+    voidCreditNote
 } from '../services/pos.service.js';
 
 /** Every handler here acts as the signed-in seller, on their own shop only. */
@@ -194,6 +198,38 @@ export const closeShiftController = async (req, res, next) => {
 export const recordCashMovementController = async (req, res, next) => {
     try {
         return sendResponse(res, 200, 'Cash movement recorded', await recordCashMovement(shopOf(req), req.body || {}));
+    } catch (err) {
+        next(err);
+    }
+};
+
+export const issueCreditNoteController = async (req, res, next) => {
+    try {
+        return sendResponse(res, 201, 'Credit note issued', await issueCreditNote(shopOf(req), req.body || {}));
+    } catch (err) {
+        next(err);
+    }
+};
+
+export const lookupCreditNoteController = async (req, res, next) => {
+    try {
+        return sendResponse(res, 200, 'Credit note', await lookupCreditNote(shopOf(req), req.params.code));
+    } catch (err) {
+        next(err);
+    }
+};
+
+export const listCreditNotesController = async (req, res, next) => {
+    try {
+        return sendResponse(res, 200, 'Credit notes', await listCreditNotes(shopOf(req), req.query || {}));
+    } catch (err) {
+        next(err);
+    }
+};
+
+export const voidCreditNoteController = async (req, res, next) => {
+    try {
+        return sendResponse(res, 200, 'Credit note voided', await voidCreditNote(shopOf(req), req.params.id));
     } catch (err) {
         next(err);
     }

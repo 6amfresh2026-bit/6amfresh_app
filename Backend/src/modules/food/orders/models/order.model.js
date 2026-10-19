@@ -245,10 +245,12 @@ const paymentSchema = new mongoose.Schema(
  */
 const posTenderSchema = new mongoose.Schema(
     {
-        mode: { type: String, enum: ['cash', 'upi', 'card'], required: true },
+        mode: { type: String, enum: ['cash', 'upi', 'card', 'credit_note'], required: true },
         amount: { type: Number, required: true, min: 0 },
         at: { type: Date, default: Date.now },
         note: { type: String, trim: true, default: '' },
+        /** Set on a 'credit_note' tender: the note redeemed to settle this part. */
+        creditNoteCode: { type: String, trim: true, uppercase: true, default: '' },
         /**
          * Card details, captured at the counter.
          *

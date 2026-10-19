@@ -16,6 +16,7 @@ const METHODS = [
   { value: "cash", label: "Cash" },
   { value: "card", label: "Card" },
   { value: "upi", label: "UPI" },
+  { value: "credit_note", label: "Credit Note" },
   { value: "wallet", label: "Wallet", disabled: true },
   { value: "bank", label: "Bank", disabled: true },
   { value: "cheque", label: "Cheque", disabled: true },
@@ -24,24 +25,45 @@ const METHODS = [
 const field = "h-11 w-full rounded border border-gray-300 bg-white px-3 text-[15px] text-gray-800 outline-none focus:border-sky-400"
 const label = "mb-1 block text-[15px] text-gray-800"
 
-export default function PosPayScreen({ quote, customer, bankAccount, busy, onBack, onProceed }) {
+export default function PosPayScreen({ quote, customer, bankAccount, busy, onBack, onProceed, onLookupCreditNote }) {
   const payable = round2(quote?.pricing?.total)
-  const [rows, setRows] = useState([{ mode: "cash", amount: String(payable), holder: "", txn: "", account: "" }])
+  const [rows, setRows] = useState([{ mode: "cash", amount: String(payable), holder: "", txn: "", account: "", code: "", cn: null, cnErr: "" }])
 
   const received = useMemo(() => round2(rows.reduce((s, r) => s + (Number(r.amount) || 0), 0)), [rows])
   const change = round2(Math.max(0, received - payable))
   const due = round2(Math.max(0, payable - received))
+  // Change is cash handed back, so a credit-note tender can never fund it.
   const cashIn = round2(rows.filter((r) => r.mode === "cash").reduce((s, r) => s + (Number(r.amount) || 0), 0))
   const changeNeedsCash = change > cashIn + 0.001
-  const canProceed = rows.every((r) => Number(r.amount) > 0) && received > 0 && !changeNeedsCash && !(due > 0 && !customer) && !busy
+  // Every credit-note row needs a looked-up code with enough balance before we
+  // let the sale go — the backend enforces this too, but catching it here
+  // spares the cashier a bounced bill.
+  const creditNotesOk = rows.every((r) => r.mode !== "credit_note" || (r.cn && Number(r.amount) <= round2(r.cn.balance) + 0.001))
+  const canProceed = rows.every((r) => Number(r.amount) > 0) && received > 0 && !changeNeedsCash && !(due > 0 && !customer) && creditNotesOk && !busy
 
   const update = (i, patch) => setRows((rs) => rs.map((r, idx) => (idx === i ? { ...r, ...patch } : r)))
   const remove = (i) => setRows((rs) => (rs.length === 1 ? rs : rs.filter((_, idx) => idx !== i)))
-  const addRow = () => setRows((rs) => [...rs, { mode: rs.some((r) => r.mode === "upi") ? "card" : "upi", amount: String(due || 0), holder: "", txn: "", account: "" }])
+  const addRow = () => setRows((rs) => [...rs, { mode: rs.some((r) => r.mode === "upi") ? "card" : "upi", amount: String(due || 0), holder: "", txn: "", account: "", code: "", cn: null, cnErr: "" }])
+
+  // Look a credit note up on demand so the cashier sees its balance before
+  // committing; the row keeps the result (or the reason it failed).
+  const checkCode = async (i, code) => {
+    const clean = String(code || "").trim().toUpperCase()
+    if (!clean) return update(i, { cn: null, cnErr: "" })
+    try {
+      const note = await onLookupCreditNote?.(clean)
+      if (!note) return update(i, { cn: null, cnErr: "Not found" })
+      if (note.status === "void" || note.balance <= 0) return update(i, { cn: null, cnErr: note.status === "void" ? "Voided" : "Nothing left on it" })
+      update(i, { cn: note, cnErr: "", amount: String(Math.min(Number(rows[i]?.amount) || note.balance, note.balance)) })
+    } catch (err) {
+      update(i, { cn: null, cnErr: err?.response?.data?.message || "Not found" })
+    }
+  }
 
   // Card fields travel as their own keys, not folded into a note: the
   // transaction number is what a chargeback is traced by, and it should not
-  // have to be parsed back out of a sentence.
+  // have to be parsed back out of a sentence. A credit-note row carries its
+  // code so the till can redeem the right note.
   const proceed = () =>
     onProceed(
       rows.map((r) => ({
@@ -50,6 +72,7 @@ export default function PosPayScreen({ quote, customer, bankAccount, busy, onBac
         ...(r.mode === "card"
           ? { bankAccount: r.account, cardHolder: r.holder, transactionNo: r.txn }
           : {}),
+        ...(r.mode === "credit_note" ? { code: String(r.code || "").trim().toUpperCase() } : {}),
       })),
     )
 
@@ -123,6 +146,25 @@ export default function PosPayScreen({ quote, customer, bankAccount, busy, onBac
                         <option value="">Select Bank Account</option>
                         {bankAccount ? <option value={bankAccount}>{bankAccount}</option> : null}
                       </select>
+                    </div>
+                  ) : r.mode === "credit_note" ? (
+                    <div>
+                      <span className={label}>Credit Note Code:</span>
+                      <div className="flex gap-2">
+                        <input
+                          className={field}
+                          value={r.code}
+                          onChange={(e) => update(i, { code: e.target.value, cn: null, cnErr: "" })}
+                          onBlur={(e) => checkCode(i, e.target.value)}
+                          placeholder="CN-…"
+                        />
+                        <button type="button" onClick={() => checkCode(i, r.code)} className="h-11 shrink-0 rounded border border-sky-300 bg-white px-3 text-[14px] text-sky-600 hover:bg-sky-50">Check</button>
+                      </div>
+                      {r.cn ? (
+                        <span className="mt-1 block text-[13px] text-emerald-600">Balance ₹{money(r.cn.balance)}{r.cn.customerName ? ` · ${r.cn.customerName}` : ""}</span>
+                      ) : r.cnErr ? (
+                        <span className="mt-1 block text-[13px] text-red-500">{r.cnErr}</span>
+                      ) : null}
                     </div>
                   ) : <div />}
                   <button type="button" onClick={() => remove(i)} disabled={rows.length === 1} className="flex h-11 w-11 items-center justify-center rounded border border-red-300 bg-white text-red-500 hover:bg-red-50 disabled:opacity-40" aria-label="Remove payment">

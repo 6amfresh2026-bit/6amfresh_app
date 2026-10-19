@@ -103,7 +103,11 @@ import {
     openShiftController,
     getShiftSummaryController,
     closeShiftController,
-    recordCashMovementController
+    recordCashMovementController,
+    issueCreditNoteController,
+    lookupCreditNoteController,
+    listCreditNotesController,
+    voidCreditNoteController
 } from '../controllers/pos.controller.js';
 import { authMiddleware, optionalAuth } from '../../../../core/auth/auth.middleware.js';
 import { sendError } from '../../../../utils/response.js';
@@ -387,5 +391,11 @@ router.post('/pos/shift/open', authMiddleware, requireRestaurant, openShiftContr
 router.get('/pos/shift/summary', authMiddleware, requireRestaurant, getShiftSummaryController);
 router.post('/pos/shift/close', authMiddleware, requireRestaurant, closeShiftController);
 router.post('/pos/shift/cash-movement', authMiddleware, requireRestaurant, recordCashMovementController);
+
+// Credit notes — returns stored as a redeemable balance for a later bill.
+router.get('/pos/credit-notes', authMiddleware, requireRestaurant, listCreditNotesController);
+router.post('/pos/credit-notes', authMiddleware, requireRestaurant, issueCreditNoteController);
+router.get('/pos/credit-notes/:code', authMiddleware, requireRestaurant, lookupCreditNoteController);
+router.post('/pos/credit-notes/:id/void', authMiddleware, requireRestaurant, voidCreditNoteController);
 
 export default router;
