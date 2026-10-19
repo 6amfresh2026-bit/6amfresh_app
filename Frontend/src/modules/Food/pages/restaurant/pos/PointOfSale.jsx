@@ -160,16 +160,20 @@ export default function PointOfSale() {
   // summary and show the count screen.
   const requestExit = async () => {
     if (!shift) { navigate("/seller/dashboard"); return }
+    // Show the count screen straight away from the open shift we already hold,
+    // so a slow, failed, or auth-expired summary call never sends the cashier
+    // out of the till without counting the drawer. The live figures (cash
+    // sales, expected cash) refine it as soon as they load.
+    setCloseSummary(shift)
     try {
       const res = await restaurantAPI.posShiftSummary()
       const open = res?.data?.data?.shift
-      // The register may have been closed elsewhere since this screen loaded;
-      // with nothing to count, don't trap the cashier behind a dead modal —
-      // just leave.
-      if (!open) { setShift(null); navigate("/seller/dashboard"); return }
-      setCloseSummary(open)
+      if (open) setCloseSummary(open)
+      // A clean "no open shift" means the register was closed elsewhere since
+      // this screen loaded — nothing to count, so leave cleanly.
+      else { setShift(null); setCloseSummary(null); navigate("/seller/dashboard") }
     } catch {
-      setCloseSummary(shift)
+      /* Network or auth hiccup — keep the count screen up with what we have. */
     }
   }
 
