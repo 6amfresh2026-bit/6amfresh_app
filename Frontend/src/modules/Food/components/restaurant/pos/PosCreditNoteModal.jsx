@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from "react"
 import { Loader2, Copy, Check, Ban } from "lucide-react"
 import { toast } from "sonner"
-import { restaurantAPI } from "@food/api"
+import { usePosApi } from "./posApiContext"
 import PosModal from "./PosModal"
 
 const inr = (n) => `₹${Number(n || 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
@@ -25,6 +25,7 @@ const STATUS_LABEL = {
  * "Credit Note" as a payment method and enter the code).
  */
 export default function PosCreditNoteModal({ onClose }) {
+  const api = usePosApi()
   const [amount, setAmount] = useState("")
   const [reason, setReason] = useState("")
   const [phone, setPhone] = useState("")
@@ -38,7 +39,7 @@ export default function PosCreditNoteModal({ onClose }) {
   const loadList = useCallback(async () => {
     setLoadingList(true)
     try {
-      const res = await restaurantAPI.posListCreditNotes({ limit: 30 })
+      const res = await api.posListCreditNotes({ limit: 30 })
       setNotes(res?.data?.data?.creditNotes || res?.data?.creditNotes || [])
     } catch {
       /* a failed list shouldn't block issuing */
@@ -54,7 +55,7 @@ export default function PosCreditNoteModal({ onClose }) {
     if (!(amt > 0)) { toast.error("Enter an amount above zero"); return }
     setBusy(true)
     try {
-      const res = await restaurantAPI.posIssueCreditNote({
+      const res = await api.posIssueCreditNote({
         amount: amt,
         reason: reason.trim(),
         customerPhone: phone.trim(),
@@ -84,7 +85,7 @@ export default function PosCreditNoteModal({ onClose }) {
 
   const voidNote = async (id) => {
     try {
-      await restaurantAPI.posVoidCreditNote(id)
+      await api.posVoidCreditNote(id)
       toast.success("Credit note voided")
       loadList()
     } catch (err) {

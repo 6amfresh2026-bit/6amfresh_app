@@ -13,7 +13,7 @@ const inr = (n) => `₹${Number(n || 0).toLocaleString("en-IN")}`
  *
  * `summary` is the open shift from GET /pos/shift/summary.
  */
-export default function PosCloseRegisterModal({ summary, onClose, onConfirm }) {
+export default function PosCloseRegisterModal({ summary, onClose, onConfirm, logoutMode = true }) {
   const [counts, setCounts] = useState({})
   const [busy, setBusy] = useState(false)
   const [reason, setReason] = useState("")
@@ -58,7 +58,7 @@ export default function PosCloseRegisterModal({ summary, onClose, onConfirm }) {
     <PosModal
       title={
         <div>
-          <div>Close register &amp; log out</div>
+          <div>{logoutMode ? "Close register & log out" : "Close register"}</div>
           {(summary?.shiftCode || summary?.cashierName) && (
             <div className="text-xs font-normal text-gray-500">
               {[summary?.shiftCode, summary?.cashierName].filter(Boolean).join(" · ")}
@@ -86,7 +86,7 @@ export default function PosCloseRegisterModal({ summary, onClose, onConfirm }) {
             className={`rounded px-6 py-2.5 text-[15px] font-medium text-white disabled:opacity-50 flex items-center gap-2 ${mismatch ? "bg-emerald-700 hover:bg-emerald-800" : "bg-[#1f1f1f] hover:bg-black"}`}
           >
             {busy && <Loader2 className="h-4 w-4 animate-spin" />}
-            {busy ? "Closing…" : mismatch ? "Close with difference" : "Close & log out"}
+            {busy ? "Closing…" : mismatch ? "Close with difference" : logoutMode ? "Close & log out" : "Close register"}
           </button>
         </div>
       }

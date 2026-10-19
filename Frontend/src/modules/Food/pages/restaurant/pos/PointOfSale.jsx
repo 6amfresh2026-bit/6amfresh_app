@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { Lock } from "lucide-react"
 import { toast } from "sonner"
-import { restaurantAPI } from "@food/api"
+import { usePosApi } from "@food/components/restaurant/pos/posApiContext"
 import { getMenuFromResponse, flattenMenuItems } from "@food/utils/menuItems"
 import usePosCart from "@food/components/restaurant/pos/usePosCart"
 import PosTopBar from "@food/components/restaurant/pos/PosTopBar"
@@ -40,7 +40,15 @@ const errMsg = (err, fallback) => err?.response?.data?.message || err?.message |
  * open, the saved order once it is paid — so the strip, the receipt and the
  * ledger can never disagree.
  */
-export default function PointOfSale() {
+/**
+ * The till. Runs for the signed-in seller's own shop by default; when an admin
+ * drives it (wrapped in a PosApiProvider for a chosen store), `api.mode` is
+ * "admin" and `onExit` sends them back to the store picker instead of logging
+ * a seller out.
+ */
+export default function PointOfSale({ onExit } = {}) {
+  const api = usePosApi()
+  const isAdmin = api.mode === "admin"
   const navigate = useNavigate()
   const cart = usePosCart()
   const [menuItems, setMenuItems] = useState([])
@@ -109,7 +117,7 @@ export default function PointOfSale() {
   const loadMenu = useCallback(async () => {
     setMenuLoading(true)
     try {
-      const res = await restaurantAPI.getMenu()
+      const res = await api.getMenu()
       setMenuItems(flattenMenuItems(getMenuFromResponse(res)))
     } catch (err) {
       toast.error(errMsg(err, "Could not load products"))
@@ -120,7 +128,7 @@ export default function PointOfSale() {
 
   const loadLastBill = useCallback(async () => {
     try {
-      const res = await restaurantAPI.posLastBill()
+      const res = await api.posLastBill()
       setLastBill(res?.data?.data || null)
     } catch {
       setLastBill(null)
@@ -130,9 +138,9 @@ export default function PointOfSale() {
   useEffect(() => {
     loadMenu()
     loadLastBill()
-    restaurantAPI.getCurrentRestaurant().then((res) => setRestaurant(extractRestaurant(res))).catch(() => {})
+    api.getCurrentRestaurant().then((res) => setRestaurant(extractRestaurant(res))).catch(() => {})
     // Is a register already open? If not, we prompt to open one.
-    restaurantAPI.posCurrentShift()
+    api.posCurrentShift()
       .then((res) => setShift(res?.data?.data?.shift || null))
       .catch(() => {})
       .finally(() => setShiftLoaded(true))
@@ -141,14 +149,14 @@ export default function PointOfSale() {
   // Load the live shift summary into the cash-control modal when it opens.
   useEffect(() => {
     if (modal !== "cashControl") return
-    restaurantAPI.posShiftSummary()
+    api.posShiftSummary()
       .then((res) => setCashCtrlSummary(res?.data?.data?.shift || null))
       .catch(() => setCashCtrlSummary(shift))
   }, [modal, shift])
 
   const handleOpenRegister = async (openingCash) => {
     try {
-      const res = await restaurantAPI.posOpenShift({ openingCash, cashierName: salesman })
+      const res = await api.posOpenShift({ openingCash, cashierName: salesman })
       setShift(res?.data?.data?.shift || null)
       toast.success("Register opened")
     } catch (err) {
@@ -158,20 +166,24 @@ export default function PointOfSale() {
 
   // Leaving the POS (back / exit) closes the register first: fetch the live
   // summary and show the count screen.
+  // Where exiting the till goes: an admin returns to the store picker, a
+  // seller is logged out of their own shop.
+  const leavePos = () => { if (isAdmin) onExit?.(); else navigate("/seller/dashboard") }
+
   const requestExit = async () => {
-    if (!shift) { navigate("/seller/dashboard"); return }
+    if (!shift) { leavePos(); return }
     // Show the count screen straight away from the open shift we already hold,
     // so a slow, failed, or auth-expired summary call never sends the cashier
     // out of the till without counting the drawer. The live figures (cash
     // sales, expected cash) refine it as soon as they load.
     setCloseSummary(shift)
     try {
-      const res = await restaurantAPI.posShiftSummary()
+      const res = await api.posShiftSummary()
       const open = res?.data?.data?.shift
       if (open) setCloseSummary(open)
       // A clean "no open shift" means the register was closed elsewhere since
       // this screen loaded — nothing to count, so leave cleanly.
-      else { setShift(null); setCloseSummary(null); navigate("/seller/dashboard") }
+      else { setShift(null); setCloseSummary(null); leavePos() }
     } catch {
       /* Network or auth hiccup — keep the count screen up with what we have. */
     }
@@ -179,11 +191,14 @@ export default function PointOfSale() {
 
   const handleCloseRegister = async (payload) => {
     try {
-      await restaurantAPI.posCloseShift(payload)
+      await api.posCloseShift(payload)
       toast.success("Register closed")
       setCloseSummary(null)
       setShift(null)
-      await logoutRestaurantSession({ navigate })
+      // A seller is logged out after counting their drawer; an admin just
+      // returns to the store picker, their admin session untouched.
+      if (isAdmin) onExit?.()
+      else await logoutRestaurantSession({ navigate })
     } catch (err) {
       toast.error(err?.response?.data?.message || "Could not close the register")
     }
@@ -197,7 +212,7 @@ export default function PointOfSale() {
   const loadSummary = useCallback(async (id) => {
     if (!id) { setSummary(null); return }
     try {
-      const res = await restaurantAPI.posCustomerSummary(id)
+      const res = await api.posCustomerSummary(id)
       setSummary(res?.data?.data || null)
     } catch {
       setSummary(null)
@@ -212,7 +227,7 @@ export default function PointOfSale() {
   const loadLoyalty = useCallback(async (id) => {
     if (!id) { setLoyalty(null); return }
     try {
-      const res = await restaurantAPI.posLoyaltyAccount(id)
+      const res = await api.posLoyaltyAccount(id)
       setLoyalty(res?.data?.data || null)
     } catch {
       setLoyalty(null)
@@ -261,7 +276,7 @@ export default function PointOfSale() {
     setQuoting(true)
     quoteTimer.current = setTimeout(async () => {
       try {
-        const res = await restaurantAPI.posQuote(billInput())
+        const res = await api.posQuote(billInput())
         setQuote(res?.data?.data || null)
       } catch (err) {
         setQuote(null)
@@ -311,7 +326,7 @@ export default function PointOfSale() {
 
     setBusy(true)
     try {
-      const res = await restaurantAPI.posCreateOrder({ ...billInput(), paymentMode: mode, tenders })
+      const res = await api.posCreateOrder({ ...billInput(), paymentMode: mode, tenders })
       const receipt = res?.data?.data?.receipt
       toast.success(`Bill ${receipt?.billNo || ""} saved · ₹${receipt?.pricing?.total ?? ""}`)
       setLastBill(receipt || null)
@@ -334,7 +349,7 @@ export default function PointOfSale() {
       // The slip comes back from the server rather than being assembled here:
       // it is priced by the same engine the sale will use, so the paper in the
       // customer's hand and the totals strip they just watched agree.
-      const res = await restaurantAPI.posHold(billInput())
+      const res = await api.posHold(billInput())
       const { held, receipt } = res?.data?.data || {}
       if (print && receipt) printReceipt(receipt, { title: "Hold Bill", held: true })
       toast.success(held?.holdNo ? `Bill held as ${held.holdNo}` : "Bill held")
@@ -370,7 +385,7 @@ export default function PointOfSale() {
     const key = String(ref || "").trim()
     if (!key) return
     try {
-      const res = await restaurantAPI.posGetBill(key)
+      const res = await api.posGetBill(key)
       const receipt = res?.data?.data
       if (receipt) { setLastBill(receipt); printReceipt(receipt) }
       setInvoiceRef("")
@@ -530,7 +545,7 @@ export default function PointOfSale() {
           // is what the separate Cash / Cash & Print pair is for.
           onProceed={(tenders) => pay("multiple", { tenders, print: true })}
           onLookupCreditNote={async (code) => {
-            const res = await restaurantAPI.posLookupCreditNote(code)
+            const res = await api.posLookupCreditNote(code)
             return res?.data?.data?.creditNote || res?.data?.creditNote || null
           }}
           loyaltyBalance={loyalty?.balance || 0}
@@ -576,7 +591,7 @@ export default function PointOfSale() {
 
       {/* Open the register on entry when none is running. */}
       {shiftLoaded && !shift ? (
-        <PosOpenRegisterModal cashierName={salesman} onOpen={handleOpenRegister} onExit={() => navigate("/seller/dashboard")} />
+        <PosOpenRegisterModal cashierName={salesman} onOpen={handleOpenRegister} onExit={leavePos} />
       ) : null}
 
       {/* Close the register (count the drawer) on exit / logout. */}
@@ -585,6 +600,7 @@ export default function PointOfSale() {
           summary={closeSummary}
           onClose={() => setCloseSummary(null)}
           onConfirm={handleCloseRegister}
+          logoutMode={!isAdmin}
         />
       ) : null}
 

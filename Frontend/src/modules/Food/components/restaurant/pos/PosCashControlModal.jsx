@@ -1,7 +1,7 @@
 import { useState } from "react"
 import { Loader2, ArrowDownToLine, ArrowUpFromLine } from "lucide-react"
 import { toast } from "sonner"
-import { restaurantAPI } from "@food/api"
+import { usePosApi } from "./posApiContext"
 import PosModal from "./PosModal"
 
 const inr = (n) => `₹${Number(n || 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
@@ -12,6 +12,7 @@ const inr = (n) => `₹${Number(n || 0).toLocaleString("en-IN", { minimumFractio
  * the close-register maths ("cash sales + received − out − refunds").
  */
 export default function PosCashControlModal({ summary, onClose, onUpdated }) {
+  const api = usePosApi()
   const [type, setType] = useState("in")
   const [amount, setAmount] = useState("")
   const [note, setNote] = useState("")
@@ -27,7 +28,7 @@ export default function PosCashControlModal({ summary, onClose, onUpdated }) {
     if (!(amt > 0)) { toast.error("Enter an amount above zero"); return }
     setBusy(true)
     try {
-      const res = await restaurantAPI.posCashMovement({ type, amount: amt, note: note.trim() })
+      const res = await api.posCashMovement({ type, amount: amt, note: note.trim() })
       const updated = res?.data?.data?.shift || null
       setShift(updated)
       onUpdated?.(updated)

@@ -1,19 +1,20 @@
 import { useEffect, useState } from "react"
 import { toast } from "sonner"
 import { Printer } from "lucide-react"
-import { restaurantAPI } from "@food/api"
+import { usePosApi } from "./posApiContext"
 import PosModal, { btnDark, btnLight } from "./PosModal"
 import { fmtDateTime, money, ORDER_TYPE_LABEL, printReceipt } from "./posUtils"
 
 /** Parked bills. Resume puts one back on the screen and removes the hold. */
 export default function PosHoldBillsModal({ onClose, onResume }) {
+  const api = usePosApi()
   const [rows, setRows] = useState([])
   const [loading, setLoading] = useState(true)
 
   const load = async () => {
     setLoading(true)
     try {
-      const res = await restaurantAPI.posListHolds()
+      const res = await api.posListHolds()
       setRows(Array.isArray(res?.data?.data) ? res.data.data : [])
     } catch (err) {
       toast.error(err?.response?.data?.message || "Could not load held bills")
@@ -26,7 +27,7 @@ export default function PosHoldBillsModal({ onClose, onResume }) {
 
   const resume = async (id) => {
     try {
-      const res = await restaurantAPI.posResumeHold(id)
+      const res = await api.posResumeHold(id)
       onResume(res?.data?.data)
     } catch (err) {
       toast.error(err?.response?.data?.message || "Could not resume that bill")
@@ -36,7 +37,7 @@ export default function PosHoldBillsModal({ onClose, onResume }) {
 
   const reprint = async (id) => {
     try {
-      const res = await restaurantAPI.posHeldBill(id)
+      const res = await api.posHeldBill(id)
       if (!printReceipt(res?.data?.data, { title: "Hold Bill", held: true })) {
         toast.error("The browser blocked the print window — allow pop-ups for this site")
       }
@@ -47,7 +48,7 @@ export default function PosHoldBillsModal({ onClose, onResume }) {
 
   const discard = async (id) => {
     try {
-      await restaurantAPI.posDiscardHold(id)
+      await api.posDiscardHold(id)
       setRows((r) => r.filter((h) => h.id !== id))
     } catch (err) {
       toast.error(err?.response?.data?.message || "Could not discard that bill")

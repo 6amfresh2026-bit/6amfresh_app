@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react"
 import { X, ChevronDown, Pencil } from "lucide-react"
-import { restaurantAPI } from "@food/api"
+import { usePosApi } from "./posApiContext"
 import PosNewCustomerModal from "./PosNewCustomerModal"
 
 /**
@@ -13,6 +13,7 @@ import PosNewCustomerModal from "./PosNewCustomerModal"
  * one to whatever bill happens to be open.
  */
 export default function PosCustomerBox({ customer, onChange }) {
+  const api = usePosApi()
   const [q, setQ] = useState("")
   const [results, setResults] = useState([])
   const [open, setOpen] = useState(false)
@@ -25,7 +26,7 @@ export default function PosCustomerBox({ customer, onChange }) {
     if (needle.length < 2) { setResults([]); return undefined }
     timer.current = setTimeout(async () => {
       try {
-        const res = await restaurantAPI.posSearchCustomers(needle)
+        const res = await api.posSearchCustomers(needle)
         setResults(Array.isArray(res?.data?.data) ? res.data.data : [])
         setOpen(true)
       } catch {

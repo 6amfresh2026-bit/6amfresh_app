@@ -2,7 +2,7 @@ import { useState } from "react"
 import { Loader2 } from "lucide-react"
 import { toast } from "sonner"
 
-import { restaurantAPI } from "@food/api"
+import { usePosApi } from "./posApiContext"
 import PosModal from "./PosModal"
 
 /**
@@ -83,6 +83,7 @@ const empty = {
 }
 
 export default function PosNewCustomerModal({ initial, onClose, onSaved }) {
+  const api = usePosApi()
   const [form, setForm] = useState({
     ...empty,
     ...(initial ? { name: initial.name || "", phone: initial.phone || "" } : {}),
@@ -106,7 +107,7 @@ export default function PosNewCustomerModal({ initial, onClose, onSaved }) {
     if (!phoneOk) { toast.error("Enter a 10-digit mobile number first"); return }
     setVerifying(true)
     try {
-      const res = await restaurantAPI.posLookupCustomer(digits(form.phone))
+      const res = await api.posLookupCustomer(digits(form.phone))
       const found = res?.data?.data
       if (found?.exists) {
         // Fill the form from the record rather than making the cashier retype
@@ -143,7 +144,7 @@ export default function PosNewCustomerModal({ initial, onClose, onSaved }) {
     if (problem) return
     setSaving(true)
     try {
-      const res = await restaurantAPI.posSaveCustomer({ ...form, phone: digits(form.phone) })
+      const res = await api.posSaveCustomer({ ...form, phone: digits(form.phone) })
       const saved = res?.data?.data?.customer
       toast.success(`${saved?.name || "Customer"} saved`)
       onSaved(saved)

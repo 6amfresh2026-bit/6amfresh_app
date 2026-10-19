@@ -67,7 +67,7 @@ const Chattings = lazy(() => import("@food/pages/admin/Chattings"));
 const ContactMessages = lazy(() => import("@food/pages/admin/ContactMessages"));
 const SafetyEmergencyReports = lazy(() => import("@food/pages/admin/SafetyEmergencyReports"));
 const ProductRequests = lazy(() => import("@food/pages/admin/ProductRequests"));
-const PointOfSale = lazy(() => import("@food/pages/admin/PointOfSale"));
+const PointOfSale = lazy(() => import("@food/pages/admin/AdminPointOfSale"));
 // Customer Management
 const Customers = lazy(() => import("@food/pages/admin/Customers"));
 const SupportTickets = lazy(() => import("@food/pages/admin/SupportTickets"));

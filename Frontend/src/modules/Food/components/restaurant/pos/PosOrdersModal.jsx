@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react"
 import { toast } from "sonner"
 import { Printer } from "lucide-react"
-import { restaurantAPI } from "@food/api"
+import { usePosApi } from "./posApiContext"
 import PosModal, { btnDark, btnLight, inputCls } from "./PosModal"
 import { fmtDateTime, money, printReceipt, TENDER_LABEL } from "./posUtils"
 
@@ -10,6 +10,7 @@ import { fmtDateTime, money, printReceipt, TENDER_LABEL } from "./posUtils"
  * which is also where a payment is added against a pay-later bill.
  */
 export default function PosOrdersModal({ mode = "orders", onClose, onPaid }) {
+  const api = usePosApi()
   const dueOnly = mode === "payments"
   const today = new Date().toISOString().slice(0, 10)
   const [date, setDate] = useState(dueOnly ? "all" : today)
@@ -20,7 +21,7 @@ export default function PosOrdersModal({ mode = "orders", onClose, onPaid }) {
   const load = async () => {
     setLoading(true)
     try {
-      const res = await restaurantAPI.posListOrders({ date, due: dueOnly ? "true" : undefined, limit: 200 })
+      const res = await api.posListOrders({ date, due: dueOnly ? "true" : undefined, limit: 200 })
       setData(res?.data?.data || { items: [], total: 0, due: 0 })
     } catch (err) {
       toast.error(err?.response?.data?.message || "Could not load bills")
@@ -111,7 +112,7 @@ function AddPayment({ bill, onClose, onDone }) {
   const submit = async () => {
     setBusy(true)
     try {
-      const res = await restaurantAPI.posRecordPayment(bill.id, { mode, amount: value })
+      const res = await api.posRecordPayment(bill.id, { mode, amount: value })
       const d = res?.data?.data
       toast.success(d?.settled ? `Bill ${bill.billNo} settled` : `₹${money(value, 2)} received · ₹${money(d?.dueAmount, 2)} still due`)
       onDone()

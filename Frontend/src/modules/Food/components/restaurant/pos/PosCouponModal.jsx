@@ -2,7 +2,7 @@ import { useEffect, useState } from "react"
 import { Loader2 } from "lucide-react"
 import { toast } from "sonner"
 
-import { restaurantAPI } from "@food/api"
+import { usePosApi } from "./posApiContext"
 import PosModal from "./PosModal"
 import { money } from "./posUtils"
 
@@ -59,6 +59,7 @@ const CouponRow = ({ row, active, onApply }) => (
 )
 
 export default function PosCouponModal({ current, invoiceBalance, items, customerId, onClose, onApply }) {
+  const api = usePosApi()
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState("")
@@ -66,7 +67,7 @@ export default function PosCouponModal({ current, invoiceBalance, items, custome
   useEffect(() => {
     let cancelled = false
     setLoading(true)
-    restaurantAPI
+    api
       .posCoupons({ items, customerId: customerId || undefined })
       .then((res) => {
         if (!cancelled) setData(res?.data?.data || null)

@@ -2,7 +2,7 @@ import { useEffect, useState } from "react"
 import { Loader2, RefreshCw } from "lucide-react"
 import { toast } from "sonner"
 
-import { restaurantAPI } from "@food/api"
+import { usePosApi } from "./posApiContext"
 import PosModal from "./PosModal"
 import { money, fmtDateTime } from "./posUtils"
 import { POS_ORDER_TABS, POS_ORDER_TAB, ORDER_STATUS_LABEL, statusTone } from "./posOrderStatus"
@@ -20,6 +20,7 @@ import { POS_ORDER_TABS, POS_ORDER_TAB, ORDER_STATUS_LABEL, statusTone } from ".
  * closing and reopening from the bar.
  */
 export default function PosOrderBoard({ status = "all", onStatus, onClose }) {
+  const api = usePosApi()
   const [rows, setRows] = useState([])
   const [loading, setLoading] = useState(true)
   const [reloadToken, setReloadToken] = useState(0)
@@ -29,7 +30,7 @@ export default function PosOrderBoard({ status = "all", onStatus, onClose }) {
   useEffect(() => {
     let cancelled = false
     setLoading(true)
-    restaurantAPI
+    api
       .getOrders({ limit: 100, ...tab.params })
       .then((res) => {
         if (cancelled) return
