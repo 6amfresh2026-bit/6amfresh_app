@@ -23,8 +23,11 @@ export default function PosTopBar({
   onClearBill,
   hasLines,
   syncing,
+  onExit,
 }) {
   const navigate = useNavigate()
+  // Leaving the till runs the register-close flow when the parent provides it.
+  const exitPos = () => (onExit ? onExit() : navigate("/seller/dashboard"))
   const [online, setOnline] = useState(() => (typeof navigator === "undefined" ? true : navigator.onLine))
   const [fullscreen, setFullscreen] = useState(() => Boolean(document.fullscreenElement))
   const companyName = getCompanyName() || "Store"
@@ -54,7 +57,7 @@ export default function PosTopBar({
     // row that cannot fit compresses its children instead of breaking, and the
     // squeezed result is worse than a second line.
     <header className="flex flex-wrap items-center gap-x-4 gap-y-2 bg-[#eaf1f8] px-3 py-1.5 text-sm">
-      <button type="button" className={iconBtn} onClick={() => navigate("/seller/dashboard")} title="Back to dashboard">
+      <button type="button" className={iconBtn} onClick={exitPos} title="Back to dashboard">
         <PanelLeft size={18} />
       </button>
 
@@ -123,7 +126,7 @@ export default function PosTopBar({
           {fullscreen ? <Minimize2 size={18} /> : <Maximize2 size={18} />}
         </button>
         <button type="button" className={iconBtn} onClick={onClearBill} disabled={!hasLines} title="New bill"><X size={18} /></button>
-        <button type="button" className={iconBtn} onClick={() => navigate("/seller/dashboard")} title="Exit POS"><LogOut size={18} /></button>
+        <button type="button" className={iconBtn} onClick={exitPos} title="Exit POS"><LogOut size={18} /></button>
       </div>
     </header>
   )

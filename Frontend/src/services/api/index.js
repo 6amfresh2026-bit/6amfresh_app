@@ -2068,6 +2068,15 @@ export const restaurantAPI = {
     apiClient.post(`/food/restaurant/pos/holds/${String(heldId)}/resume`, {}, { contextModule: "restaurant" }),
   posDiscardHold: (heldId) =>
     apiClient.delete(`/food/restaurant/pos/holds/${String(heldId)}`, { contextModule: "restaurant" }),
+  /** POS register / shift */
+  posCurrentShift: () =>
+    apiClient.get("/food/restaurant/pos/shift/current", { contextModule: "restaurant" }),
+  posOpenShift: (body = {}) =>
+    apiClient.post("/food/restaurant/pos/shift/open", body, { contextModule: "restaurant" }),
+  posShiftSummary: () =>
+    apiClient.get("/food/restaurant/pos/shift/summary", { contextModule: "restaurant" }),
+  posCloseShift: (body = {}) =>
+    apiClient.post("/food/restaurant/pos/shift/close", body, { contextModule: "restaurant" }),
   /** List restaurant complaints (for current restaurant dashboard) */
   getComplaints: (params = {}) =>
     apiClient.get("/food/restaurant/complaints", {

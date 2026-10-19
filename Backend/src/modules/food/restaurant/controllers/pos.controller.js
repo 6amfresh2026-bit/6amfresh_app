@@ -16,7 +16,11 @@ import {
     listHeldBills,
     getHeldBillReceipt,
     takeHeldBill,
-    discardHeldBill
+    discardHeldBill,
+    getCurrentShift,
+    openShift,
+    getShiftSummary,
+    closeShift
 } from '../services/pos.service.js';
 
 /** Every handler here acts as the signed-in seller, on their own shop only. */
@@ -149,6 +153,38 @@ export const takeHeldBillController = async (req, res, next) => {
 export const discardHeldBillController = async (req, res, next) => {
     try {
         return sendResponse(res, 200, 'Held bill discarded', await discardHeldBill(shopOf(req), req.params.heldId));
+    } catch (err) {
+        next(err);
+    }
+};
+
+export const getCurrentShiftController = async (req, res, next) => {
+    try {
+        return sendResponse(res, 200, 'Current register', await getCurrentShift(shopOf(req)));
+    } catch (err) {
+        next(err);
+    }
+};
+
+export const openShiftController = async (req, res, next) => {
+    try {
+        return sendResponse(res, 201, 'Register opened', await openShift(shopOf(req), req.body || {}));
+    } catch (err) {
+        next(err);
+    }
+};
+
+export const getShiftSummaryController = async (req, res, next) => {
+    try {
+        return sendResponse(res, 200, 'Register summary', await getShiftSummary(shopOf(req)));
+    } catch (err) {
+        next(err);
+    }
+};
+
+export const closeShiftController = async (req, res, next) => {
+    try {
+        return sendResponse(res, 200, 'Register closed', await closeShift(shopOf(req), req.body || {}));
     } catch (err) {
         next(err);
     }

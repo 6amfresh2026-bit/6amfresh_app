@@ -2,6 +2,7 @@ import mongoose from 'mongoose';
 import { FoodUser } from '../../../../core/users/user.model.js';
 import { FoodRestaurant } from '../models/restaurant.model.js';
 import { FoodPosHeldBill } from '../models/posHeldBill.model.js';
+import { FoodPosShift } from '../models/posShift.model.js';
 import { ValidationError, NotFoundError } from '../../../../core/auth/errors.js';
 import { createOrder } from '../../orders/services/order.service.js';
 import { calculateOrderPricing } from '../../orders/services/order-pricing.service.js';
@@ -1089,4 +1090,94 @@ export async function discardHeldBill(restaurantId, heldId) {
     const res = await FoodPosHeldBill.deleteOne({ _id: heldId, restaurantId });
     if (!res.deletedCount) throw new NotFoundError('Held bill not found');
     return { deleted: true };
+}
+
+// ───────────────────────────── register / shift ─────────────────────────────
+
+const SHIFT_CANCELLED = ['cancelled_by_user', 'cancelled_by_restaurant', 'cancelled_by_admin'];
+
+/** Readable per-store per-day shift code, e.g. "SH1-20261016-01". */
+async function nextShiftCode(restaurantId) {
+    const d = new Date();
+    const ymd = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
+    const seq = await nextSequence(`pos_shift_${restaurantId}_${ymd}`);
+    return `SH1-${ymd}-${String(seq).padStart(2, '0')}`;
+}
+
+/** Cash taken in and bills rung up since the shift opened (cash tenders only). */
+async function computeShiftCash(restaurantId, since) {
+    const orders = await FoodOrder.find({
+        restaurantId,
+        source: 'pos',
+        createdAt: { $gte: since },
+        orderStatus: { $nin: SHIFT_CANCELLED }
+    }).select('pos').lean();
+
+    let cashSales = 0;
+    for (const o of orders) {
+        for (const t of (o.pos?.tenders || [])) {
+            if (t?.mode === 'cash') cashSales += Number(t.amount) || 0;
+        }
+    }
+    return { cashSales: round2(cashSales), billsCount: orders.length };
+}
+
+const expectedCashOf = (shift, cashSales) =>
+    round2((shift.openingCash || 0) + cashSales + (shift.cashReceived || 0) - (shift.cashOut || 0) - (shift.refunds || 0));
+
+const countedFromDenoms = (denoms = {}) =>
+    round2(Object.entries(denoms).reduce((sum, [note, count]) => sum + (Number(note) || 0) * (Number(count) || 0), 0));
+
+/** The open register for this store, or null. */
+export async function getCurrentShift(restaurantId) {
+    await loadRestaurant(restaurantId);
+    const shift = await FoodPosShift.findOne({ restaurantId, status: 'open' }).lean();
+    return { shift: shift || null };
+}
+
+/** Open a register with a starting float. Only one may be open per store. */
+export async function openShift(restaurantId, dto = {}) {
+    await loadRestaurant(restaurantId);
+    const existing = await FoodPosShift.findOne({ restaurantId, status: 'open' }).lean();
+    if (existing) return { shift: existing, alreadyOpen: true };
+
+    const shift = await FoodPosShift.create({
+        restaurantId,
+        shiftCode: await nextShiftCode(restaurantId),
+        cashierName: String(dto.cashierName || '').trim(),
+        openingCash: Math.max(0, Number(dto.openingCash) || 0)
+    });
+    return { shift: shift.toObject() };
+}
+
+/** The open register plus live cash sales, bill count and expected cash. */
+export async function getShiftSummary(restaurantId) {
+    await loadRestaurant(restaurantId);
+    const shift = await FoodPosShift.findOne({ restaurantId, status: 'open' }).lean();
+    if (!shift) return { shift: null };
+    const { cashSales, billsCount } = await computeShiftCash(restaurantId, shift.openedAt);
+    return { shift: { ...shift, cashSales, billsCount, expectedCash: expectedCashOf(shift, cashSales) } };
+}
+
+/** Count the drawer and close the register, recording the difference. */
+export async function closeShift(restaurantId, dto = {}) {
+    await loadRestaurant(restaurantId);
+    const shift = await FoodPosShift.findOne({ restaurantId, status: 'open' });
+    if (!shift) throw new ValidationError('No open register to close');
+
+    const { cashSales, billsCount } = await computeShiftCash(restaurantId, shift.openedAt);
+    const expectedCash = expectedCashOf(shift, cashSales);
+    const denominations = dto.denominations && typeof dto.denominations === 'object' ? dto.denominations : {};
+    const countedCash = Number.isFinite(Number(dto.countedCash)) ? round2(dto.countedCash) : countedFromDenoms(denominations);
+
+    shift.status = 'closed';
+    shift.closedAt = new Date();
+    shift.cashSales = cashSales;
+    shift.billsCount = billsCount;
+    shift.expectedCash = expectedCash;
+    shift.countedCash = countedCash;
+    shift.denominations = denominations;
+    shift.difference = round2(countedCash - expectedCash);
+    await shift.save();
+    return { shift: shift.toObject() };
 }

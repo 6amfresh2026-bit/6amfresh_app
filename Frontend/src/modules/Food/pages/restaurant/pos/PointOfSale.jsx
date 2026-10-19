@@ -20,6 +20,10 @@ import PosCashTenderModal from "@food/components/restaurant/pos/PosCashTenderMod
 import PosOrderBoard from "@food/components/restaurant/pos/PosOrderBoard"
 import { PosChargesModal } from "@food/components/restaurant/pos/PosSmallModals"
 import { KEY_ACTIONS, lineDiscount, printReceipt } from "@food/components/restaurant/pos/posUtils"
+import PosOpenRegisterModal from "@food/components/restaurant/pos/PosOpenRegisterModal"
+import PosCloseRegisterModal from "@food/components/restaurant/pos/PosCloseRegisterModal"
+import { useNavigate } from "react-router-dom"
+import { logoutRestaurantSession } from "@food/utils/restaurantLogout"
 
 const extractRestaurant = (response) =>
   response?.data?.data?.restaurant || response?.data?.restaurant || response?.data?.data || null
@@ -35,10 +39,17 @@ const errMsg = (err, fallback) => err?.response?.data?.message || err?.message |
  * ledger can never disagree.
  */
 export default function PointOfSale() {
+  const navigate = useNavigate()
   const cart = usePosCart()
   const [menuItems, setMenuItems] = useState([])
   const [menuLoading, setMenuLoading] = useState(true)
   const [restaurant, setRestaurant] = useState(null)
+
+  // POS register (shift): opened with a float on entry, closed with a drawer
+  // count on exit/logout.
+  const [shift, setShift] = useState(null)        // open shift, or null
+  const [shiftLoaded, setShiftLoaded] = useState(false)
+  const [closeSummary, setCloseSummary] = useState(null) // summary shown in the close modal
 
   // Every till sale is a walk-in counter sale. The four-way selector is gone:
   // this is a grocery counter, not a restaurant floor — dine-in and take-away
@@ -116,7 +127,46 @@ export default function PointOfSale() {
     loadMenu()
     loadLastBill()
     restaurantAPI.getCurrentRestaurant().then((res) => setRestaurant(extractRestaurant(res))).catch(() => {})
+    // Is a register already open? If not, we prompt to open one.
+    restaurantAPI.posCurrentShift()
+      .then((res) => setShift(res?.data?.data?.shift || null))
+      .catch(() => {})
+      .finally(() => setShiftLoaded(true))
   }, [loadMenu, loadLastBill])
+
+  const handleOpenRegister = async (openingCash) => {
+    try {
+      const res = await restaurantAPI.posOpenShift({ openingCash, cashierName: salesman })
+      setShift(res?.data?.data?.shift || null)
+      toast.success("Register opened")
+    } catch (err) {
+      toast.error(err?.response?.data?.message || "Could not open the register")
+    }
+  }
+
+  // Leaving the POS (back / exit) closes the register first: fetch the live
+  // summary and show the count screen.
+  const requestExit = async () => {
+    if (!shift) { navigate("/seller/dashboard"); return }
+    try {
+      const res = await restaurantAPI.posShiftSummary()
+      setCloseSummary(res?.data?.data?.shift || null)
+    } catch {
+      setCloseSummary(shift)
+    }
+  }
+
+  const handleCloseRegister = async ({ countedCash, denominations }) => {
+    try {
+      await restaurantAPI.posCloseShift({ countedCash, denominations })
+      toast.success("Register closed")
+      setCloseSummary(null)
+      setShift(null)
+      await logoutRestaurantSession({ navigate })
+    } catch (err) {
+      toast.error(err?.response?.data?.message || "Could not close the register")
+    }
+  }
 
   useEffect(() => {
     try { localStorage.setItem("pos.autoPrint", autoPrint ? "1" : "0") } catch { /* private mode */ }
@@ -341,6 +391,7 @@ export default function PointOfSale() {
         syncing={menuLoading}
         onClearBill={resetBill}
         hasLines={cart.lines.length > 0}
+        onExit={requestExit}
       />
 
       <div className="flex min-h-0 flex-1">
@@ -464,6 +515,20 @@ export default function PointOfSale() {
           onSubmit={(amount) =>
             pay("cash", { print: pendingWillPrint || autoPrint, tenders: [{ mode: "cash", amount }] })
           }
+        />
+      ) : null}
+
+      {/* Open the register on entry when none is running. */}
+      {shiftLoaded && !shift ? (
+        <PosOpenRegisterModal cashierName={salesman} onOpen={handleOpenRegister} />
+      ) : null}
+
+      {/* Close the register (count the drawer) on exit / logout. */}
+      {closeSummary ? (
+        <PosCloseRegisterModal
+          summary={closeSummary}
+          onClose={() => setCloseSummary(null)}
+          onConfirm={handleCloseRegister}
         />
       ) : null}
     </div>

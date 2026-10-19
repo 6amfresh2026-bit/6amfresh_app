@@ -98,7 +98,11 @@ import {
     listHeldBillsController,
     getHeldBillReceiptController,
     takeHeldBillController,
-    discardHeldBillController
+    discardHeldBillController,
+    getCurrentShiftController,
+    openShiftController,
+    getShiftSummaryController,
+    closeShiftController
 } from '../controllers/pos.controller.js';
 import { authMiddleware, optionalAuth } from '../../../../core/auth/auth.middleware.js';
 import { sendError } from '../../../../utils/response.js';
@@ -375,5 +379,11 @@ router.post('/pos/holds', authMiddleware, requireRestaurant, holdPosBillControll
 router.get('/pos/holds/:heldId', authMiddleware, requireRestaurant, getHeldBillReceiptController);
 router.post('/pos/holds/:heldId/resume', authMiddleware, requireRestaurant, takeHeldBillController);
 router.delete('/pos/holds/:heldId', authMiddleware, requireRestaurant, discardHeldBillController);
+
+// Register / shift
+router.get('/pos/shift/current', authMiddleware, requireRestaurant, getCurrentShiftController);
+router.post('/pos/shift/open', authMiddleware, requireRestaurant, openShiftController);
+router.get('/pos/shift/summary', authMiddleware, requireRestaurant, getShiftSummaryController);
+router.post('/pos/shift/close', authMiddleware, requireRestaurant, closeShiftController);
 
 export default router;
