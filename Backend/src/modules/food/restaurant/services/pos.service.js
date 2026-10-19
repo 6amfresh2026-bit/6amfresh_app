@@ -380,35 +380,47 @@ export async function createPosOrder(restaurantId, dto = {}) {
         throw new ValidationError('Pay later needs a named customer — pick one or enter a phone number');
     }
 
-    // Credit-note tenders spend a stored balance, so they must clear before a
-    // single rupee is committed. Load and check each here; redeem only once the
-    // order is written, so a failed sale never burns a note.
+    // Credit-note and loyalty tenders spend a stored balance, so they are held
+    // atomically here — before a single rupee is committed — and only written
+    // into the ledger once the order sticks. Because the hold decrements the
+    // balance eagerly (that is what makes it safe against two tills at once),
+    // anything that fails after it must give the hold back, or a bounced sale
+    // would quietly eat the note or the points.
     const creditNotes = await reserveCreditNoteTenders(restaurantId, tenders);
+    let loyaltyRedeem;
+    try {
+        loyaltyRedeem = await reserveLoyaltyTender(restaurantId, customer, tenders, total);
+    } catch (err) {
+        await releaseCreditNoteHolds(creditNotes);
+        throw err;
+    }
 
-    // Loyalty tenders spend the customer's points, so they are checked the same
-    // way: a walk-in has no account to draw on, and points can't settle a whole
-    // bill. Committed only after the sale sticks.
-    const loyaltyRedeem = await reserveLoyaltyTender(restaurantId, customer, tenders, total);
-
-    const result = await createOrder(String(customer._id), {
-        restaurantId: String(restaurantId),
-        items,
-        address,
-        paymentMethod,
-        customerName: isWalkInPhone(customer.phone) ? 'Walk in Customer' : customer.name || String(dto.customerName || ''),
-        customerPhone: isWalkInPhone(customer.phone) ? '' : customer.phone,
-        pricing: pricingInputOf(dto, items),
-        pos: {
-            orderType,
-            tableNo: String(dto.tableNo || ''),
-            salesman: String(dto.salesman || ''),
-            remarks: String(dto.remarks || ''),
-            paymentMode,
-            tenders,
-            dueAmount,
-            changeGiven
-        }
-    });
+    let result;
+    try {
+        result = await createOrder(String(customer._id), {
+            restaurantId: String(restaurantId),
+            items,
+            address,
+            paymentMethod,
+            customerName: isWalkInPhone(customer.phone) ? 'Walk in Customer' : customer.name || String(dto.customerName || ''),
+            customerPhone: isWalkInPhone(customer.phone) ? '' : customer.phone,
+            pricing: pricingInputOf(dto, items),
+            pos: {
+                orderType,
+                tableNo: String(dto.tableNo || ''),
+                salesman: String(dto.salesman || ''),
+                remarks: String(dto.remarks || ''),
+                paymentMode,
+                tenders,
+                dueAmount,
+                changeGiven
+            }
+        });
+    } catch (err) {
+        await releaseCreditNoteHolds(creditNotes);
+        await releaseLoyaltyHold(loyaltyRedeem);
+        throw err;
+    }
 
     // The tenders were checked against the quote; the order is priced again on
     // the way in. Those two must agree, and when they have not it was because
@@ -448,12 +460,16 @@ export async function createPosOrder(restaurantId, dto = {}) {
     await redeemCreditNoteTenders(creditNotes, { orderId: result?.order?._id, billNo });
 
     // Draw down redeemed loyalty points, then award points on this bill when
-    // the cashier opted in and a named customer is on it. Earning is on the
-    // bill's full value — a redemption doesn't shrink what the sale was worth.
+    // the cashier opted in and a named customer is on it. Points are earned on
+    // what was actually paid at the counter, not the bill's face value: a
+    // pay-later bill the customer walks out owing must not hand them rewards
+    // for money the till never took (and could lose if the bill is voided). A
+    // loyalty or credit-note redemption still counts as payment here.
+    const paidNow = round2(Math.max(0, total - dueAmount));
     await commitLoyaltyRedeem(loyaltyRedeem, { orderId: result?.order?._id, billNo });
     await awardLoyalty(restaurantId, customer, {
         earn: dto.earnLoyalty === true || dto.earnLoyalty === 'true',
-        total,
+        total: paidNow,
         orderId: result?.order?._id,
         billNo
     });
@@ -1363,10 +1379,13 @@ export async function voidCreditNote(restaurantId, id) {
 }
 
 /**
- * Load and check the credit notes behind any credit_note tenders on a sale,
- * before the order is written. Returns the live docs keyed to their tender
- * amount so the sale can redeem them once it sticks. Throws if any code is
- * unknown, closed, or short of balance.
+ * Hold the balance behind any credit_note tenders on a sale, before the order
+ * is written. The balance is decremented atomically here — a single
+ * findOneAndUpdate guarded on the note being open and holding enough — so two
+ * tills redeeming the same note at once can never both win and overspend it.
+ * The ledger entry and the closed status are written later, in
+ * redeemCreditNoteTenders, once the order sticks; a failed order releases the
+ * hold. Throws if any code is unknown, closed, or short of balance.
  */
 async function reserveCreditNoteTenders(restaurantId, tenders) {
     const lines = (tenders || []).filter((t) => t.mode === 'credit_note');
@@ -1379,26 +1398,41 @@ async function reserveCreditNoteTenders(restaurantId, tenders) {
 
     const reserved = [];
     for (const [code, amount] of wanted) {
-        const note = await FoodPosCreditNote.findOne({ restaurantId, code });
-        if (!note) throw new ValidationError(`Credit note ${code} was not found at this store`);
-        if (!CREDIT_NOTE_OPEN.includes(note.status)) {
-            throw new ValidationError(`Credit note ${code} is ${note.status === 'void' ? 'void' : 'already fully redeemed'}`);
+        const note = await FoodPosCreditNote.findOneAndUpdate(
+            { restaurantId, code, status: { $in: CREDIT_NOTE_OPEN }, balance: { $gte: amount - 0.001 } },
+            { $inc: { balance: -amount } },
+            { new: true }
+        );
+        if (!note) {
+            // Give back whatever this sale already took, then say why it stalled.
+            await releaseCreditNoteHolds(reserved);
+            const existing = await FoodPosCreditNote.findOne({ restaurantId, code }).lean();
+            if (!existing) throw new ValidationError(`Credit note ${code} was not found at this store`);
+            if (!CREDIT_NOTE_OPEN.includes(existing.status)) {
+                throw new ValidationError(`Credit note ${code} is ${existing.status === 'void' ? 'void' : 'already fully redeemed'}`);
+            }
+            throw new ValidationError(`Credit note ${code} has only ₹${round2(existing.balance).toFixed(2)} left`);
         }
-        if (amount > round2(note.balance) + 0.001) {
-            throw new ValidationError(`Credit note ${code} has only ₹${round2(note.balance).toFixed(2)} left`);
-        }
-        reserved.push({ note, amount });
+        reserved.push({ noteId: note._id, amount });
     }
     return reserved;
 }
 
-/** Draw the reserved amount off each note and close it when it hits zero. */
+/** Record the redemption on each held note and close it when it hits zero. */
 async function redeemCreditNoteTenders(reserved, { orderId = null, billNo = '' } = {}) {
-    for (const { note, amount } of (reserved || [])) {
-        note.balance = round2(Math.max(0, note.balance - amount));
+    for (const { noteId, amount } of (reserved || [])) {
+        const note = await FoodPosCreditNote.findById(noteId);
+        if (!note) continue;
         note.redemptions.push({ orderId: orderId || null, billNo: billNo || '', amount, at: new Date() });
-        note.status = note.balance <= 0.001 ? 'redeemed' : 'partially_redeemed';
+        note.status = round2(note.balance) <= 0.001 ? 'redeemed' : 'partially_redeemed';
         await note.save();
+    }
+}
+
+/** Put a held balance back when the sale that reserved it never completed. */
+async function releaseCreditNoteHolds(reserved) {
+    for (const { noteId, amount } of (reserved || [])) {
+        await FoodPosCreditNote.updateOne({ _id: noteId }, { $inc: { balance: amount } });
     }
 }
 
@@ -1420,9 +1454,12 @@ export async function getLoyaltyAccount(restaurantId, userId) {
 }
 
 /**
- * Check the loyalty tender on a sale against the customer's balance and the
- * redemption rules, before the order is written. Returns what to draw down
- * once it sticks, or null when there is no loyalty tender.
+ * Hold the points behind a loyalty tender on a sale against the customer's
+ * balance and the redemption rules, before the order is written. The points
+ * are subtracted atomically — a findOneAndUpdate guarded on the account still
+ * holding them — so two concurrent sales can't spend the same points twice.
+ * The ledger entry is written later in commitLoyaltyRedeem; a failed order
+ * releases the hold. Returns null when there is no loyalty tender.
  */
 async function reserveLoyaltyTender(restaurantId, customer, tenders, total) {
     const lines = (tenders || []).filter((t) => t.mode === 'loyalty');
@@ -1438,20 +1475,31 @@ async function reserveLoyaltyTender(restaurantId, customer, tenders, total) {
     if (amount > cap + 0.001) {
         throw new ValidationError(`Points can cover at most ₹${cap.toFixed(2)} of this ₹${round2(total).toFixed(2)} bill`);
     }
-    const account = await FoodPosLoyaltyAccount.findOne({ restaurantId, customerId: customer._id });
-    if (!account || account.balance < points) {
-        throw new ValidationError(`This customer has only ${account?.balance || 0} points`);
+    const account = await FoodPosLoyaltyAccount.findOneAndUpdate(
+        { restaurantId, customerId: customer._id, balance: { $gte: points } },
+        { $inc: { balance: -points } },
+        { new: true }
+    );
+    if (!account) {
+        const existing = await FoodPosLoyaltyAccount.findOne({ restaurantId, customerId: customer._id }).lean();
+        throw new ValidationError(`This customer has only ${existing?.balance || 0} points`);
     }
-    return { account, points, amount };
+    return { accountId: account._id, points, amount };
 }
 
-/** Subtract the redeemed points and record the ledger entry. */
+/** Record the redemption on the held account's ledger (points already taken). */
 async function commitLoyaltyRedeem(reserved, { orderId = null, billNo = '' } = {}) {
     if (!reserved) return;
-    const { account, points } = reserved;
-    account.balance = Math.max(0, account.balance - points);
-    account.ledger.push({ type: 'redeem', points: -points, orderId: orderId || null, billNo: billNo || '', at: new Date() });
-    await account.save();
+    await FoodPosLoyaltyAccount.updateOne(
+        { _id: reserved.accountId },
+        { $push: { ledger: { type: 'redeem', points: -reserved.points, orderId: orderId || null, billNo: billNo || '', at: new Date() } } }
+    );
+}
+
+/** Put held points back when the sale that reserved them never completed. */
+async function releaseLoyaltyHold(reserved) {
+    if (!reserved) return;
+    await FoodPosLoyaltyAccount.updateOne({ _id: reserved.accountId }, { $inc: { balance: reserved.points } });
 }
 
 /** Award points on a completed sale when the cashier opted in. */
