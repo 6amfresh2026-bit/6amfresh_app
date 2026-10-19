@@ -1,69 +1,72 @@
 import { sendResponse } from '../../../../utils/response.js';
-import {
-    createPosOrder,
-    holdPosBill,
-    listHeldBills,
-    takeHeldBill,
-    discardHeldBill,
-} from '../../restaurant/services/pos.service.js';
 import { ValidationError } from '../../../../core/auth/errors.js';
+import * as pos from '../../restaurant/services/pos.service.js';
 
-/** POST /food/admin/pos/orders — admin rings up a walk-in order on behalf of any restaurant. */
-export const createAdminPosOrderController = async (req, res, next) => {
+/**
+ * Admin-side POS: the same till the seller runs, but for any store the admin
+ * picks. Every call names the restaurant it is for — admin has no shop of its
+ * own — and otherwise flows through the exact same pos.service the seller uses,
+ * so pricing, stock, the register, credit notes and loyalty behave identically.
+ */
+
+/** The store this POS call is for: a body field, query param, or header. */
+const restaurantOf = (req) => {
+    const id = String(
+        req.body?.restaurantId || req.query?.restaurantId || req.headers['x-restaurant-id'] || ''
+    ).trim();
+    if (!id) throw new ValidationError('restaurantId is required');
+    return id;
+};
+
+/** Thin wrapper: run the service call for the chosen store and send the result. */
+const handler = (fn, message, status = 200) => async (req, res, next) => {
     try {
-        const { restaurantId, customerName, customerPhone, items, paymentMethod } = req.body || {};
-        if (!restaurantId) {
-            throw new ValidationError('restaurantId is required');
-        }
-        if (!Array.isArray(items) || !items.length) {
-            throw new ValidationError('At least one item is required');
-        }
-        const result = await createPosOrder(restaurantId, { customerName, customerPhone, items, paymentMethod });
-        return sendResponse(res, 201, 'POS order created successfully', result);
+        return sendResponse(res, status, message, await fn(req));
     } catch (err) {
         next(err);
     }
 };
 
-const requireRestaurantId = (bodyOrQuery = {}) => {
-    const restaurantId = String(bodyOrQuery.restaurantId || '').trim();
-    if (!restaurantId) throw new ValidationError('restaurantId is required');
-    return restaurantId;
-};
+// ─── quote & sale ───
+export const quoteAdminPosOrderController = handler((req) => pos.quotePosOrder(restaurantOf(req), req.body || {}), 'Quote ready');
+export const listAdminPosCouponsController = handler((req) => pos.listPosCoupons(restaurantOf(req), req.body || {}), 'Coupons');
+export const createAdminPosOrderController = handler((req) => {
+    const { items } = req.body || {};
+    if (!Array.isArray(items) || !items.length) throw new ValidationError('At least one item is required');
+    return pos.createPosOrder(restaurantOf(req), req.body || {});
+}, 'POS order created successfully', 201);
 
-/** Admin holds are still isolated per restaurant, just like restaurant-side POS. */
-export const holdAdminPosBillController = async (req, res, next) => {
-    try {
-        const restaurantId = requireRestaurantId(req.body);
-        return sendResponse(res, 201, 'Bill held', await holdPosBill(restaurantId, req.body || {}));
-    } catch (err) {
-        next(err);
-    }
-};
+// ─── orders & payments ───
+export const listAdminPosOrdersController = handler((req) => pos.listPosOrders(restaurantOf(req), req.query || {}), 'POS orders');
+export const getLastAdminPosBillController = handler((req) => pos.getLastPosBill(restaurantOf(req)), 'Last bill');
+export const getAdminPosBillController = handler((req) => pos.getPosBill(restaurantOf(req), req.params.orderId), 'Bill');
+export const recordAdminPosPaymentController = handler((req) => pos.recordPosPayment(restaurantOf(req), req.params.orderId, req.body || {}), 'Payment recorded');
 
-export const listAdminHeldBillsController = async (req, res, next) => {
-    try {
-        const restaurantId = requireRestaurantId(req.query);
-        return sendResponse(res, 200, 'Held bills', await listHeldBills(restaurantId));
-    } catch (err) {
-        next(err);
-    }
-};
+// ─── customers ───
+export const searchAdminPosCustomersController = handler((req) => pos.searchPosCustomers(restaurantOf(req), req.query.q, req.query.limit), 'Customers');
+export const lookupAdminPosCustomerController = handler((req) => pos.lookupPosCustomer(req.query.phone), 'Lookup');
+export const saveAdminPosCustomerController = handler((req) => pos.savePosCustomer(req.body || {}), 'Customer saved');
+export const getAdminPosCustomerSummaryController = handler((req) => pos.getPosCustomerSummary(restaurantOf(req), req.params.customerId), 'Customer summary');
 
-export const resumeAdminHeldBillController = async (req, res, next) => {
-    try {
-        const restaurantId = requireRestaurantId(req.body);
-        return sendResponse(res, 200, 'Bill resumed', await takeHeldBill(restaurantId, req.params.heldId));
-    } catch (err) {
-        next(err);
-    }
-};
+// ─── held bills ───
+export const holdAdminPosBillController = handler((req) => pos.holdPosBill(restaurantOf(req), req.body || {}), 'Bill held', 201);
+export const listAdminHeldBillsController = handler((req) => pos.listHeldBills(restaurantOf(req)), 'Held bills');
+export const getAdminHeldBillReceiptController = handler((req) => pos.getHeldBillReceipt(restaurantOf(req), req.params.heldId), 'Held bill');
+export const resumeAdminHeldBillController = handler((req) => pos.takeHeldBill(restaurantOf(req), req.params.heldId), 'Bill resumed');
+export const discardAdminHeldBillController = handler((req) => pos.discardHeldBill(restaurantOf(req), req.params.heldId), 'Held bill discarded');
 
-export const discardAdminHeldBillController = async (req, res, next) => {
-    try {
-        const restaurantId = requireRestaurantId(req.query);
-        return sendResponse(res, 200, 'Held bill discarded', await discardHeldBill(restaurantId, req.params.heldId));
-    } catch (err) {
-        next(err);
-    }
-};
+// ─── register / shift ───
+export const getAdminCurrentShiftController = handler((req) => pos.getCurrentShift(restaurantOf(req)), 'Current register');
+export const openAdminShiftController = handler((req) => pos.openShift(restaurantOf(req), req.body || {}), 'Register opened', 201);
+export const getAdminShiftSummaryController = handler((req) => pos.getShiftSummary(restaurantOf(req)), 'Register summary');
+export const closeAdminShiftController = handler((req) => pos.closeShift(restaurantOf(req), req.body || {}), 'Register closed');
+export const recordAdminCashMovementController = handler((req) => pos.recordCashMovement(restaurantOf(req), req.body || {}), 'Cash movement recorded');
+
+// ─── credit notes ───
+export const issueAdminCreditNoteController = handler((req) => pos.issueCreditNote(restaurantOf(req), req.body || {}), 'Credit note issued', 201);
+export const lookupAdminCreditNoteController = handler((req) => pos.lookupCreditNote(restaurantOf(req), req.params.code), 'Credit note');
+export const listAdminCreditNotesController = handler((req) => pos.listCreditNotes(restaurantOf(req), req.query || {}), 'Credit notes');
+export const voidAdminCreditNoteController = handler((req) => pos.voidCreditNote(restaurantOf(req), req.params.id), 'Credit note voided');
+
+// ─── loyalty ───
+export const getAdminLoyaltyAccountController = handler((req) => pos.getLoyaltyAccount(restaurantOf(req), req.params.userId), 'Loyalty account');

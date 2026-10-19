@@ -2,6 +2,7 @@ import express from 'express';
 import { AuthError } from '../../../../core/auth/errors.js';
 import * as adminController from '../controllers/admin.controller.js';
 import * as surveyController from '../controllers/survey.controller.js';
+import * as adminPos from '../controllers/pos.controller.js';
 import {
     createAdminPosOrderController,
     holdAdminPosBillController,
@@ -421,11 +422,40 @@ router.get('/product-subscriptions', productSubscriptionAdmin.listSubscriptionsC
 router.post('/product-subscriptions', productSubscriptionAdmin.createSubscriptionController);
 router.get('/product-subscriptions/:id', productSubscriptionAdmin.getSubscriptionDetailController);
 router.get('/reports/wallet-dashboard', adminController.getWalletDashboardController);
+// ─── Admin POS — the full seller till, for any store the admin picks ───
+// quote & sale
+router.post('/pos/quote', adminPos.quoteAdminPosOrderController);
+router.post('/pos/coupons', adminPos.listAdminPosCouponsController);
 router.post('/pos/orders', createAdminPosOrderController);
+// orders & payments
+router.get('/pos/orders', adminPos.listAdminPosOrdersController);
+router.get('/pos/orders/last', adminPos.getLastAdminPosBillController);
+router.get('/pos/orders/:orderId', adminPos.getAdminPosBillController);
+router.post('/pos/orders/:orderId/payments', adminPos.recordAdminPosPaymentController);
+// customers
+router.get('/pos/customers', adminPos.searchAdminPosCustomersController);
+router.get('/pos/customers/lookup', adminPos.lookupAdminPosCustomerController);
+router.post('/pos/customers', adminPos.saveAdminPosCustomerController);
+router.get('/pos/customers/:customerId/summary', adminPos.getAdminPosCustomerSummaryController);
+// held bills
 router.get('/pos/holds', listAdminHeldBillsController);
 router.post('/pos/holds', holdAdminPosBillController);
+router.get('/pos/holds/:heldId', adminPos.getAdminHeldBillReceiptController);
 router.post('/pos/holds/:heldId/resume', resumeAdminHeldBillController);
 router.delete('/pos/holds/:heldId', discardAdminHeldBillController);
+// register / shift
+router.get('/pos/shift/current', adminPos.getAdminCurrentShiftController);
+router.post('/pos/shift/open', adminPos.openAdminShiftController);
+router.get('/pos/shift/summary', adminPos.getAdminShiftSummaryController);
+router.post('/pos/shift/close', adminPos.closeAdminShiftController);
+router.post('/pos/shift/cash-movement', adminPos.recordAdminCashMovementController);
+// credit notes
+router.get('/pos/credit-notes', adminPos.listAdminCreditNotesController);
+router.post('/pos/credit-notes', adminPos.issueAdminCreditNoteController);
+router.get('/pos/credit-notes/:code', adminPos.lookupAdminCreditNoteController);
+router.post('/pos/credit-notes/:id/void', adminPos.voidAdminCreditNoteController);
+// loyalty
+router.get('/pos/loyalty/:userId', adminPos.getAdminLoyaltyAccountController);
 
 router.get('/surveys', surveyController.listSurveysController);
 router.post('/surveys', surveyController.createSurveyController);
