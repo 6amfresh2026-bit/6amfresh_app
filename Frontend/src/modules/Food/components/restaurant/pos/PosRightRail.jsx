@@ -12,7 +12,7 @@ const NOT_YET = "Not set up in this system yet"
  * control) are drawn as in the reference but disabled, with the reason on
  * hover — a button that opens an empty screen is worse than one that says why.
  */
-export default function PosRightRail({ onOpen, summary, customer, lastBill, onPrintLast }) {
+export default function PosRightRail({ onOpen, summary, customer, lastBill, onPrintLast, onRedeemLoyalty }) {
   const row = (k, v) => (
     <div className="flex items-start justify-between gap-2 py-1">
       <span className="text-[15px] font-semibold text-gray-800">{k}:</span>
@@ -26,7 +26,7 @@ export default function PosRightRail({ onOpen, summary, customer, lastBill, onPr
         <button type="button" className={tile} onClick={() => onOpen("holds")}><Columns3 size={26} className="text-sky-600" />Hold Bill</button>
         <button type="button" className={tile} disabled title={NOT_YET}><UtensilsCrossed size={26} className="text-sky-600" />Tables</button>
         <button type="button" className={tile} onClick={() => onOpen("payments")}><Receipt size={26} className="text-sky-600" />Payments</button>
-        <button type="button" className={tile} disabled title={NOT_YET}><Gift size={26} className="text-sky-600" />Reedem<br />Loyalty</button>
+        <button type="button" className={tile} onClick={onRedeemLoyalty} title="Redeem the customer's points on this bill"><Gift size={26} className="text-sky-600" />Reedem<br />Loyalty</button>
         <button type="button" className={tile} onClick={() => onOpen("payments")}><Banknote size={26} className="text-sky-600" />Add Payment</button>
         <button type="button" className={tile} onClick={() => onOpen("creditNotes")} title="Issue or review credit notes"><FileText size={26} className="text-sky-600" />Credit Notes</button>
         <button type="button" className={tile} onClick={() => onOpen("orders")}><List size={26} className="text-sky-600" />Orders</button>
@@ -41,7 +41,7 @@ export default function PosRightRail({ onOpen, summary, customer, lastBill, onPr
         {row("Payment Mode", summary?.lastPaymentMode ? TENDER_LABEL[summary.lastPaymentMode] || summary.lastPaymentMode : null)}
         {row("Due Payment", summary ? `₹${money(summary.duePayment)}` : null)}
         {row("Total Purchase", summary ? summary.totalPurchases : customer ? null : 0)}
-        {row("Loyalty Points", null)}
+        {row("Loyalty Points", summary?.loyaltyPoints != null ? summary.loyaltyPoints : null)}
       </div>
 
       <div className="rounded border border-gray-200 bg-white px-3 py-2">

@@ -2090,6 +2090,9 @@ export const restaurantAPI = {
     apiClient.get(`/food/restaurant/pos/credit-notes/${encodeURIComponent(String(code || "").trim().toUpperCase())}`, { contextModule: "restaurant" }),
   posVoidCreditNote: (id) =>
     apiClient.post(`/food/restaurant/pos/credit-notes/${String(id)}/void`, {}, { contextModule: "restaurant" }),
+  /** POS loyalty — a customer's points balance at this store */
+  posLoyaltyAccount: (userId) =>
+    apiClient.get(`/food/restaurant/pos/loyalty/${String(userId)}`, { contextModule: "restaurant" }),
   /** List restaurant complaints (for current restaurant dashboard) */
   getComplaints: (params = {}) =>
     apiClient.get("/food/restaurant/complaints", {

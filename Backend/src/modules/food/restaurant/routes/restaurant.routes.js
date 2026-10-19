@@ -107,7 +107,8 @@ import {
     issueCreditNoteController,
     lookupCreditNoteController,
     listCreditNotesController,
-    voidCreditNoteController
+    voidCreditNoteController,
+    getLoyaltyAccountController
 } from '../controllers/pos.controller.js';
 import { authMiddleware, optionalAuth } from '../../../../core/auth/auth.middleware.js';
 import { sendError } from '../../../../utils/response.js';
@@ -397,5 +398,8 @@ router.get('/pos/credit-notes', authMiddleware, requireRestaurant, listCreditNot
 router.post('/pos/credit-notes', authMiddleware, requireRestaurant, issueCreditNoteController);
 router.get('/pos/credit-notes/:code', authMiddleware, requireRestaurant, lookupCreditNoteController);
 router.post('/pos/credit-notes/:id/void', authMiddleware, requireRestaurant, voidCreditNoteController);
+
+// Loyalty — a customer's points balance at this store.
+router.get('/pos/loyalty/:userId', authMiddleware, requireRestaurant, getLoyaltyAccountController);
 
 export default router;

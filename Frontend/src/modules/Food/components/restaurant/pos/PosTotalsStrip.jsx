@@ -22,6 +22,7 @@ export default function PosTotalsStrip({
   roundOff,
   onRoundOff,
   earnLoyalty,
+  onEarnLoyalty,
 }) {
   const p = quote?.pricing
   const amount = p ? p.total : Math.max(0, totals.gross - totals.lineDiscount)
@@ -34,10 +35,10 @@ export default function PosTotalsStrip({
     // did not exist.
     <div className="grid grid-cols-9 items-stretch border-y border-gray-200 bg-white">
       <div className={cell}>
-        <label className="relative inline-block h-6 w-12" title="No loyalty programme is set up in this system yet">
-          <input type="checkbox" className="peer sr-only" checked={Boolean(earnLoyalty)} readOnly disabled />
-          <span className="absolute inset-0 rounded-full bg-sky-500 opacity-60" />
-          <span className="absolute left-0.5 top-0.5 h-5 w-5 translate-x-6 rounded-full bg-white shadow" />
+        <label className="relative inline-block h-6 w-12 cursor-pointer" title="Award loyalty points to a named customer on this bill">
+          <input type="checkbox" className="peer sr-only" checked={Boolean(earnLoyalty)} onChange={(e) => onEarnLoyalty?.(e.target.checked)} />
+          <span className="absolute inset-0 rounded-full bg-gray-300 transition-colors peer-checked:bg-sky-500" />
+          <span className="absolute left-0.5 top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform peer-checked:translate-x-6" />
         </label>
         <span className={label}>Earn Loyalty</span>
       </div>

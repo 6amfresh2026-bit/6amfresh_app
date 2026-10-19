@@ -72,6 +72,7 @@ export default function PointOfSale() {
   const [additionalCharges, setAdditionalCharges] = useState(0)
   const [roundOff, setRoundOff] = useState(false)
   const [couponCode, setCouponCode] = useState("")
+  const [earnLoyalty, setEarnLoyalty] = useState(true) // award points on this bill
 
   const [quote, setQuote] = useState(null)
   const [quoting, setQuoting] = useState(false)
@@ -196,6 +197,20 @@ export default function PointOfSale() {
 
   useEffect(() => { loadSummary(customer?.id) }, [customer?.id, loadSummary])
 
+  // The selected customer's loyalty balance and the live earn/redeem rules,
+  // used by the Pay screen to redeem points and by the right rail to show them.
+  const [loyalty, setLoyalty] = useState(null)
+  const loadLoyalty = useCallback(async (id) => {
+    if (!id) { setLoyalty(null); return }
+    try {
+      const res = await restaurantAPI.posLoyaltyAccount(id)
+      setLoyalty(res?.data?.data || null)
+    } catch {
+      setLoyalty(null)
+    }
+  }, [])
+  useEffect(() => { loadLoyalty(customer?.id) }, [customer?.id, loadLoyalty])
+
   // ── the quote ────────────────────────────────────────────────────────
 
   const billInput = useCallback(() => ({
@@ -220,7 +235,8 @@ export default function PointOfSale() {
     additionalCharges,
     roundOff,
     couponCode: couponCode || undefined,
-  }), [orderType, salesman, remarks, customer, cart.lines, flat, additionalCharges, roundOff, couponCode])
+    earnLoyalty,
+  }), [orderType, salesman, remarks, customer, cart.lines, flat, additionalCharges, roundOff, couponCode, earnLoyalty])
 
   // Just the lines, memoised: the coupon list refetches when the cart changes,
   // and a fresh array every render would make that an endless loop.
@@ -259,6 +275,7 @@ export default function PointOfSale() {
     setCouponCode("")
     setCustomer(null)
     setQuote(null)
+    setEarnLoyalty(true)
   }, [cart])
 
   const addItem = useCallback((item) => {
@@ -293,13 +310,13 @@ export default function PointOfSale() {
       const customerId = customer?.id
       resetBill()
       setModal(null)
-      if (customerId) loadSummary(customerId)
+      if (customerId) { loadSummary(customerId); loadLoyalty(customerId) }
     } catch (err) {
       toast.error(errMsg(err, "The sale could not be saved"))
     } finally {
       setBusy(false)
     }
-  }, [cart.lines.length, busy, customer, billInput, autoPrint, resetBill, loadSummary])
+  }, [cart.lines.length, busy, customer, billInput, autoPrint, resetBill, loadSummary, loadLoyalty])
 
   const hold = useCallback(async (print) => {
     if (!cart.lines.length || busy) return
@@ -462,13 +479,26 @@ export default function PointOfSale() {
             onAdditionalCharges={() => setModal("charges")}
             roundOff={roundOff}
             onRoundOff={setRoundOff}
-            earnLoyalty
+            earnLoyalty={earnLoyalty}
+            onEarnLoyalty={setEarnLoyalty}
           />
 
           <PosPayButtons disabled={disabled} onPay={pay} onHold={hold} onCoupon={() => setModal("coupon")} hasCustomer={Boolean(customer)} />
         </main>
 
-        <PosRightRail onOpen={setModal} summary={summary} customer={customer} lastBill={lastBill} onPrintLast={printLast} />
+        <PosRightRail
+          onOpen={setModal}
+          summary={summary}
+          customer={customer}
+          lastBill={lastBill}
+          onPrintLast={printLast}
+          onRedeemLoyalty={() => {
+            if (!cart.lines.length) { toast.error("Add items to the bill first"); return }
+            if (!customer) { toast.error("Pick a customer to redeem their points"); return }
+            if (!(loyalty?.balance > 0)) { toast.error("This customer has no points to redeem"); return }
+            setModal("multiple")
+          }}
+        />
       </div>
 
       {orderStatus ? (
@@ -494,6 +524,8 @@ export default function PointOfSale() {
             const res = await restaurantAPI.posLookupCreditNote(code)
             return res?.data?.data?.creditNote || res?.data?.creditNote || null
           }}
+          loyaltyBalance={loyalty?.balance || 0}
+          loyaltyConfig={loyalty?.config}
         />
       ) : null}
       {modal === "coupon" ? (

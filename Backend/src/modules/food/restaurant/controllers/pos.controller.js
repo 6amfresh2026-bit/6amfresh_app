@@ -25,7 +25,8 @@ import {
     issueCreditNote,
     lookupCreditNote,
     listCreditNotes,
-    voidCreditNote
+    voidCreditNote,
+    getLoyaltyAccount
 } from '../services/pos.service.js';
 
 /** Every handler here acts as the signed-in seller, on their own shop only. */
@@ -230,6 +231,14 @@ export const listCreditNotesController = async (req, res, next) => {
 export const voidCreditNoteController = async (req, res, next) => {
     try {
         return sendResponse(res, 200, 'Credit note voided', await voidCreditNote(shopOf(req), req.params.id));
+    } catch (err) {
+        next(err);
+    }
+};
+
+export const getLoyaltyAccountController = async (req, res, next) => {
+    try {
+        return sendResponse(res, 200, 'Loyalty account', await getLoyaltyAccount(shopOf(req), req.params.userId));
     } catch (err) {
         next(err);
     }

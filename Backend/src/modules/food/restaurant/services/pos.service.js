@@ -4,6 +4,8 @@ import { FoodRestaurant } from '../models/restaurant.model.js';
 import { FoodPosHeldBill } from '../models/posHeldBill.model.js';
 import { FoodPosShift } from '../models/posShift.model.js';
 import { FoodPosCreditNote } from '../models/posCreditNote.model.js';
+import { FoodPosLoyaltyAccount } from '../models/posLoyaltyAccount.model.js';
+import { LOYALTY, pointsEarnedFor, rupeeValueOf, pointsForRupees } from '../../shared/loyaltyConfig.js';
 import { FoodAdmin } from '../../../../core/admin/admin.model.js';
 import { ValidationError, NotFoundError } from '../../../../core/auth/errors.js';
 import { createOrder } from '../../orders/services/order.service.js';
@@ -186,6 +188,11 @@ function resolveTenders(dto, total) {
             if (!code) throw new ValidationError('A credit-note tender needs its code');
             return { mode: tenderMode, amount, at: new Date(), note: String(t?.note || '').slice(0, 300), creditNoteCode: code };
         }
+        // A loyalty tender spends the customer's points at the fixed rate; the
+        // points behind it are checked against the account in createPosOrder.
+        if (tenderMode === 'loyalty') {
+            return { mode: tenderMode, amount, at: new Date(), note: String(t?.note || '').slice(0, 300), loyaltyPoints: pointsForRupees(amount) };
+        }
         if (!TENDER_MODES.includes(tenderMode)) {
             throw new ValidationError(`Tender mode must be one of ${TENDER_MODES.join(', ')}, credit_note`);
         }
@@ -207,8 +214,9 @@ function resolveTenders(dto, total) {
         throw new ValidationError(`₹${changeGiven.toFixed(2)} change cannot be given — only ₹${cashIn.toFixed(2)} came in as cash`);
     }
     // payment.method must stay a settlement the order schema knows; a credit
-    // note is a store adjustment, not one of them, so it never wins the method.
-    const settleTenders = tenders.filter((t) => t.mode !== 'credit_note');
+    // note or loyalty redemption is a store adjustment, not one of them, so it
+    // never wins the method.
+    const settleTenders = tenders.filter((t) => t.mode !== 'credit_note' && t.mode !== 'loyalty');
     const paymentMethod = settleTenders.length ? dominantTenderMode(settleTenders) : 'cash';
     return { paymentMode: mode, tenders, paymentMethod, dueAmount, changeGiven };
 }
@@ -377,6 +385,11 @@ export async function createPosOrder(restaurantId, dto = {}) {
     // order is written, so a failed sale never burns a note.
     const creditNotes = await reserveCreditNoteTenders(restaurantId, tenders);
 
+    // Loyalty tenders spend the customer's points, so they are checked the same
+    // way: a walk-in has no account to draw on, and points can't settle a whole
+    // bill. Committed only after the sale sticks.
+    const loyaltyRedeem = await reserveLoyaltyTender(restaurantId, customer, tenders, total);
+
     const result = await createOrder(String(customer._id), {
         restaurantId: String(restaurantId),
         items,
@@ -433,6 +446,17 @@ export async function createPosOrder(restaurantId, dto = {}) {
 
     // The order stuck, so the reserved credit notes can be drawn down for real.
     await redeemCreditNoteTenders(creditNotes, { orderId: result?.order?._id, billNo });
+
+    // Draw down redeemed loyalty points, then award points on this bill when
+    // the cashier opted in and a named customer is on it. Earning is on the
+    // bill's full value — a redemption doesn't shrink what the sale was worth.
+    await commitLoyaltyRedeem(loyaltyRedeem, { orderId: result?.order?._id, billNo });
+    await awardLoyalty(restaurantId, customer, {
+        earn: dto.earnLoyalty === true || dto.earnLoyalty === 'true',
+        total,
+        orderId: result?.order?._id,
+        billNo
+    });
 
     const saved = await FoodOrder.findById(result.order._id).lean();
     return { order: result.order, receipt: await withItemBarcodes(toReceipt(saved, restaurant)) };
@@ -732,7 +756,7 @@ export async function getPosCustomerSummary(restaurantId, userId) {
         orderStatus: { $nin: OPEN_ORDER_STATUSES }
     };
 
-    const [last, totals, top] = await Promise.all([
+    const [last, totals, top, loyalty] = await Promise.all([
         FoodOrder.findOne(scope).sort({ createdAt: -1 }).select('createdAt pricing.total payment.method pos.paymentMode').lean(),
         FoodOrder.aggregate([
             { $match: scope },
@@ -744,7 +768,8 @@ export async function getPosCustomerSummary(restaurantId, userId) {
             { $group: { _id: '$items.name', qty: { $sum: '$items.quantity' } } },
             { $sort: { qty: -1, _id: 1 } },
             { $limit: 1 }
-        ])
+        ]),
+        FoodPosLoyaltyAccount.findOne({ restaurantId: scope.restaurantId, customerId: scope.userId }).select('balance').lean()
     ]);
 
     const agg = totals[0] || { count: 0, spent: 0, due: 0 };
@@ -759,8 +784,7 @@ export async function getPosCustomerSummary(restaurantId, userId) {
         duePayment: round2(agg.due),
         totalPurchases: agg.count,
         totalSpent: round2(agg.spent),
-        // No loyalty programme exists in this system; the panel shows a dash.
-        loyaltyPoints: null
+        loyaltyPoints: loyalty?.balance || 0
     };
 }
 
@@ -1376,4 +1400,71 @@ async function redeemCreditNoteTenders(reserved, { orderId = null, billNo = '' }
         note.status = note.balance <= 0.001 ? 'redeemed' : 'partially_redeemed';
         await note.save();
     }
+}
+
+// ───────────────────────────── loyalty ─────────────────────────────
+
+/** A customer's points balance at this store plus the live earn/redeem rules. */
+export async function getLoyaltyAccount(restaurantId, userId) {
+    await loadRestaurant(restaurantId);
+    if (!isId(userId)) throw new NotFoundError('Customer not found');
+    const account = await FoodPosLoyaltyAccount.findOne({ restaurantId, customerId: userId }).lean();
+    return {
+        balance: account?.balance || 0,
+        config: {
+            redeemRupeePerPoint: LOYALTY.redeemRupeePerPoint,
+            minRedeemPoints: LOYALTY.minRedeemPoints,
+            maxRedeemBillFraction: LOYALTY.maxRedeemBillFraction
+        }
+    };
+}
+
+/**
+ * Check the loyalty tender on a sale against the customer's balance and the
+ * redemption rules, before the order is written. Returns what to draw down
+ * once it sticks, or null when there is no loyalty tender.
+ */
+async function reserveLoyaltyTender(restaurantId, customer, tenders, total) {
+    const lines = (tenders || []).filter((t) => t.mode === 'loyalty');
+    if (!lines.length) return null;
+    if (isWalkInPhone(customer.phone)) throw new ValidationError('Loyalty points need a named customer — pick one or enter a phone number');
+
+    const amount = round2(lines.reduce((s, t) => s + t.amount, 0));
+    const points = pointsForRupees(amount);
+    if (points < LOYALTY.minRedeemPoints) {
+        throw new ValidationError(`At least ${LOYALTY.minRedeemPoints} points are needed to redeem`);
+    }
+    const cap = round2(total * LOYALTY.maxRedeemBillFraction);
+    if (amount > cap + 0.001) {
+        throw new ValidationError(`Points can cover at most ₹${cap.toFixed(2)} of this ₹${round2(total).toFixed(2)} bill`);
+    }
+    const account = await FoodPosLoyaltyAccount.findOne({ restaurantId, customerId: customer._id });
+    if (!account || account.balance < points) {
+        throw new ValidationError(`This customer has only ${account?.balance || 0} points`);
+    }
+    return { account, points, amount };
+}
+
+/** Subtract the redeemed points and record the ledger entry. */
+async function commitLoyaltyRedeem(reserved, { orderId = null, billNo = '' } = {}) {
+    if (!reserved) return;
+    const { account, points } = reserved;
+    account.balance = Math.max(0, account.balance - points);
+    account.ledger.push({ type: 'redeem', points: -points, orderId: orderId || null, billNo: billNo || '', at: new Date() });
+    await account.save();
+}
+
+/** Award points on a completed sale when the cashier opted in. */
+async function awardLoyalty(restaurantId, customer, { earn, total, orderId = null, billNo = '' } = {}) {
+    if (!earn || isWalkInPhone(customer.phone)) return;
+    const points = pointsEarnedFor(total);
+    if (points <= 0) return;
+    await FoodPosLoyaltyAccount.updateOne(
+        { restaurantId, customerId: customer._id },
+        {
+            $inc: { balance: points },
+            $push: { ledger: { type: 'earn', points, orderId: orderId || null, billNo: billNo || '', at: new Date() } }
+        },
+        { upsert: true }
+    );
 }

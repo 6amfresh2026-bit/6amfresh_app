@@ -17,6 +17,7 @@ const METHODS = [
   { value: "card", label: "Card" },
   { value: "upi", label: "UPI" },
   { value: "credit_note", label: "Credit Note" },
+  { value: "loyalty", label: "Loyalty Points" },
   { value: "wallet", label: "Wallet", disabled: true },
   { value: "bank", label: "Bank", disabled: true },
   { value: "cheque", label: "Cheque", disabled: true },
@@ -25,7 +26,7 @@ const METHODS = [
 const field = "h-11 w-full rounded border border-gray-300 bg-white px-3 text-[15px] text-gray-800 outline-none focus:border-sky-400"
 const label = "mb-1 block text-[15px] text-gray-800"
 
-export default function PosPayScreen({ quote, customer, bankAccount, busy, onBack, onProceed, onLookupCreditNote }) {
+export default function PosPayScreen({ quote, customer, bankAccount, busy, onBack, onProceed, onLookupCreditNote, loyaltyBalance = 0, loyaltyConfig }) {
   const payable = round2(quote?.pricing?.total)
   const [rows, setRows] = useState([{ mode: "cash", amount: String(payable), holder: "", txn: "", account: "", code: "", cn: null, cnErr: "" }])
 
@@ -39,7 +40,19 @@ export default function PosPayScreen({ quote, customer, bankAccount, busy, onBac
   // let the sale go — the backend enforces this too, but catching it here
   // spares the cashier a bounced bill.
   const creditNotesOk = rows.every((r) => r.mode !== "credit_note" || (r.cn && Number(r.amount) <= round2(r.cn.balance) + 0.001))
-  const canProceed = rows.every((r) => Number(r.amount) > 0) && received > 0 && !changeNeedsCash && !(due > 0 && !customer) && creditNotesOk && !busy
+  // Points redeem at a fixed rate, with a floor (no trivial redemptions) and a
+  // ceiling (points can't settle a whole bill); the backend enforces both too.
+  const perPoint = Number(loyaltyConfig?.redeemRupeePerPoint) || 1
+  const minRedeem = Number(loyaltyConfig?.minRedeemPoints) || 0
+  const maxFraction = Number(loyaltyConfig?.maxRedeemBillFraction) || 1
+  const loyaltyUsed = round2(rows.filter((r) => r.mode === "loyalty").reduce((s, r) => s + (Number(r.amount) || 0), 0))
+  const loyaltyCap = round2(payable * maxFraction)
+  const loyaltyOk = rows.every((r) => r.mode !== "loyalty" || (
+    customer &&
+    Math.round(Number(r.amount) / perPoint) <= loyaltyBalance &&
+    Math.round(Number(r.amount) / perPoint) >= minRedeem
+  )) && loyaltyUsed <= loyaltyCap + 0.001
+  const canProceed = rows.every((r) => Number(r.amount) > 0) && received > 0 && !changeNeedsCash && !(due > 0 && !customer) && creditNotesOk && loyaltyOk && !busy
 
   const update = (i, patch) => setRows((rs) => rs.map((r, idx) => (idx === i ? { ...r, ...patch } : r)))
   const remove = (i) => setRows((rs) => (rs.length === 1 ? rs : rs.filter((_, idx) => idx !== i)))
@@ -75,6 +88,10 @@ export default function PosPayScreen({ quote, customer, bankAccount, busy, onBac
         ...(r.mode === "credit_note" ? { code: String(r.code || "").trim().toUpperCase() } : {}),
       })),
     )
+
+  // A loyalty row defaults its amount to the most the points can cover on this
+  // bill, so the cashier rarely has to type it.
+  const defaultLoyaltyAmount = () => round2(Math.min(loyaltyBalance * perPoint, loyaltyCap, due || payable))
 
   return (
     <div className="fixed inset-0 z-40 flex flex-col bg-white text-gray-800">
@@ -135,7 +152,7 @@ export default function PosPayScreen({ quote, customer, bankAccount, busy, onBac
                   </div>
                   <div>
                     <span className={label}>Payment Method:</span>
-                    <select className={field} value={r.mode} onChange={(e) => update(i, { mode: e.target.value })}>
+                    <select className={field} value={r.mode} onChange={(e) => update(i, { mode: e.target.value, ...(e.target.value === "loyalty" ? { amount: String(defaultLoyaltyAmount()) } : {}) })}>
                       {METHODS.map((m) => <option key={m.value} value={m.value} disabled={m.disabled}>{m.label}{m.disabled ? " (not set up)" : ""}</option>)}
                     </select>
                   </div>
@@ -165,6 +182,20 @@ export default function PosPayScreen({ quote, customer, bankAccount, busy, onBac
                       ) : r.cnErr ? (
                         <span className="mt-1 block text-[13px] text-red-500">{r.cnErr}</span>
                       ) : null}
+                    </div>
+                  ) : r.mode === "loyalty" ? (
+                    <div className="self-center">
+                      <span className={label}>Points</span>
+                      {!customer ? (
+                        <span className="block text-[13px] text-red-500">Pick a customer to redeem points</span>
+                      ) : (
+                        <span className="block text-[14px] text-gray-700">
+                          {loyaltyBalance} available (₹{money(round2(loyaltyBalance * perPoint))})
+                          <span className="block text-[12px] text-gray-500">
+                            Using {Math.round((Number(r.amount) || 0) / perPoint)} pts · min {minRedeem} · up to ₹{money(loyaltyCap)} of this bill
+                          </span>
+                        </span>
+                      )}
                     </div>
                   ) : <div />}
                   <button type="button" onClick={() => remove(i)} disabled={rows.length === 1} className="flex h-11 w-11 items-center justify-center rounded border border-red-300 bg-white text-red-500 hover:bg-red-50 disabled:opacity-40" aria-label="Remove payment">
