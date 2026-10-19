@@ -156,9 +156,9 @@ export default function PointOfSale() {
     }
   }
 
-  const handleCloseRegister = async ({ countedCash, denominations }) => {
+  const handleCloseRegister = async (payload) => {
     try {
-      await restaurantAPI.posCloseShift({ countedCash, denominations })
+      await restaurantAPI.posCloseShift(payload)
       toast.success("Register closed")
       setCloseSummary(null)
       setShift(null)

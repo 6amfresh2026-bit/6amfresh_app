@@ -32,7 +32,11 @@ const posShiftSchema = new mongoose.Schema(
         // { "500": 3, "200": 1, ... } — what the cashier counted.
         denominations: { type: mongoose.Schema.Types.Mixed, default: null },
         // countedCash - expectedCash (negative = short, positive = over).
-        difference: { type: Number, default: null }
+        difference: { type: Number, default: null },
+        // Closing with a non-zero difference needs a reason and a manager's
+        // approval, both recorded here.
+        closeReason: { type: String, default: '', trim: true },
+        closeApprovedBy: { type: String, default: '', trim: true }
     },
     { collection: 'food_pos_shifts', timestamps: true }
 );

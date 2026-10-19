@@ -16,6 +16,9 @@ const inr = (n) => `₹${Number(n || 0).toLocaleString("en-IN")}`
 export default function PosCloseRegisterModal({ summary, onClose, onConfirm }) {
   const [counts, setCounts] = useState({})
   const [busy, setBusy] = useState(false)
+  const [reason, setReason] = useState("")
+  const [managerId, setManagerId] = useState("")
+  const [managerPassword, setManagerPassword] = useState("")
 
   const openingCash = Number(summary?.openingCash || 0)
   const cashSales = Number(summary?.cashSales || 0)
@@ -32,12 +35,20 @@ export default function PosCloseRegisterModal({ summary, onClose, onConfirm }) {
   )
   const difference = counted - expected
 
+  const mismatch = difference !== 0
+  const blocked = mismatch && (!reason.trim() || !managerId.trim() || !managerPassword)
+
   const confirm = async () => {
+    if (blocked) return
     setBusy(true)
     try {
       const denominations = {}
       DENOMS.forEach((d) => { const c = Number(counts[d]) || 0; if (c) denominations[d] = c })
-      await onConfirm({ countedCash: counted, denominations })
+      await onConfirm({
+        countedCash: counted,
+        denominations,
+        ...(mismatch ? { reason: reason.trim(), managerId: managerId.trim(), managerPassword } : {})
+      })
     } finally {
       setBusy(false)
     }
@@ -58,21 +69,24 @@ export default function PosCloseRegisterModal({ summary, onClose, onConfirm }) {
       onClose={onClose}
       width="max-w-lg"
       footer={
-        <div className="flex items-center justify-between gap-3">
-          <div className="text-sm">
-            <span className="text-gray-500">Difference </span>
-            <span className={`font-semibold ${difference < 0 ? "text-rose-600" : difference > 0 ? "text-amber-600" : "text-emerald-600"}`}>
-              {difference < 0 ? "−" : difference > 0 ? "+" : ""}{inr(Math.abs(difference))}
-            </span>
-          </div>
+        <div className="flex items-center justify-end gap-3">
+          {mismatch && (
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded border border-gray-300 bg-white px-5 py-2.5 text-[15px] font-medium text-gray-700 hover:bg-gray-50"
+            >
+              Back to billing
+            </button>
+          )}
           <button
             type="button"
-            disabled={busy}
+            disabled={busy || blocked}
             onClick={confirm}
-            className="rounded bg-[#1f1f1f] px-6 py-2.5 text-[15px] font-medium text-white hover:bg-black disabled:opacity-50 flex items-center gap-2"
+            className={`rounded px-6 py-2.5 text-[15px] font-medium text-white disabled:opacity-50 flex items-center gap-2 ${mismatch ? "bg-emerald-700 hover:bg-emerald-800" : "bg-[#1f1f1f] hover:bg-black"}`}
           >
             {busy && <Loader2 className="h-4 w-4 animate-spin" />}
-            {busy ? "Closing…" : "Close & log out"}
+            {busy ? "Closing…" : mismatch ? "Close with difference" : "Close & log out"}
           </button>
         </div>
       }
@@ -111,15 +125,58 @@ export default function PosCloseRegisterModal({ summary, onClose, onConfirm }) {
       <div className="mt-4 rounded-lg bg-gray-50 p-4">
         <div className="flex items-center justify-between">
           <span className="text-[15px] text-gray-700">Counted</span>
-          <span className="text-[16px] font-bold text-gray-900">{inr(counted)}</span>
+          <span className="text-[17px] font-bold text-gray-900">{inr(counted)}</span>
         </div>
         <div className="mt-1 flex items-center justify-between">
-          <span className="text-[15px] text-gray-700">Difference</span>
+          <span className="text-[15px] text-gray-700">
+            {difference < 0 ? "Cash short" : difference > 0 ? "Cash over" : "Difference"}
+          </span>
           <span className={`text-[15px] font-semibold ${difference < 0 ? "text-rose-600" : difference > 0 ? "text-amber-600" : "text-emerald-600"}`}>
             {difference < 0 ? "−" : difference > 0 ? "+" : ""}{inr(Math.abs(difference))}
           </span>
         </div>
       </div>
+
+      {/* A non-zero drawer needs a reason and a manager's sign-off. */}
+      {mismatch && (
+        <div className="mt-4 space-y-4">
+          <div className="rounded-lg bg-rose-50 p-3">
+            <p className="text-sm font-semibold text-rose-700">✗ Cash does not match by {inr(Math.abs(difference))}.</p>
+            <p className="mt-0.5 text-xs text-rose-600/90">
+              Recount the drawer. If the difference is real, a manager has to approve closing with it.
+            </p>
+          </div>
+          <div>
+            <label className="mb-1 block text-[15px] font-medium text-gray-800">Reason for the difference <span className="text-rose-500">*</span></label>
+            <input
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              placeholder="e.g. wrong change given to a customer"
+              className="h-11 w-full rounded border border-gray-300 bg-white px-3 text-[15px] text-gray-800 outline-none focus:border-sky-400"
+            />
+          </div>
+          <div>
+            <label className="mb-1 block text-[15px] font-medium text-gray-800">Manager ID</label>
+            <input
+              value={managerId}
+              onChange={(e) => setManagerId(e.target.value)}
+              placeholder="manager@store.com"
+              autoComplete="off"
+              className="h-11 w-full rounded border border-gray-300 bg-white px-3 text-[15px] text-gray-800 outline-none focus:border-sky-400"
+            />
+          </div>
+          <div>
+            <label className="mb-1 block text-[15px] font-medium text-gray-800">Manager password</label>
+            <input
+              type="password"
+              value={managerPassword}
+              onChange={(e) => setManagerPassword(e.target.value)}
+              autoComplete="new-password"
+              className="h-11 w-full rounded border border-gray-300 bg-white px-3 text-[15px] text-gray-800 outline-none focus:border-sky-400"
+            />
+          </div>
+        </div>
+      )}
     </PosModal>
   )
 }

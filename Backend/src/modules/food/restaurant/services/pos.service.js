@@ -3,6 +3,7 @@ import { FoodUser } from '../../../../core/users/user.model.js';
 import { FoodRestaurant } from '../models/restaurant.model.js';
 import { FoodPosHeldBill } from '../models/posHeldBill.model.js';
 import { FoodPosShift } from '../models/posShift.model.js';
+import { FoodAdmin } from '../../../../core/admin/admin.model.js';
 import { ValidationError, NotFoundError } from '../../../../core/auth/errors.js';
 import { createOrder } from '../../orders/services/order.service.js';
 import { calculateOrderPricing } from '../../orders/services/order-pricing.service.js';
@@ -1169,6 +1170,25 @@ export async function closeShift(restaurantId, dto = {}) {
     const expectedCash = expectedCashOf(shift, cashSales);
     const denominations = dto.denominations && typeof dto.denominations === 'object' ? dto.denominations : {};
     const countedCash = Number.isFinite(Number(dto.countedCash)) ? round2(dto.countedCash) : countedFromDenoms(denominations);
+    const difference = round2(countedCash - expectedCash);
+
+    // A drawer that doesn't balance can only be closed with a reason and a
+    // manager's approval — so a short till is never signed off silently.
+    let closeReason = '';
+    let closeApprovedBy = '';
+    if (difference !== 0) {
+        closeReason = String(dto.reason || '').trim();
+        if (!closeReason) throw new ValidationError('A reason is required to close with a cash difference');
+
+        const managerId = String(dto.managerId || '').trim();
+        const managerPassword = String(dto.managerPassword || '');
+        if (!managerId || !managerPassword) throw new ValidationError('A manager must approve closing with a difference');
+
+        const manager = await FoodAdmin.findOne({ email: managerId.toLowerCase() });
+        const ok = manager && manager.isDeleted !== true && manager.isActive !== false && (await manager.comparePassword(managerPassword));
+        if (!ok) throw new ValidationError('Manager approval failed — check the ID and password');
+        closeApprovedBy = manager.email;
+    }
 
     shift.status = 'closed';
     shift.closedAt = new Date();
@@ -1177,7 +1197,9 @@ export async function closeShift(restaurantId, dto = {}) {
     shift.expectedCash = expectedCash;
     shift.countedCash = countedCash;
     shift.denominations = denominations;
-    shift.difference = round2(countedCash - expectedCash);
+    shift.difference = difference;
+    shift.closeReason = closeReason;
+    shift.closeApprovedBy = closeApprovedBy;
     await shift.save();
     return { shift: shift.toObject() };
 }
