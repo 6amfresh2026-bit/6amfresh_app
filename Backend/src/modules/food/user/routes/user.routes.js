@@ -69,7 +69,12 @@ import {
     getRefundHistoryController
 } from '../controllers/cashback.controller.js';
 
+import notificationRoutes from './notification.routes.js';
+
 const router = express.Router();
+
+// In-app notification inbox for the customer app (Bearer USER).
+router.use('/notifications', notificationRoutes);
 
 router.get('/profile', getCurrentUserProfileController);
 router.patch('/profile', updateCurrentUserProfileController);

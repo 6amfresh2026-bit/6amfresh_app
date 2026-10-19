@@ -144,6 +144,17 @@ export const getInboxNotifications = async ({ ownerType, ownerId, page = 1, limi
     };
 };
 
+/** Just the unread badge count — cheap enough to poll from the app. */
+export const getUnreadCount = async ({ ownerType, ownerId } = {}) => {
+    const unreadCount = await FoodNotification.countDocuments({
+        ownerType: normalizeOwnerType(ownerType),
+        ownerId: ensureObjectId(ownerId, 'ownerId'),
+        isRead: false,
+        dismissedAt: null
+    });
+    return { unreadCount };
+};
+
 export const markNotificationAsRead = async ({ notificationId, ownerType, ownerId } = {}) => {
     const notification = await FoodNotification.findOneAndUpdate(
         {

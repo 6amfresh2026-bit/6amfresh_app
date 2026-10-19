@@ -2,6 +2,7 @@ import { sendResponse, sendError } from '../../utils/response.js';
 import {
     resolveNotificationOwnerFromRequest,
     getInboxNotifications,
+    getUnreadCount,
     markNotificationAsRead,
     markAllNotificationsAsRead,
     dismissNotification,
@@ -19,6 +20,16 @@ export const getInboxController = async (req, res) => {
         return sendResponse(res, 200, 'Notifications fetched successfully', data);
     } catch (error) {
         return sendError(res, error.statusCode || 500, error.message || 'Failed to fetch notifications');
+    }
+};
+
+export const getUnreadCountController = async (req, res) => {
+    try {
+        const owner = resolveNotificationOwnerFromRequest(req.user);
+        const data = await getUnreadCount(owner);
+        return sendResponse(res, 200, 'Unread count fetched', data);
+    } catch (error) {
+        return sendError(res, error.statusCode || 500, error.message || 'Failed to fetch unread count');
     }
 };
 
