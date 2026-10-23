@@ -462,17 +462,6 @@ export const adminAPI = {
     apiClient.patch(`/food/admin/withdrawals/${id}`, body, {
       contextModule: "admin",
     }),
-  /** List delivery withdrawal requests (admin). */
-  getDeliveryWithdrawals: (params = {}) =>
-    apiClient.get("/food/admin/delivery/withdrawals", {
-      params,
-      contextModule: "admin",
-    }),
-  /** Update status of a delivery withdrawal request. */
-  updateDeliveryWithdrawalStatus: (id, body) =>
-    apiClient.patch(`/food/admin/delivery/withdrawals/${id}`, body, {
-      contextModule: "admin",
-    }),
   /** Delivery withdrawal aliases */
   getDeliveryWithdrawalRequests: (params) => adminAPI.getDeliveryWithdrawals(params),
   approveDeliveryWithdrawal: (id) => adminAPI.updateDeliveryWithdrawalStatus(id, { status: "approved" }),
@@ -1670,8 +1659,6 @@ export const restaurantAPI = {
   createMyOffer: (body) => apiClient.post("/food/restaurant/my-offers", body, { contextModule: "restaurant" }),
   deleteMyOffer: (id) => apiClient.delete(`/food/restaurant/my-offers/${id}`, { contextModule: "restaurant" }),
   updateMyOfferStatus: (id, status) => apiClient.patch(`/food/restaurant/my-offers/${id}/status`, { status }, { contextModule: "restaurant" }),
-  /** Public Offers for users (global/selected restaurant) */
-  getPublicOffers: (params = {}) => apiClient.get("/food/restaurant/offers", { params }),
   /** Backward-compat helper used by Cart: returns coupons array for an item by adapting public offers */
   getCouponsByItemIdPublic: (restaurantId, _itemId, subtotal) =>
     apiClient.get("/food/restaurant/offers", { params: { restaurantId, subtotal } }).then((res) => {
@@ -1748,13 +1735,6 @@ export const restaurantAPI = {
       params,
       contextModule: "restaurant",
     }),
-  /** Orders (restaurant dashboard) */
-  getOrders: (params = {}) =>
-    apiClient.get("/food/restaurant/orders", {
-      params: { limit: 50, page: 1, ...params },
-      contextModule: "restaurant",
-    }),
-
   /**
    * The seller's own riders, and handing one an order.
    *
@@ -1812,10 +1792,6 @@ export const restaurantAPI = {
     publicConfigGetOnce("/food/admin/feature-settings/public", {
       contextModule: "restaurant",
       ...config,
-    }),
-  getOrderById: (orderId) =>
-    apiClient.get(`/food/restaurant/orders/${String(orderId)}`, {
-      contextModule: "restaurant",
     }),
   updateMenu: (body) =>
     apiClient.patch("/food/restaurant/menu", body ?? {}, {
@@ -2417,7 +2393,6 @@ const getDeliveryMeOnce = () => {
 /** Delivery API - OTP login + registration via new backend. */
 export const deliveryAPI = {
   deleteAccount: () => apiClient.delete('/food/delivery/profile/account', { contextModule: 'delivery' }),
-  getWallet: () => apiClient.get('/food/delivery/wallet', { contextModule: 'delivery' }),
   sendOTP: (phone, _purpose = "login") => {
     if (!phone) return Promise.reject(new Error("Phone is required"));
     return authService.requestDeliveryOtp(phone);

@@ -281,37 +281,13 @@ const buildEffectiveCartPricing = ({
 }
 
 export default function Cart() {
+  const cartContext = useCart()
   const companyName = useCompanyName()
   const navigate = useNavigate()
   const goBack = useAppBackNavigation()
   const orderSuccessAudioRef = useRef(null)
   const hasRestoredRecipientRef = useRef(false)
   const appliedCouponRef = useRef(null)
-
-  // Defensive check: Ensure CartProvider is available
-  let cartContext;
-  try {
-    cartContext = useCart();
-  } catch (error) {
-    debugError('? CartProvider not found. Make sure Cart component is rendered within UserLayout.');
-    // Return early with error message
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-[#f5f5f5] dark:bg-[#0a0a0a]">
-        <div className="text-center p-8">
-          <h2 className="text-2xl font-bold text-gray-900 dark:text-gray-100 mb-4">Cart Error</h2>
-          <p className="text-gray-600 dark:text-gray-400">
-            Cart functionality is not available. Please refresh the page.
-          </p>
-          <button
-            onClick={() => navigate('/')}
-            className="mt-4 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700"
-          >
-            Go to Home
-          </button>
-        </div>
-      </div>
-    );
-  }
 
   const { cart, updateQuantity, addToCart, getCartCount, clearCart, cleanCartForRestaurant, replaceCart } = cartContext;
   const { getDefaultAddress, getDefaultPaymentMethod, setDefaultAddress, addresses, paymentMethods, userProfile, vegMode } = useProfile()
@@ -2175,7 +2151,7 @@ export default function Cart() {
       // If restaurant names match but IDs differ, that's OK (same restaurant, different ID format)
       // But log a warning in development
       if (uniqueRestaurantIds.length > 1 && uniqueRestaurantNames.length === 1) {
-        if (process.env.NODE_ENV === 'development') {
+        if (import.meta.env.DEV) {
           debugWarn('?? Cart items have different restaurant IDs but same name. This is OK if IDs are in different formats.', {
             restaurantIds: uniqueRestaurantIds,
             restaurantName: uniqueRestaurantNames[0]
