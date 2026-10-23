@@ -563,7 +563,7 @@ describe('customers', () => {
         assert.equal(summary.lastPaymentMode, 'pay_later');
         assert.equal(summary.duePayment, 50);
         assert.equal(summary.totalSpent, 190);
-        assert.equal(summary.loyaltyPoints, null, 'no loyalty programme exists');
+        assert.equal(summary.loyaltyPoints, 0, 'no points earned yet: a zero balance, not a missing programme');
     });
 });
 
