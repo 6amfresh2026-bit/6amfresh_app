@@ -59,7 +59,7 @@ export async function listStocks(query = {}) {
     if (query.unitId) match.unitId = oid(query.unitId, 'unitId');
     if (query.search && String(query.search).trim()) {
         const r = rx(query.search);
-        match.$or = [{ name: r }, { itemCode: r }, { brand: r }, { categoryName: r }];
+        match.$or = [{ name: r }, { itemCode: r }, { barcode: r }, { brand: r }, { categoryName: r }];
     }
 
     // Status needs a field-to-field compare (stockQty <= lowStockThreshold), which
@@ -88,12 +88,29 @@ export async function listStocks(query = {}) {
     // The footer totals are for the whole filtered set, not just this page — the
     // reference shows one Total row under a paginated table, and a total that
     // only added up ten rows would be wrong on every page but the last.
-    const [rows, countRes, totalsRes] = await Promise.all([
+    // KPI tiles sit above the table and summarise the whole store view, not the
+    // status-filtered slice — so they run on the base match (store/search/
+    // category) with the status tier computed, never narrowed by a status
+    // filter the user may have applied.
+    const kpiPipeline = [{ $match: match }, { $addFields: { stockStatus: statusExpr } }];
+    const [rows, countRes, totalsRes, summaryRes] = await Promise.all([
         FoodItem.aggregate([...pipeline, { $sort: { name: 1 } }, { $skip: skip }, { $limit: limit }]),
         FoodItem.aggregate([...pipeline, { $count: 'n' }]),
         FoodItem.aggregate([
             ...pipeline,
             { $group: { _id: null, totalAvailableQty: { $sum: { $ifNull: ['$stockQty', 0] } }, testingQty: { $sum: { $ifNull: ['$testingQty', 0] } } } }
+        ]),
+        FoodItem.aggregate([
+            ...kpiPipeline,
+            { $group: {
+                _id: null,
+                products: { $sum: 1 },
+                drafts: { $sum: { $cond: [{ $eq: ['$approvalStatus', 'pending'] }, 1, 0] } },
+                lowStock: { $sum: { $cond: [{ $in: ['$stockStatus', ['low', 'critical']] }, 1, 0] } },
+                outOfStock: { $sum: { $cond: [{ $eq: ['$stockStatus', 'out'] }, 1, 0] } },
+                stockValue: { $sum: { $multiply: [{ $ifNull: ['$stockQty', 0] }, { $ifNull: ['$purchasePrice', 0] }] } },
+                subscribable: { $sum: { $cond: [{ $eq: ['$subscriptionEnabled', true] }, 1, 0] } }
+            } }
         ])
     ]);
     const total = countRes[0]?.n || 0;
@@ -129,6 +146,7 @@ export async function listStocks(query = {}) {
         stocks: rows.map((f) => ({
             id: String(f._id),
             itemCode: f.itemCode || '',
+            barcode: f.barcode || '',
             name: f.name,
             image: f.image || '',
             restaurantId: String(f.restaurantId || ''),
@@ -146,6 +164,15 @@ export async function listStocks(query = {}) {
             testingQty: f.testingQty ?? 0,
             stockQty: f.stockQty ?? null,
             lowStockThreshold: f.lowStockThreshold ?? null,
+            // Pricing: purchase cost, selling price, and the margin between them.
+            purchasePrice: f.purchasePrice ?? null,
+            sellingPrice: f.price ?? null,
+            mrp: f.mrp ?? null,
+            margin: (f.price > 0 && f.purchasePrice != null)
+                ? Math.round(((f.price - f.purchasePrice) / f.price) * 100)
+                : null,
+            subscriptionEnabled: f.subscriptionEnabled === true,
+            approvalStatus: f.approvalStatus || 'approved',
             status: stockStatus(f, outletMap.get(String(f.restaurantId)) || null),
             isAvailable: f.isAvailable !== false,
             lastMovementAt: mMap.get(String(f._id))?.at || null,
@@ -154,6 +181,14 @@ export async function listStocks(query = {}) {
         totals: {
             totalAvailableQty: totalsRes[0]?.totalAvailableQty || 0,
             testingQty: totalsRes[0]?.testingQty || 0
+        },
+        summary: {
+            products: summaryRes[0]?.products || 0,
+            drafts: summaryRes[0]?.drafts || 0,
+            lowStock: summaryRes[0]?.lowStock || 0,
+            outOfStock: summaryRes[0]?.outOfStock || 0,
+            stockValue: Math.round(summaryRes[0]?.stockValue || 0),
+            subscribable: summaryRes[0]?.subscribable || 0
         },
         total,
         page,
@@ -218,6 +253,35 @@ export async function adjustStock({ itemId, mode, qty, reason = '', note = '' },
     });
 
     return { id: String(id), stockQty: qtyAfter, qtyBefore, status: stockStatus(updated) };
+}
+
+/**
+ * Inline edits from the Inventory grid: the reorder point and whether the item
+ * is subscribable. Only the fields sent are touched, so the Min-stock box and the
+ * Subscription toggle save independently without clobbering each other.
+ */
+export async function setStockMeta({ itemId, minStock, subscriptionEnabled } = {}) {
+    const id = oid(itemId, 'itemId');
+    const set = {};
+    if (minStock !== undefined) {
+        if (minStock === '' || minStock === null) set.lowStockThreshold = null;
+        else {
+            const n = Number(minStock);
+            if (!Number.isFinite(n) || n < 0) throw new ValidationError('Min stock must be 0 or more');
+            set.lowStockThreshold = n;
+        }
+    }
+    if (subscriptionEnabled !== undefined) set.subscriptionEnabled = Boolean(subscriptionEnabled);
+    if (Object.keys(set).length === 0) throw new ValidationError('Nothing to save');
+
+    const updated = await FoodItem.findOneAndUpdate({ _id: id, isDeleted: { $ne: true } }, { $set: set }, { new: true })
+        .select('lowStockThreshold subscriptionEnabled').lean();
+    if (!updated) throw new NotFoundError('Product not found');
+    return {
+        id: String(id),
+        lowStockThreshold: updated.lowStockThreshold ?? null,
+        subscriptionEnabled: updated.subscriptionEnabled === true,
+    };
 }
 
 export async function listMovements(query = {}) {

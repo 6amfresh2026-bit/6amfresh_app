@@ -1,6 +1,7 @@
 import crypto from "crypto";
 import ms from "ms";
 import { FoodUser } from "../users/user.model.js";
+import { FoodPosUser } from "../pos/posUser.model.js";
 import { FoodAdmin } from "../admin/admin.model.js";
 import { AdminResetOtp } from "../admin/adminResetOtp.model.js";
 import { FoodRestaurant } from "../../modules/food/restaurant/models/restaurant.model.js";
@@ -946,6 +947,27 @@ export const refreshAccessToken = async (token) => {
     if (!u || u.isActive === false) {
       throw new AuthError("User account is deactivated");
     }
+  }
+
+  // A cashier's session refreshes against the cashier, not the store: the store's own
+  // tokenVersion belongs to the owner's device and must not decide this.
+  if (payload?.posUserId) {
+    const pu = await FoodPosUser.findById(payload.posUserId)
+      .select("isActive tokenVersion restaurantId")
+      .lean();
+    if (!pu || pu.isActive === false || String(pu.restaurantId) !== String(payload.userId)) {
+      throw new AuthError("This POS account is inactive");
+    }
+    if (Number(payload.posTokenVersion) !== (Number(pu.tokenVersion) || 0)) {
+      throw new AuthError("You have been signed out. Please sign in again.");
+    }
+    const posAccessToken = signAccessToken({
+      userId: payload.userId,
+      role: payload.role,
+      posUserId: payload.posUserId,
+      posTokenVersion: payload.posTokenVersion,
+    });
+    return { accessToken: posAccessToken, refreshToken: token };
   }
 
   // Carry the session version forward, and refuse a refresh from a device that has

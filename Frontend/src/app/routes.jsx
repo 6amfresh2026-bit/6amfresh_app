@@ -66,6 +66,7 @@ const RootEntryRoute = () => {
 
 const AdminRouter = lazy(() => import('../modules/Food/components/admin/AdminRouter'))
 const SellerRouter = lazy(() => import('../modules/Food/components/restaurant/RestaurantRouter'))
+const PosRouter = lazy(() => import('../modules/Pos/PosRouter'))
 
 const AppRoutes = () => {
   const location = useLocation()
@@ -107,6 +108,15 @@ const AppRoutes = () => {
         element={
           <Suspense fallback={<PageLoader />}>
             <SellerRouter />
+          </Suspense>
+        }
+      />
+      {/* Point of sale: its own app and sign-in, not a page of the seller panel. */}
+      <Route
+        path="/pos/*"
+        element={
+          <Suspense fallback={<PageLoader />}>
+            <PosRouter />
           </Suspense>
         }
       />

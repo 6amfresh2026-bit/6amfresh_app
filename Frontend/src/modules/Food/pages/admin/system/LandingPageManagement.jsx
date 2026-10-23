@@ -1383,7 +1383,7 @@ export default function LandingPageManagement() {
   const tabs = [
     { id: 'top-banners', label: 'Top Banners', icon: ImageIcon },
     { id: 'banners', label: 'Hero Banners', icon: ImageIcon },
-    { id: 'under-250', label: 'Switch 99 Banner', icon: Tag },
+    // { id: 'under-250', label: 'Switch 99 Banner', icon: Tag },
     // { id: 'dining', label: 'Dining', icon: UtensilsCrossed },
     { id: 'explore-more', label: 'Explore More', icon: Layout },
   ]

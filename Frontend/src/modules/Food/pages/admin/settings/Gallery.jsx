@@ -306,7 +306,7 @@ export default function Gallery() {
 
       {/* Upload Dialog */}
       <Dialog open={isUploadDialogOpen} onOpenChange={setIsUploadDialogOpen}>
-        <DialogContent className="max-w-md bg-white">
+        <DialogContent className="max-w-md bg-white p-5 sm:p-6">
           <DialogHeader>
             <DialogTitle>Upload Files</DialogTitle>
           </DialogHeader>
@@ -346,7 +346,7 @@ export default function Gallery() {
 
       {/* Create Folder Dialog */}
       <Dialog open={isFolderDialogOpen} onOpenChange={setIsFolderDialogOpen}>
-        <DialogContent className="max-w-md bg-white">
+        <DialogContent className="max-w-md bg-white p-5 sm:p-6">
           <DialogHeader>
             <DialogTitle>Create New Folder</DialogTitle>
           </DialogHeader>

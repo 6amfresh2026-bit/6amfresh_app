@@ -67,7 +67,7 @@ export default function RefundModal({ isOpen, onOpenChange, order, onConfirm, is
 
   return (
     <Dialog open={isOpen} onOpenChange={handleClose}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="p-5 sm:max-w-md sm:p-6">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-xl font-bold text-slate-900">
             <Wallet className="w-5 h-5 text-purple-600" />

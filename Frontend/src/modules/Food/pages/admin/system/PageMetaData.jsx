@@ -327,7 +327,7 @@ export default function PageMetaDataPageMetaData() {
 
       {/* Edit SEO Dialog */}
       <Dialog open={isEditDialogOpen} onOpenChange={setIsEditDialogOpen}>
-        <DialogContent className="max-w-3xl bg-white max-h-[90vh] overflow-y-auto">
+        <DialogContent className="max-w-3xl bg-white max-h-[90vh] overflow-y-auto p-5 sm:p-6">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Pencil className="w-4 h-4" />

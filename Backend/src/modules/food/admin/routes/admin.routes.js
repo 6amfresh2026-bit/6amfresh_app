@@ -33,12 +33,21 @@ import * as driverRegField from '../../delivery/controllers/driverRegistrationFi
 import * as cashbackSettings from '../controllers/cashbackSettings.controller.js';
 import * as productSubscriptionAdmin from '../controllers/productSubscriptionAdmin.controller.js';
 import * as productMasters from '../controllers/productMasters.controller.js';
+import * as appTimingsController from '../controllers/appTimings.controller.js';
+import * as posUsersController from '../controllers/posUsers.controller.js';
 import * as stockAdmin from '../controllers/stockAdmin.controller.js';
 import * as dashboardAnalytics from '../controllers/dashboardAnalytics.controller.js';
 import * as dashboardOperations from '../controllers/dashboardOperations.controller.js';
 import * as restaurantAppBanner from '../controllers/restaurantAppBanner.controller.js';
 
 const router = express.Router();
+
+// The public store pages are cached; an app-timings change has to show up in them straight away.
+const invalidatePublicStoreCaches = async (_req, _res, next) => {
+    await invalidateCache('restaurant_detail:*');
+    await invalidateCache('restaurants:*');
+    next();
+};
 
 // ----- Public Business Settings (No Admin Required) -----
 router.get('/business-settings/public', businessSettingsController.getBusinessSettings);
@@ -85,6 +94,8 @@ const resolveSectionFromRequest = (path = '', method = '') => {
         path.startsWith('/restaurant-settings') ||
         path.startsWith('/restaurant-subscription-settings') ||
         path.startsWith('/restaurant-subscriptions') ||
+        path.startsWith('/app-timings') ||
+        path.startsWith('/pos-users') ||
         path.startsWith('/zones')
     ) return 'restaurant_management';
     if (path.startsWith('/categories') || path.startsWith('/addons') || path.startsWith('/foods')) return 'food_management';
@@ -94,7 +105,11 @@ const resolveSectionFromRequest = (path = '', method = '') => {
         path.startsWith('/units') ||
         path.startsWith('/departments') ||
         path.startsWith('/stocks') ||
-        path.startsWith('/stock-verifications')
+        path.startsWith('/stock-verifications') ||
+        path.startsWith('/weighed-items') ||
+        path.startsWith('/barcodes') ||
+        path.startsWith('/bill-design') ||
+        path.startsWith('/product-pricing')
     ) return 'food_management';
     if (path.startsWith('/offers')) return 'promotions_management';
     if (path.startsWith('/orders') || path.startsWith('/order-detect-delivery')) return 'order_management';
@@ -320,6 +335,42 @@ router.get('/stocks/movements', stockAdmin.listMovementsController);
 router.get('/stocks/:itemId/movements', stockAdmin.listItemMovementsController);
 router.get('/stocks', stockAdmin.listStocksController);
 router.post('/stocks/adjust', stockAdmin.adjustStockController);
+router.post('/stocks/meta', stockAdmin.setStockMetaController);
+router.post('/stocks/import/check', stockAdmin.bulkImportCheckController);
+router.post('/stocks/import/commit', stockAdmin.bulkImportCommitController);
+
+// Weighed items & rates — loose produce sold by the kilogram at the counters.
+router.get('/weighed-items', stockAdmin.listWeighedController);
+router.post('/weighed-items/publish', stockAdmin.publishWeighedRatesController);
+router.post('/weighed-items', stockAdmin.addWeighedItemController);
+
+// Barcodes & labels — one scannable code per product.
+router.get('/barcodes', stockAdmin.listBarcodesController);
+router.post('/barcodes/save', stockAdmin.saveBarcodesController);
+router.post('/barcodes/update', stockAdmin.updateBarcodeController);
+
+// Bill designer — the POS receipt layout.
+router.get('/bill-design', stockAdmin.getBillDesignController);
+// App timings & store status: when each store takes customer-app orders and instant delivery.
+router.get('/app-timings', appTimingsController.listAppTimingsController);
+router.patch('/app-timings/:restaurantId', invalidatePublicStoreCaches, appTimingsController.saveAppTimingsController);
+// POS users: the usernames and passwords cashiers sign in to the till with.
+router.get('/pos-users', posUsersController.listPosUsersController);
+router.get('/pos-users/permissions', posUsersController.posPermissionsController);
+router.get('/pos-users/:id/activity', posUsersController.posUserActivityController);
+router.post('/pos-users', posUsersController.createPosUserController);
+router.patch('/pos-users/:id', posUsersController.updatePosUserController);
+router.post('/pos-users/:id/password', posUsersController.resetPosUserPasswordController);
+router.delete('/pos-users/:id', posUsersController.deletePosUserController);
+// The admin's copy of the till, running a store's POS, keeps that store's POS "online".
+router.post('/pos/heartbeat', appTimingsController.adminPosHeartbeatController);
+router.post('/bill-design', stockAdmin.saveBillDesignController);
+
+// Products & pricing — the price list through a margin lens.
+router.get('/product-pricing', stockAdmin.listProductPricingController);
+router.get('/product-pricing/lookups', stockAdmin.pricingLookupsController);
+router.post('/product-pricing/save', stockAdmin.savePricingController);
+router.post('/product-pricing/add-size', stockAdmin.addSizeController);
 // Batch-tracked stock: what came in, when it goes off, and clearing what has.
 router.post('/stocks/batches', stockAdmin.receiveBatchController);
 router.get('/stocks/batches/expiring', stockAdmin.listExpiringBatchesController);
@@ -358,6 +409,7 @@ router.patch('/addons/:id/reject', addonsApprovalController.rejectRestaurantAddo
 // ----- Foods -----
 // Literal paths before /foods/:id so they are not swallowed as ids.
 router.get('/foods/next-item-code', adminController.getNextItemCode);
+router.get('/foods/category-counts', adminController.getFoodCategoryCounts);
 router.get('/foods/deleted', adminController.getDeletedFoods);
 router.get('/foods', adminController.getFoods);
 router.get('/foods/bulk-upload/template', downloadBulkMenuTemplateController);

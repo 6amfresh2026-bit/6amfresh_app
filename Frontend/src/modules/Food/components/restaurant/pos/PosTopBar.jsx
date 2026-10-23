@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react"
 import { useNavigate } from "react-router-dom"
-import { Wifi, WifiOff, Printer, Settings, Cloud, Trash2, Maximize2, Minimize2, X, LogOut, PanelLeft, Headset } from "lucide-react"
+import { Wifi, WifiOff, Scale, Printer, Settings, Cloud, Trash2, Maximize2, Minimize2, X, LogOut, PanelLeft, Headset } from "lucide-react"
 import { getCompanyName, getModuleLogoUrl } from "@food/utils/businessSettings"
 import { POS_ORDER_TABS } from "./posOrderStatus"
 
@@ -19,6 +19,8 @@ export default function PosTopBar({
   autoPrint,
   onAutoPrint,
   onPrintLast,
+  onScale,
+  scaleStatus = "disconnected",
   onSync,
   onClearBill,
   hasLines,
@@ -118,6 +120,10 @@ export default function PosTopBar({
         <span className={iconBtn} title={online ? "Online" : "Offline — sales will fail until the connection is back"}>
           {online ? <Wifi size={18} className="text-emerald-500" /> : <WifiOff size={18} className="text-red-500" />}
         </span>
+        <button type="button" className={`${iconBtn} relative`} onClick={onScale} title={`Weighing scale — ${scaleStatus === "connected" ? "connected" : scaleStatus === "demo" ? "demo" : "not connected"}`} aria-label="Weighing scale">
+          <Scale size={18} />
+          <span className={`absolute bottom-0.5 left-1/2 h-1.5 w-1.5 -translate-x-1/2 rounded-full ${scaleStatus === "connected" || scaleStatus === "demo" ? "bg-emerald-500" : scaleStatus === "error" ? "bg-red-500" : "bg-gray-300"}`} />
+        </button>
         <button type="button" className={iconBtn} onClick={onPrintLast} title="Print last bill"><Printer size={18} /></button>
         <button type="button" className={iconBtn} onClick={() => navigate("/seller/outlet-info")} title="Outlet settings"><Settings size={18} /></button>
         <button type="button" className={iconBtn} onClick={onSync} disabled={syncing} title="Reload products"><Cloud size={18} className={syncing ? "animate-pulse" : ""} /></button>

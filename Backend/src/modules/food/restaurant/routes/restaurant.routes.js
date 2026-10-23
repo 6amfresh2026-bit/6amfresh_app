@@ -111,7 +111,8 @@ import {
     getLoyaltyAccountController
 } from '../controllers/pos.controller.js';
 import { authMiddleware, optionalAuth } from '../../../../core/auth/auth.middleware.js';
-import { sendError } from '../../../../utils/response.js';
+import { sendError, sendResponse } from '../../../../utils/response.js';
+import * as billDesign from '../../admin/services/billDesign.service.js';
 import { getRestaurantFinanceController } from '../controllers/restaurantFinance.controller.js';
 import {
     listBannersController,
@@ -127,6 +128,8 @@ import { listBannersForRestaurantAppController } from '../../admin/controllers/r
 
 import { getAvailableSlotsController } from '../../admin/controllers/deliverySlot.controller.js';
 import { cacheResponse, invalidateCache } from '../../../../middleware/cache.js';
+import { POS_PERMISSIONS, requirePosPermission } from '../../../../core/pos/posPermissions.js';
+import { getStoreAppStatusController, posHeartbeatController } from '../controllers/appStatus.controller.js';
 
 const router = express.Router();
 
@@ -156,6 +159,8 @@ router.post('/upload-attachment', upload.single('file'), uploadRestaurantAttachm
 // Public: approved restaurants list (for user app)
 router.get('/restaurants', cacheResponse(300, 'restaurants'), listApprovedRestaurantsController);
 router.get('/restaurants/:id', cacheResponse(600, 'restaurant_detail'), getApprovedRestaurantController);
+// Whether customers can order from this store right now. Never cached: see appStatus.service.js.
+router.get('/restaurants/:id/app-status', getStoreAppStatusController);
 router.get('/restaurants/:id/menu', cacheResponse(600, 'restaurant_menu'), getPublicRestaurantMenuController);
 router.get('/public/foods', cacheResponse(300, 'public_foods'), listPublicFoodsController);
 router.get('/restaurants/:id/outlet-timings', cacheResponse(600, 'restaurant_timings'), getOutletTimingsByRestaurantIdController);
@@ -367,37 +372,58 @@ router.delete('/delivery-fleet/:deliveryPartnerId', authMiddleware, requireResta
 router.post('/orders/:orderId/assign-delivery', authMiddleware, requireRestaurant, assignDeliveryPartnerController);
 
 // POS — the seller's till. Every route is scoped to the signed-in shop.
-router.post('/pos/quote', authMiddleware, requireRestaurant, quotePosOrderController);
+router.post('/pos/quote', authMiddleware, requireRestaurant, requirePosPermission('sell'), quotePosOrderController);
 // POST, not GET: judging a coupon needs the cart, and a cart does not belong
 // in a query string.
-router.post('/pos/coupons', authMiddleware, requireRestaurant, listPosCouponsController);
-router.post('/pos/orders', authMiddleware, requireRestaurant, createPosOrderController);
-router.get('/pos/orders', authMiddleware, requireRestaurant, listPosOrdersController);
+router.post('/pos/coupons', authMiddleware, requireRestaurant, requirePosPermission('coupons'), listPosCouponsController);
+router.post('/pos/orders', authMiddleware, requireRestaurant, requirePosPermission('sell'), createPosOrderController);
+router.get('/pos/orders', authMiddleware, requireRestaurant, requirePosPermission('view_bills'), listPosOrdersController);
 router.get('/pos/orders/last', authMiddleware, requireRestaurant, getLastPosBillController);
+// The POS reads back the store's saved receipt layout (Bill designer), falling
+// back to the all-stores default and then the built-in classic.
+// The till checks in every ~20 s; that is what "POS online" means.
+// The till asks who it is signed in as and what that person may do (live, so an admin change shows within a minute).
+router.get('/pos/me', authMiddleware, requireRestaurant, (req, res) =>
+    sendResponse(res, 200, 'POS account', {
+        posUser: req.user.posUserId
+            ? { id: req.user.posUserId, name: req.user.posUserName, permissions: req.user.posPermissions, limits: req.user.posLimits }
+            : null,
+        allPermissions: POS_PERMISSIONS
+    })
+);
+router.post('/pos/heartbeat', authMiddleware, requireRestaurant, posHeartbeatController);
+router.get('/pos/bill-design', authMiddleware, requireRestaurant, async (req, res, next) => {
+    try {
+        const data = await billDesign.getDesign({ restaurantId: req.user?.userId });
+        return sendResponse(res, 200, 'Bill design fetched', data);
+    } catch (err) {
+        next(err);
+    }
+});
 router.get('/pos/orders/:orderId', authMiddleware, requireRestaurant, getPosBillController);
-router.post('/pos/orders/:orderId/payments', authMiddleware, requireRestaurant, recordPosPaymentController);
+router.post('/pos/orders/:orderId/payments', authMiddleware, requireRestaurant, requirePosPermission('sell'), recordPosPaymentController);
 router.get('/pos/customers', authMiddleware, requireRestaurant, searchPosCustomersController);
 router.get('/pos/customers/lookup', authMiddleware, requireRestaurant, lookupPosCustomerController);
-router.post('/pos/customers', authMiddleware, requireRestaurant, savePosCustomerController);
+router.post('/pos/customers', authMiddleware, requireRestaurant, requirePosPermission('customers'), savePosCustomerController);
 router.get('/pos/customers/:customerId/summary', authMiddleware, requireRestaurant, getPosCustomerSummaryController);
-router.get('/pos/holds', authMiddleware, requireRestaurant, listHeldBillsController);
-router.post('/pos/holds', authMiddleware, requireRestaurant, holdPosBillController);
-router.get('/pos/holds/:heldId', authMiddleware, requireRestaurant, getHeldBillReceiptController);
-router.post('/pos/holds/:heldId/resume', authMiddleware, requireRestaurant, takeHeldBillController);
-router.delete('/pos/holds/:heldId', authMiddleware, requireRestaurant, discardHeldBillController);
+router.get('/pos/holds', authMiddleware, requireRestaurant, requirePosPermission('hold_bills'), listHeldBillsController);
+router.post('/pos/holds', authMiddleware, requireRestaurant, requirePosPermission('hold_bills'), holdPosBillController);
+router.get('/pos/holds/:heldId', authMiddleware, requireRestaurant, requirePosPermission('hold_bills'), getHeldBillReceiptController);
+router.post('/pos/holds/:heldId/resume', authMiddleware, requireRestaurant, requirePosPermission('hold_bills'), takeHeldBillController);
+router.delete('/pos/holds/:heldId', authMiddleware, requireRestaurant, requirePosPermission('hold_bills'), discardHeldBillController);
 
 // Register / shift
 router.get('/pos/shift/current', authMiddleware, requireRestaurant, getCurrentShiftController);
-router.post('/pos/shift/open', authMiddleware, requireRestaurant, openShiftController);
+router.post('/pos/shift/open', authMiddleware, requireRestaurant, requirePosPermission('open_register'), openShiftController);
 router.get('/pos/shift/summary', authMiddleware, requireRestaurant, getShiftSummaryController);
-router.post('/pos/shift/close', authMiddleware, requireRestaurant, closeShiftController);
-router.post('/pos/shift/cash-movement', authMiddleware, requireRestaurant, recordCashMovementController);
+router.post('/pos/shift/close', authMiddleware, requireRestaurant, requirePosPermission('close_register'), closeShiftController);
+router.post('/pos/shift/cash-movement', authMiddleware, requireRestaurant, requirePosPermission('cash_movement'), recordCashMovementController);
 
 // Credit notes — returns stored as a redeemable balance for a later bill.
 router.get('/pos/credit-notes', authMiddleware, requireRestaurant, listCreditNotesController);
-router.post('/pos/credit-notes', authMiddleware, requireRestaurant, issueCreditNoteController);
+router.post('/pos/credit-notes', authMiddleware, requireRestaurant, requirePosPermission('credit_notes'), issueCreditNoteController);
 router.get('/pos/credit-notes/:code', authMiddleware, requireRestaurant, lookupCreditNoteController);
-router.post('/pos/credit-notes/:id/void', authMiddleware, requireRestaurant, voidCreditNoteController);
+router.post('/pos/credit-notes/:id/void', authMiddleware, requireRestaurant, requirePosPermission('credit_notes'), voidCreditNoteController);
 
 // Loyalty — a customer's points balance at this store.
 router.get('/pos/loyalty/:userId', authMiddleware, requireRestaurant, getLoyaltyAccountController);

@@ -14,6 +14,41 @@ const BarcodeScannerModal = lazy(() => import("./BarcodeScannerModal"))
  *
  * The camera button opens a scanner for a phone or a laptop with no scanner gun.
  */
+/** "9 in stock" under the price: kilograms for loose produce; amber when low, red when gone. */
+function StockLabel({ item }) {
+  if (item.stockQty == null) return <span className="block text-xs text-gray-400">stock not tracked</span>
+  const qty = Number(item.stockQty) || 0
+  if (qty <= 0) return <span className="block text-xs font-medium text-red-500">out of stock</span>
+  const low = qty <= (Number(item.lowStockThreshold) || 0)
+  const shown = Number.isInteger(qty) ? String(qty) : qty.toFixed(3)
+  return <span className={`block text-xs ${low ? "font-medium text-amber-600" : "text-gray-500"}`}>{shown}{item.soldByWeight ? " kg" : ""} in stock</span>
+}
+
+/** "500 g · P035 · 2900000000353 · Staples › Sugar & salt": everything a cashier tells two lookalikes apart by. */
+const subtitleOf = (it) =>
+  [
+    it.packSize || it.unit,
+    it.itemCode,
+    it.barcode || it.sku,
+    [it.categoryName || it.category, it.subCategoryName].filter(Boolean).join(" › "),
+  ]
+    .filter(Boolean)
+    .join(" · ") || "No barcode"
+
+/** A small product picture; a neutral tile when there is none or it fails to load, so rows stay aligned. */
+function ProductThumb({ src, name }) {
+  const [failed, setFailed] = useState(false)
+  const box = "h-11 w-11 shrink-0 rounded-xl border border-gray-200 bg-gray-50"
+  if (!src || failed) {
+    return (
+      <span className={`${box} grid place-items-center text-sm font-semibold text-gray-400`} aria-hidden="true">
+        {String(name || "?").trim().charAt(0).toUpperCase()}
+      </span>
+    )
+  }
+  return <img src={src} alt="" loading="lazy" onError={() => setFailed(true)} className={`${box} object-cover`} />
+}
+
 export default function PosProductSearch({ items, onAdd, autoFocus = true }) {
   const [q, setQ] = useState("")
   const [open, setOpen] = useState(false)
@@ -93,20 +128,25 @@ export default function PosProductSearch({ items, onAdd, autoFocus = true }) {
         </Suspense>
       ) : null}
       {open && matches.length > 0 ? (
-        <ul className="absolute z-30 mt-1 max-h-72 w-full overflow-auto rounded border border-gray-200 bg-white shadow-lg">
+        <ul className="absolute z-30 mt-1 max-h-80 w-full overflow-auto rounded-2xl border border-emerald-100 bg-white shadow-xl">
           {matches.map((it, i) => (
             <li
               key={it.id}
               onMouseDown={() => pick(it)}
               onMouseEnter={() => setActive(i)}
-              className={`flex cursor-pointer items-center justify-between px-3 py-2 text-sm ${i === active ? "bg-sky-50" : ""}`}
+              className={`flex cursor-pointer items-center justify-between gap-4 border-b border-gray-100 px-3 py-2.5 last:border-b-0 ${i === active ? "bg-emerald-50" : ""}`}
             >
-              <span>
-                <span className="font-medium text-gray-800">{it.name}</span>
-                {it.barcode || it.sku ? <span className="ml-2 text-xs text-gray-400">{it.barcode || it.sku}</span> : null}
-                {it.stockQty != null && Number(it.stockQty) <= 0 ? <span className="ml-2 text-xs text-red-500">out of stock</span> : null}
+              <span className="flex min-w-0 items-center gap-3">
+                <ProductThumb src={it.image || (Array.isArray(it.images) ? it.images[0] : "")} name={it.name} />
+                <span className="min-w-0">
+                  <span className="block truncate text-[15px] font-bold text-gray-900">{it.name}</span>
+                  <span className="block truncate text-xs text-gray-500">{subtitleOf(it)}</span>
+                </span>
               </span>
-              <span className="text-gray-700">₹{money(it.price, 2)}</span>
+              <span className="shrink-0 text-right">
+                <span className="block text-[15px] font-bold text-gray-900">₹{money(it.price, 0)}{it.soldByWeight ? <span className="text-xs font-medium text-gray-500">/kg</span> : null}</span>
+                <StockLabel item={it} />
+              </span>
             </li>
           ))}
         </ul>

@@ -2,6 +2,7 @@ import {
   getPreviousDayName,
   getRestaurantLocalTimeParts,
 } from '../../../../utils/timezone.js';
+import { getAppStatus } from './appStatus.helper.js';
 
 const DAY_NAMES = [
   'Sunday',
@@ -210,18 +211,25 @@ export function getRestaurantOperationalStatus(restaurant, now = new Date()) {
   // Toggle ON only clears the override — availability then follows outlet timings.
   const isAcceptingOrders = restaurant?.isAcceptingOrders !== false;
   const outsideHoursOverride = false;
-  const isEffectivelyOnline = isAcceptingOrders && schedule.isOpen;
+  // The admin's app timings sit on top: "open" overrides the outlet schedule, and the admin window
+  // or a required-but-offline POS can close the store. A store with none of that set is unaffected.
+  const app = getAppStatus(restaurant, now);
+  const scheduleOpen = app.config.customerMode === 'open' ? true : schedule.isOpen;
+  const isEffectivelyOnline = isAcceptingOrders && scheduleOpen && app.customerOpen;
 
   return {
     ...schedule,
     isAcceptingOrders,
     outsideHoursOverride,
     isEffectivelyOnline,
+    appStatus: app,
     reason: !isAcceptingOrders
       ? 'not-accepting-orders'
-      : schedule.isOpen
-        ? 'open'
-        : schedule.reason,
+      : !app.customerOpen
+        ? app.reason
+        : scheduleOpen
+          ? 'open'
+          : schedule.reason,
   };
 }
 
@@ -278,20 +286,43 @@ export function getRestaurantAvailabilityStatus(restaurant, now = new Date(), op
   const isOpenNow = isTodayOpen || isYesterdayStillOpen;
   const activeWindow = isTodayOpen ? today : isYesterdayStillOpen ? yesterday : today;
 
+  const baseReason = isOpenNow
+    ? isAcceptingOrders
+      ? 'open'
+      : 'open-by-timings'
+    : activeWindow?.hasWindow
+      ? 'outside-hours'
+      : 'no-timings';
+
+  // The admin's app timings. "Force open" overrides the seller's outlet schedule (the seller's
+  // pause and a deactivated store were handled above and still win). Otherwise the admin window
+  // and, where the store requires it, an online POS must also pass.
+  let isOpen = isOpenNow;
+  let reason = baseReason;
+  let appStatus = null;
+  if (!ignoreOperationalStatus) {
+    appStatus = getAppStatus(restaurant, now);
+    if (appStatus.config.customerMode === 'open') {
+      isOpen = true;
+      reason = 'open';
+    }
+    if (!appStatus.customerOpen) {
+      isOpen = false;
+      reason = appStatus.reason;
+    }
+  }
+
   return {
-    isOpen: isOpenNow,
+    isOpen,
     isActive,
     isAcceptingOrders,
     isWithinTimings: isOpenNow,
     openingTime: activeWindow?.openingTime || null,
     closingTime: activeWindow?.closingTime || null,
-    reason: isOpenNow
-      ? isAcceptingOrders
-        ? 'open'
-        : 'open-by-timings'
-      : activeWindow?.hasWindow
-        ? 'outside-hours'
-        : 'no-timings',
+    reason,
+    appStatus,
+    // Instant delivery needs the store open for ordering and the instant setting to allow it.
+    instantLive: appStatus ? isOpen && appStatus.instantAllowed : isOpen,
   };
 }
 

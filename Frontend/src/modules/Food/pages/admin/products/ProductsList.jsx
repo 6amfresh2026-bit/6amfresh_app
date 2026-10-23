@@ -499,7 +499,7 @@ export default function ProductsList() {
       </div>
 
       <Dialog open={importOpen} onOpenChange={setImportOpen}>
-        <DialogContent className="sm:max-w-md">
+        <DialogContent className="p-5 sm:max-w-md sm:p-6">
           <DialogHeader><DialogTitle className="text-sky-600">Import Products</DialogTitle></DialogHeader>
           <div className="space-y-3 text-sm">
             <label className="block">

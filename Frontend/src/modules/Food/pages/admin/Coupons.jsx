@@ -125,7 +125,7 @@ function RestaurantMultiSelect({ restaurants, value, onChange, error }) {
         <span className={selectedIds.length ? "font-medium text-slate-700" : "text-slate-400"}>
           {selectedIds.length
             ? `${selectedIds.length} restaurant${selectedIds.length === 1 ? "" : "s"} selected`
-            : "Choose restaurants"}
+            : "Choose sellers"}
         </span>
         <ChevronDown className={`h-4 w-4 text-slate-400 transition ${isOpen ? "rotate-180" : ""}`} />
       </button>
@@ -139,7 +139,7 @@ function RestaurantMultiSelect({ restaurants, value, onChange, error }) {
                 type="text"
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
-                placeholder="Search restaurants..."
+                placeholder="Search sellers..."
                 className="w-full rounded-lg border border-slate-200 py-2 pl-9 pr-3 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                 autoFocus
               />
@@ -163,11 +163,11 @@ function RestaurantMultiSelect({ restaurants, value, onChange, error }) {
                   }`}>
                     {selected && <Check className="h-3.5 w-3.5" />}
                   </span>
-                  <span className="truncate font-medium">{restaurant.name || "Unnamed restaurant"}</span>
+                  <span className="truncate font-medium">{restaurant.name || "Unnamed seller"}</span>
                 </button>
               )
             }) : (
-              <p className="px-3 py-6 text-center text-sm text-slate-500">No restaurants found</p>
+              <p className="px-3 py-6 text-center text-sm text-slate-500">No sellers found</p>
             )}
           </div>
         </div>
@@ -657,7 +657,7 @@ export default function Coupons() {
         {/* Header */}
         <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6 mb-6">
           <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between mb-4">
-            <h1 className="text-2xl font-bold text-slate-900">Restaurant Offers & Coupons</h1>
+            <h1 className="text-2xl font-bold text-slate-900">Seller Offers & Coupons</h1>
             <button
               type="button"
               onClick={() => {
@@ -861,14 +861,14 @@ export default function Coupons() {
                 </div>
 
                 <div>
-                  <label className="block text-xs font-semibold text-slate-600 mb-1">Restaurant Scope</label>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">Seller Scope</label>
                   <StyledSelect
                     value={formData.restaurantScope}
                     onChange={(value) => handleFormChange("restaurantScope", value)}
-                    ariaLabel="Restaurant scope"
+                    ariaLabel="Seller scope"
                     options={[
-                      { value: "all", label: "All Restaurants" },
-                      { value: "selected", label: "Selected Restaurants" },
+                      { value: "all", label: "All Sellers" },
+                      { value: "selected", label: "Selected Sellers" },
                     ]}
                   />
                 </div>
@@ -945,7 +945,7 @@ export default function Coupons() {
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-slate-600 mb-1">Restaurant Bear (%)</label>
+                <label className="block text-xs font-semibold text-slate-600 mb-1">Seller Bear (%)</label>
                 <input
                   type="number"
                   min="0"
@@ -1034,7 +1034,7 @@ export default function Coupons() {
 
                 {formData.restaurantScope === "selected" && (
                   <div className="md:col-span-2 lg:col-span-3">
-                    <label className="block text-xs font-semibold text-slate-600 mb-1">Select Restaurants</label>
+                    <label className="block text-xs font-semibold text-slate-600 mb-1">Select Sellers</label>
                     <RestaurantMultiSelect
                       restaurants={restaurants}
                       value={formData.restaurantIds}
@@ -1069,7 +1069,7 @@ export default function Coupons() {
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
             <input
               type="text"
-              placeholder="Search by restaurant name, dish name, or coupon code..."
+              placeholder="Search by seller name, dish name, or coupon code..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               className="w-full pl-10 pr-4 py-2.5 text-sm rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
@@ -1111,7 +1111,7 @@ export default function Coupons() {
                 <thead className="bg-slate-50 border-b border-slate-200">
                   <tr>
                     <th className="px-6 py-4 text-left text-xs font-bold text-slate-700 uppercase tracking-wider whitespace-nowrap">SI</th>
-                    <th className="px-6 py-4 text-left text-xs font-bold text-slate-700 uppercase tracking-wider whitespace-nowrap">Restaurant</th>
+                    <th className="px-6 py-4 text-left text-xs font-bold text-slate-700 uppercase tracking-wider whitespace-nowrap">Seller</th>
                     <th className="px-6 py-4 text-left text-xs font-bold text-slate-700 uppercase tracking-wider whitespace-nowrap">Dish</th>
                     <th className="px-6 py-4 text-left text-xs font-bold text-slate-700 uppercase tracking-wider whitespace-nowrap">Coupon Code</th>
                     <th className="px-6 py-4 text-left text-xs font-bold text-slate-700 uppercase tracking-wider whitespace-nowrap">Customer Scope</th>
@@ -1134,7 +1134,7 @@ export default function Coupons() {
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
                         <span className="text-sm font-medium text-slate-900">
-                          {offer.restaurantScope === "all" || offer.restaurantName === "All Restaurants" ? "All Restaurants" : offer.restaurantName}
+                          {offer.restaurantScope === "all" || offer.restaurantName === "All Restaurants" ? "All Sellers" : offer.restaurantName}
                         </span>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
@@ -1171,7 +1171,7 @@ export default function Coupons() {
                       <td className="px-6 py-4 whitespace-nowrap">
                         <div className="text-xs text-slate-700 leading-5">
                           <p>Admin: {Number(offer.adminBearPercentage ?? 100)}%</p>
-                          <p>Restaurant: {Number(offer.restaurantBearPercentage ?? 0)}%</p>
+                          <p>Seller: {Number(offer.restaurantBearPercentage ?? 0)}%</p>
                         </div>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">

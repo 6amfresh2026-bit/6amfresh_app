@@ -1,10 +1,10 @@
-import { Suspense, lazy, useEffect } from "react"
-import { Routes, Route, Outlet } from "react-router-dom"
+import { Suspense, lazy } from "react"
+import { Routes, Route, Outlet, Navigate } from "react-router-dom"
 import ProtectedRoute from "@food/components/ProtectedRoute"
 import AuthRedirect from "@food/components/AuthRedirect"
 import Loader from "@food/components/Loader"
 import RestaurantLayout from "@food/components/restaurant/RestaurantLayout"
-import { applyModuleBranding, applyModulePowerScanning, getCachedSettings, loadBusinessSettings } from "@food/utils/businessSettings"
+import useRestaurantAppTheme from "@food/hooks/useRestaurantAppTheme"
 
 const LayoutWrapper = () => (
   <RestaurantLayout>
@@ -64,48 +64,9 @@ const Signup = lazy(() => import("@food/pages/restaurant/auth/Signup"))
 const ForgotPassword = lazy(() => import("@food/pages/restaurant/auth/ForgotPassword"))
 const VerificationPending = lazy(() => import("@food/pages/restaurant/auth/VerificationPending"))
 const Subscription = lazy(() => import("@food/pages/restaurant/Subscription"))
-const PointOfSale = lazy(() => import("@food/pages/restaurant/pos/PointOfSale"))
 
 export default function RestaurantRouter() {
-  // Safely enforce light mode for the Restaurant app to prevent User dark mode bleeding
-  useEffect(() => {
-    document.documentElement.classList.remove('dark');
-    return () => {
-      const savedTheme = localStorage.getItem('appTheme') || 'light';
-      if (savedTheme === 'dark') {
-        document.documentElement.classList.add('dark');
-      }
-    };
-  }, []);
-
-  /**
-   * The seller panel's own colour, which it never actually wore.
-   *
-   * applyModuleBranding only swaps the favicon and the page title.
-   * applyModulePowerScanning is the one that sets --module-theme-color and
-   * injects the stylesheet remapping the legacy brand hexes onto it, and
-   * nothing here called it -- so the panel ignored its configured colour and
-   * showed whatever hex each screen had hardcoded. Half of them had the
-   * customer app's pink rather than the seller blue.
-   */
-  useEffect(() => {
-    const applyBranding = async () => {
-      const cached = getCachedSettings()
-      if (cached) {
-        applyModuleBranding("restaurant", cached)
-        applyModulePowerScanning("restaurant", cached)
-      } else {
-        const settings = await loadBusinessSettings()
-        applyModuleBranding("restaurant", settings)
-        applyModulePowerScanning("restaurant", settings)
-      }
-    }
-
-    applyBranding()
-    const handleSettingsUpdate = () => applyBranding()
-    window.addEventListener("businessSettingsUpdated", handleSettingsUpdate)
-    return () => window.removeEventListener("businessSettingsUpdated", handleSettingsUpdate)
-  }, [])
+  useRestaurantAppTheme()
 
   return (
     <Suspense fallback={<Loader />}>
@@ -121,8 +82,8 @@ export default function RestaurantRouter() {
         <Route path="onboarding" element={<AuthRedirect module="restaurant"><RestaurantOnboarding /></AuthRedirect>} />
 
         {/* Protected app shell (desktop sidebar + mobile chrome) */}
-        {/* The till takes the whole screen — the sidebar would steal a fifth of a counter monitor. */}
-        <Route element={<ProtectedRoute requiredRole="restaurant" loginPath="/seller/login"><PointOfSale /></ProtectedRoute>} path="pos" />
+        {/* The till has its own app at /pos now (its own sign-in too); the old address still works for bookmarks. */}
+        <Route path="pos" element={<Navigate to="/pos" replace />} />
 
         <Route element={<LayoutWrapper />}>
           <Route element={<ProtectedRoute requiredRole="restaurant" loginPath="/seller/login"><OrdersMain /></ProtectedRoute>} path="" />

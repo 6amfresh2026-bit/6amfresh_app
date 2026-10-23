@@ -751,6 +751,61 @@ export const adminAPI = {
     apiClient.get("/food/admin/stocks/compare", { params: { restaurantIds: restaurantIds.join(",") }, contextModule: "admin" }),
   adjustStock: (body) =>
     apiClient.post("/food/admin/stocks/adjust", body ?? {}, { contextModule: "admin" }),
+  setStockMeta: (body) =>
+    apiClient.post("/food/admin/stocks/meta", body ?? {}, { contextModule: "admin" }),
+  /** Bulk import — dry-run check, then commit. Rows are parsed from CSV in the browser. */
+  bulkImportStockCheck: (body) =>
+    apiClient.post("/food/admin/stocks/import/check", body ?? {}, { contextModule: "admin" }),
+  bulkImportStockCommit: (body) =>
+    apiClient.post("/food/admin/stocks/import/commit", body ?? {}, { contextModule: "admin" }),
+  // ─── Weighed items & rates (loose produce sold by the kilogram) ───
+  getWeighedItems: (params = {}) =>
+    apiClient.get("/food/admin/weighed-items", { params, contextModule: "admin" }),
+  publishWeighedRates: (body) =>
+    apiClient.post("/food/admin/weighed-items/publish", body ?? {}, { contextModule: "admin" }),
+  addWeighedItem: (body) =>
+    apiClient.post("/food/admin/weighed-items", body ?? {}, { contextModule: "admin" }),
+  // ─── Barcodes & labels ───
+  getBarcodes: (params = {}) =>
+    apiClient.get("/food/admin/barcodes", { params, contextModule: "admin" }),
+  saveBarcodes: (body) =>
+    apiClient.post("/food/admin/barcodes/save", body ?? {}, { contextModule: "admin" }),
+  updateBarcode: (body) =>
+    apiClient.post("/food/admin/barcodes/update", body ?? {}, { contextModule: "admin" }),
+  // ─── POS users (till logins) ───
+  getPosUsers: (params = {}) =>
+    apiClient.get("/food/admin/pos-users", { params, contextModule: "admin" }),
+  getPosPermissions: () =>
+    apiClient.get("/food/admin/pos-users/permissions", { contextModule: "admin" }),
+  getPosUserActivity: (id, params = {}) =>
+    apiClient.get(`/food/admin/pos-users/${String(id)}/activity`, { params, contextModule: "admin" }),
+  createPosUser: (body) =>
+    apiClient.post("/food/admin/pos-users", body ?? {}, { contextModule: "admin" }),
+  updatePosUser: (id, body) =>
+    apiClient.patch(`/food/admin/pos-users/${String(id)}`, body ?? {}, { contextModule: "admin" }),
+  resetPosUserPassword: (id, password) =>
+    apiClient.post(`/food/admin/pos-users/${String(id)}/password`, { password }, { contextModule: "admin" }),
+  deletePosUser: (id) =>
+    apiClient.delete(`/food/admin/pos-users/${String(id)}`, { contextModule: "admin" }),
+  // ─── App timings & store status ───
+  getAppTimings: (params = {}) =>
+    apiClient.get("/food/admin/app-timings", { params, contextModule: "admin" }),
+  saveAppTimings: (restaurantId, body) =>
+    apiClient.patch(`/food/admin/app-timings/${String(restaurantId)}`, body ?? {}, { contextModule: "admin" }),
+  // ─── Bill designer (POS receipt layout) ───
+  getBillDesign: (params = {}) =>
+    apiClient.get("/food/admin/bill-design", { params, contextModule: "admin" }),
+  saveBillDesign: (body) =>
+    apiClient.post("/food/admin/bill-design", body ?? {}, { contextModule: "admin" }),
+  // ─── Products & pricing ───
+  getProductPricing: (params = {}) =>
+    apiClient.get("/food/admin/product-pricing", { params, contextModule: "admin" }),
+  getPricingLookups: () =>
+    apiClient.get("/food/admin/product-pricing/lookups", { contextModule: "admin" }),
+  savePricing: (body) =>
+    apiClient.post("/food/admin/product-pricing/save", body ?? {}, { contextModule: "admin" }),
+  addProductSize: (body) =>
+    apiClient.post("/food/admin/product-pricing/add-size", body ?? {}, { contextModule: "admin" }),
   getStockMovements: (params = {}) =>
     apiClient.get("/food/admin/stocks/movements", { params, contextModule: "admin" }),
   getItemStockMovements: (itemId, params = {}) =>
@@ -773,6 +828,8 @@ export const adminAPI = {
   // ─── Product list (vasy-style) extras ───
   getFoodById: (id) =>
     apiClient.get(`/food/admin/foods/${id}`, { contextModule: "admin" }),
+  getFoodCategoryCounts: (params = {}) =>
+    apiClient.get("/food/admin/foods/category-counts", { params, contextModule: "admin" }),
   getNextItemCode: () =>
     apiClient.get("/food/admin/foods/next-item-code", { contextModule: "admin" }),
   getDeletedFoods: (params = {}) =>
@@ -1478,6 +1535,8 @@ export const restaurantAPI = {
       return Promise.reject(new Error("Phone and OTP are required"));
     return authService.verifyRestaurantOtp(phone, otp, fcmToken, platform);
   },
+  /** The till: sign in with a POS username and password. */
+  posLogin: (username, password) => authService.posLogin(username, password),
   getMe: () => authService.getMe("restaurant"),
   /** Restaurant dashboard: always fetch fresh profile data. */
   getCurrentRestaurant: () =>
@@ -2017,6 +2076,9 @@ export const restaurantAPI = {
   /** Public: get single approved restaurant by id or slug */
   getRestaurantById: (id, config = {}) =>
     apiClient.get(`/food/restaurant/restaurants/${String(id)}`, { ...config }),
+  /** Public, never cached: can customers order from this store right now, and is instant delivery live. */
+  getStoreAppStatus: (id, config = {}) =>
+    apiClient.get(`/food/restaurant/restaurants/${String(id)}/app-status`, { ...config }),
   /** Public: get approved menu by restaurant id or slug */
   getMenuByRestaurantId: (id, config = {}) =>
     getPublicRestaurantMenuOnce(id, config),
@@ -2050,6 +2112,15 @@ export const restaurantAPI = {
     apiClient.get("/food/restaurant/pos/orders", { params, contextModule: "restaurant" }),
   posLastBill: () =>
     apiClient.get("/food/restaurant/pos/orders/last", { contextModule: "restaurant" }),
+  /** The store's saved receipt layout (Bill designer), for the POS print. */
+  /** The till checks in (about every 20 s); this is what makes the store's POS "online". */
+  /** Who is at the till and what they may do (a POS user), live. */
+  posMe: () =>
+    apiClient.get("/food/restaurant/pos/me", { contextModule: "restaurant" }),
+  posHeartbeat: () =>
+    apiClient.post("/food/restaurant/pos/heartbeat", {}, { contextModule: "restaurant" }),
+  posBillDesign: () =>
+    apiClient.get("/food/restaurant/pos/bill-design", { contextModule: "restaurant" }),
   posGetBill: (orderId) =>
     apiClient.get(`/food/restaurant/pos/orders/${String(orderId)}`, { contextModule: "restaurant" }),
   posRecordPayment: (orderId, body = {}) =>

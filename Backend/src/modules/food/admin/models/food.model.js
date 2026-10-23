@@ -219,6 +219,22 @@ const foodSchema = new mongoose.Schema(
         onlinePrice: { type: Number, min: 0, default: null },
         minimumQuantity: { type: Number, min: 0, default: null },
 
+        /**
+         * Loose produce sold by weight at the POS counter (vegetables, fruit).
+         *
+         * These items are priced per kilogram rather than per pack, `stockQty` is
+         * counted in kilograms, and they are managed from their own "Weighed
+         * items & rates" screen instead of the pack-based Stocks list. Every
+         * existing item is `false`, so nothing changes until an item is flagged.
+         */
+        soldByWeight: { type: Boolean, default: false, index: true },
+        /**
+         * Optional per-kg rate charged on small quantities (under 500 g), where a
+         * shop often sells dearer than the 1 kg rate. `null` means "use the same
+         * `price` for every weight" — no small-quantity surcharge.
+         */
+        smallQtyRate: { type: Number, min: 0, default: null },
+
         /** The "Show Online" toggle on the product list. */
         showOnline: { type: Boolean, default: false, index: true },
         /** Soft delete — rows go to "Deleted Products" and can be restored. */

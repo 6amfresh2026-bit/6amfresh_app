@@ -291,7 +291,10 @@ const posSchema = new mongoose.Schema(
         /** Cash handed back when more was received than the bill; tenders record what came in. */
         changeGiven: { type: Number, min: 0, default: 0 },
         /** Bill number as printed. Same as order_id; here so it survives renumbering. */
-        billNo: { type: String, trim: true, default: '' }
+        billNo: { type: String, trim: true, default: '' },
+        /** The POS user (cashier login) who rang this up; absent when the store owner did. */
+        posUserId: { type: mongoose.Schema.Types.ObjectId, ref: 'FoodPosUser', default: undefined, index: true },
+        cashierName: { type: String, trim: true, default: '' }
     },
     { _id: false }
 );

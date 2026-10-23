@@ -3,6 +3,7 @@ import {
     requestUserOtpController,
     verifyUserOtpController,
     adminLoginController,
+    posLoginController,
     refreshTokenController,
     requestRestaurantOtpController,
     verifyRestaurantOtpController,
@@ -36,6 +37,9 @@ router.post('/delivery/verify-otp', authRateLimiter, verifyDeliveryOtpController
 
 // Admin login
 router.post('/admin/login', authRateLimiter, adminLoginController);
+
+// POS cashier login (username + password issued by the admin)
+router.post('/pos/login', authRateLimiter, posLoginController);
 
 // Admin forgot password (no auth required)
 router.post('/admin/forgot-password/request-otp', authRateLimiter, requestAdminForgotPasswordOtpController);

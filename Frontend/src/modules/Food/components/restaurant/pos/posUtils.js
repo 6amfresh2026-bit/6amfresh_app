@@ -95,6 +95,8 @@ export const lineFromItem = (item) => ({
   unit: item.packSize || item.unit || "",
   gstRate: item.gstRate ?? null,
   stockQty: item.stockQty ?? null,
+  // Loose produce: sold by weight, so the quantity is kilograms (see isWeighedItem).
+  soldByWeight: item.soldByWeight === true,
   quantity: 1,
   discountPct: 0,
   addDisc: 0,
@@ -176,11 +178,33 @@ const billTime = (d) => new Date(d).toLocaleTimeString("en-IN", { hour: "2-digit
  * A held bill goes through the same layout but is stamped as not a tax
  * invoice, because nothing has been charged for it yet.
  */
-export const receiptHtml = (r, { title = "Invoice", held = false } = {}) => {
+/**
+ * The receipt layout the Bill designer saves. Everything defaults to the classic
+ * all-on layout, so a caller that passes no design prints exactly as before.
+ */
+const DESIGN_DEFAULTS = {
+  paperWidth: "pos", textSize: "normal", font: "mono", dividers: "dashed", headingAlign: "center", boldTotal: true,
+  businessName: "", tagline: "", billTitle: "", gstin: "", extraHeader: "",
+  showStoreName: true, showStoreAddress: true, showStorePhone: true,
+  showBillNo: true, showDateTime: true, showCashier: true, showCustomerName: true, showCustomerPhone: true, showTable: true,
+  showItemsQty: true, showGstTable: true, showPayment: true, showLoyalty: true,
+  thankYou: "", extraNote: "", termsLine: "", showBarcode: true,
+}
+
+export const receiptHtml = (r, { title = "Invoice", held = false, design = null } = {}) => {
+  const d = { ...DESIGN_DEFAULTS, ...(design || {}) }
   const store = r.store || {}
   const p = r.pricing || {}
   const pay = r.payment || {}
   const when = r.createdAt || new Date()
+
+  // Style knobs from the design — pure CSS, so they can never change what the
+  // bill says, only how it looks.
+  const fontFamily = d.font === "sans" ? "Arial, Helvetica, sans-serif" : '"Courier New", monospace'
+  const baseFont = d.textSize === "small" ? 10 : d.textSize === "large" ? 12.5 : 11
+  const paperW = d.paperWidth === "58" ? "58mm" : "80mm"
+  const divBorder = d.dividers === "solid" ? "1px solid #000" : d.dividers === "none" ? "0" : "1px dashed #000"
+  const headAlign = d.headingAlign === "left" ? "left" : "center"
 
   const rows = (r.items || [])
     .map(
@@ -235,19 +259,20 @@ export const receiptHtml = (r, { title = "Invoice", held = false } = {}) => {
   return `<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(title)} ${escapeHtml(r.billNo || "")}</title>
 <style>
   * { box-sizing: border-box; }
-  body { font: 11px/1.3 "Courier New", monospace; color: #000; margin: 0; padding: 6px; width: 80mm; }
-  h1 { font-size: 14px; margin: 0 0 1px; text-align: center; text-transform: uppercase; }
+  body { font: ${baseFont}px/1.35 ${fontFamily}; color: #000; margin: 0; padding: 6px; width: ${paperW}; }
+  h1 { font-size: ${baseFont + 3}px; margin: 0 0 1px; text-align: ${headAlign}; text-transform: uppercase; }
   .c { text-align: center; } .r { text-align: right; } .b { font-weight: bold; }
-  .muted { font-size: 10px; }
-  .hsn { font-size: 9px; }
+  .head { text-align: ${headAlign}; }
+  .muted { font-size: ${baseFont - 1}px; }
+  .hsn { font-size: ${baseFont - 2}px; }
   .ibc svg { display: block; height: 16px; width: auto; max-width: 100%; }
-  hr { border: 0; border-top: 1px dashed #000; margin: 4px 0; }
+  hr { border: 0; border-top: ${divBorder}; margin: ${d.dividers === "none" ? "2px" : "4px"} 0; }
   table { width: 100%; border-collapse: collapse; }
   td, th { padding: 1px 0; vertical-align: top; }
-  .items th { border-bottom: 1px solid #000; border-top: 1px solid #000; text-align: left; font-size: 10px; }
+  .items th { border-bottom: 1px solid #000; border-top: 1px solid #000; text-align: left; font-size: ${baseFont - 1}px; }
   .items th.r, .items td.r { text-align: right; }
   .sep { width: 10px; text-align: center; }
-  .grand td { font-size: 13px; font-weight: bold; }
+  .grand td { font-size: ${d.boldTotal ? baseFont + 2 : baseFont}px; font-weight: ${d.boldTotal ? "bold" : "normal"}; }
   .tax th, .tax td { border: 1px solid #000; padding: 1px 2px; font-size: 9px; text-align: right; }
   .stamp { display: inline-block; border: 1px solid #000; padding: 0 4px; font-size: 10px; font-weight: bold; }
   .foot { display: flex; justify-content: space-between; font-size: 9px; }
@@ -261,31 +286,24 @@ export const receiptHtml = (r, { title = "Invoice", held = false } = {}) => {
   @media print { body { width: auto; padding: 0; } }
 </style></head><body>
   ${held ? '<div class="mark">Hold Bill</div>' : ""}
-  <div class="c b" style="font-size:12px">${held ? "HOLD BILL" : escapeHtml(title.toUpperCase())}</div>
-  <h1>${escapeHtml(store.name || "")}</h1>
-  ${store.address ? `<div class="c muted">${escapeHtml(store.address)}</div>` : ""}
-  ${store.gstNumber ? `<div class="c muted">GSTIN NO : ${escapeHtml(store.gstNumber)}</div>` : ""}
-  ${store.fssaiNumber ? `<div class="c muted">FSSAI : ${escapeHtml(store.fssaiNumber)}</div>` : ""}
-  ${store.phone ? `<div class="c muted">Phone No : ${escapeHtml(store.phone)}</div>` : ""}
+  <div class="head b" style="font-size:${baseFont + 1}px">${held ? "HOLD BILL" : escapeHtml((d.billTitle || title).toUpperCase())}</div>
+  <h1>${escapeHtml(d.businessName || store.name || "")}</h1>
+  ${d.businessName && d.showStoreName && d.businessName !== (store.name || "") ? `<div class="head muted">${escapeHtml(store.name || "")}</div>` : ""}
+  ${d.tagline ? `<div class="head muted">${escapeHtml(d.tagline)}</div>` : ""}
+  ${d.showStoreAddress && store.address ? `<div class="head muted">${escapeHtml(store.address)}</div>` : ""}
+  ${(d.gstin || store.gstNumber) ? `<div class="head muted">GSTIN NO : ${escapeHtml(d.gstin || store.gstNumber)}</div>` : ""}
+  ${store.fssaiNumber ? `<div class="head muted">FSSAI : ${escapeHtml(store.fssaiNumber)}</div>` : ""}
+  ${d.extraHeader ? d.extraHeader.split("\n").map((l) => l.trim()).filter(Boolean).map((l) => `<div class="head muted">${escapeHtml(l)}</div>`).join("") : ""}
+  ${d.showStorePhone && store.phone ? `<div class="head muted">Phone No : ${escapeHtml(store.phone)}</div>` : ""}
   <hr>
 
   <table class="muted">
-    <tr>
-      <td>Name</td><td class="sep">:</td><td>${escapeHtml(r.customer?.name || "Walk in Customer")}</td>
-      <td>Date</td><td class="sep">:</td><td class="r">${billDate(when)}</td>
-    </tr>
-    <tr>
-      <td>Mobile</td><td class="sep">:</td><td>${escapeHtml(r.customer?.phone || "-")}</td>
-      <td>Time</td><td class="sep">:</td><td class="r">${billTime(when)}</td>
-    </tr>
-    <tr>
-      <td>${held ? "Hold Bill" : "Invoice No"}</td><td class="sep">:</td><td><b>${escapeHtml(r.billNo || "-")}</b></td>
-      <td>Cashier</td><td class="sep">:</td><td class="r">${escapeHtml(r.salesman || "-")}</td>
-    </tr>
-    <tr>
-      <td>Type</td><td class="sep">:</td>
-      <td colspan="4">${escapeHtml(r.orderTypeLabel || ORDER_TYPE_LABEL[r.orderType] || "")}${r.tableNo ? ` · Table ${escapeHtml(r.tableNo)}` : ""}</td>
-    </tr>
+    ${d.showBillNo ? `<tr><td>${held ? "Hold Bill" : "Invoice No"}</td><td class="sep">:</td><td><b>${escapeHtml(r.billNo || "-")}</b></td></tr>` : ""}
+    ${d.showDateTime ? line("Date", `${billDate(when)} ${billTime(when)}`) : ""}
+    ${d.showCashier ? line("Cashier", escapeHtml(r.salesman || "-")) : ""}
+    ${d.showCustomerName ? line("Name", escapeHtml(r.customer?.name || "Walk in Customer")) : ""}
+    ${d.showCustomerPhone ? line("Mobile", escapeHtml(r.customer?.phone || "-")) : ""}
+    ${line("Type", `${escapeHtml(r.orderTypeLabel || ORDER_TYPE_LABEL[r.orderType] || "")}${d.showTable && r.tableNo ? ` · Table ${escapeHtml(r.tableNo)}` : ""}`)}
   </table>
 
   <table class="items" style="margin-top:4px">
@@ -300,7 +318,7 @@ export const receiptHtml = (r, { title = "Invoice", held = false } = {}) => {
     ${p.additionalCharges ? line("ADD. CHARGES", money(p.additionalCharges, 2)) : ""}
     ${line("ROUND OFF", `${p.roundOff > 0 ? "+" : ""}${money(p.roundOff || 0, 2)}`)}
     <tr class="grand"><td>TOTAL</td><td class="sep">:</td><td class="r">${money(p.total, 2)}</td></tr>
-    ${held ? "" : tenderLines}
+    ${held || !d.showPayment ? "" : tenderLines}
   </table>
   <hr>
 
@@ -309,18 +327,19 @@ export const receiptHtml = (r, { title = "Invoice", held = false } = {}) => {
       ? `${line("PIECES PURCHASED", Number(r.totalQuantity || 0).toFixed(0))}
          ${line("DISCOUNT ITEMS", Number(r.discountedLines || 0).toFixed(0))}
          ${line("TOTAL DISCOUNT", money(p.discount || 0, 2))}`
-      : `${line("NO OF QTY", Number(r.totalQuantity || 0).toFixed(3))}
-         ${line("TENDERED", money(pay.tendered || 0, 2))}
-         ${line("CHANGE", money(pay.changeGiven || 0, 2))}
-         ${pay.dueAmount ? line("BALANCE DUE", money(pay.dueAmount, 2), true) : ""}`}
+      : `${d.showItemsQty ? line("NO OF QTY", Number(r.totalQuantity || 0).toFixed(3)) : ""}
+         ${d.showPayment ? line("TENDERED", money(pay.tendered || 0, 2)) : ""}
+         ${d.showPayment ? line("CHANGE", money(pay.changeGiven || 0, 2)) : ""}
+         ${d.showPayment && pay.dueAmount ? line("BALANCE DUE", money(pay.dueAmount, 2), true) : ""}
+         ${d.showLoyalty && r.loyaltyEarned ? line("LOYALTY EARNED", `${escapeHtml(String(r.loyaltyEarned))} pts`) : ""}`}
   </table>
   <hr>
 
   ${held ? "" : `<div class="muted b">${escapeHtml(amountInWords(p.total))}</div>`}
   ${store.state ? `<div class="muted">Place of Supply : ${escapeHtml(store.state)}</div>` : ""}
 
-  ${taxRows
-      ? `<div class="c b" style="margin-top:4px;font-size:10px">TAX SUMMARY</div>
+  ${d.showGstTable && taxRows
+      ? `<div class="c b" style="margin-top:4px;font-size:${baseFont - 1}px">TAX SUMMARY</div>
   <table class="tax">
     <thead><tr><th>TAXABLE VALUE</th><th>CGST</th><th>SGST</th><th>Cess</th><th>IGST</th></tr></thead>
     <tbody>${taxRows}</tbody>
@@ -334,8 +353,12 @@ export const receiptHtml = (r, { title = "Invoice", held = false } = {}) => {
          <div class="hsn">Not a tax invoice. Nothing has been charged — this bill is parked and prices are confirmed when it is paid.</div>`
       // No barcode on a held bill: the "Scan Sales Invoice" box looks up sales,
       // and a scannable code on a slip that is not one invites the mistake.
-      : `<div class="c" style="margin-top:6px">${barcodeSvg(r.billNo)}</div>`}
-  <div class="c muted">Thank you for shopping${store.name ? ` at ${escapeHtml(store.name)}` : " with us"}</div>
+      : d.showBarcode
+        ? `<div class="c" style="margin-top:6px">${barcodeSvg(r.billNo)}</div>`
+        : ""}
+  <div class="head muted">${d.thankYou ? escapeHtml(d.thankYou) : `Thank you for shopping${store.name ? ` at ${escapeHtml(store.name)}` : " with us"}`}</div>
+  ${d.extraNote ? `<div class="head muted">${escapeHtml(d.extraNote)}</div>` : ""}
+  ${d.termsLine ? `<div class="head hsn">${escapeHtml(d.termsLine)}</div>` : ""}
   <hr>
   <div class="foot"><span>Printed On : ${billDate(new Date())} ${billTime(new Date())}</span><span>E&amp;OE</span></div>
   <script>window.onload = function () { window.print(); };</script>

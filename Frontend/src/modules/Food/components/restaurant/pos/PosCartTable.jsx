@@ -1,4 +1,5 @@
 import { Minus, Plus, Trash2 } from "lucide-react"
+import { isWeighedItem } from "./scaleParser"
 import { lineDiscount, lineNet, money } from "./posUtils"
 
 const th = "px-3 py-2.5 text-left text-[15px] font-semibold text-gray-700"
@@ -8,9 +9,11 @@ const numInput = "h-8 w-20 rounded border border-gray-300 px-2 text-right text-s
 /** The bill's lines, in the reference's column order. */
 export default function PosCartTable({ lines, onUpdate, onRemove }) {
   const setQty = (line, qty) => {
-    const q = Math.max(1, Math.floor(Number(qty) || 1))
+    // A weighed line is a weight (1.250 kg); everything else is a whole count.
+    const weighed = isWeighedItem(line)
+    const q = weighed ? Math.max(0.001, Math.round((Number(qty) || 0) * 1000) / 1000) : Math.max(1, Math.floor(Number(qty) || 1))
     if (line.stockQty != null && q > Number(line.stockQty)) {
-      onUpdate(line.key, { quantity: Math.max(1, Number(line.stockQty)) })
+      onUpdate(line.key, { quantity: Math.max(weighed ? 0.001 : 1, Number(line.stockQty)) })
       return
     }
     onUpdate(line.key, { quantity: q })
@@ -52,9 +55,9 @@ export default function PosCartTable({ lines, onUpdate, onRemove }) {
                 </td>
                 <td className={`${td}`}>
                   <div className="flex items-center justify-center gap-1">
-                    <button type="button" className="rounded border border-gray-300 p-1 hover:bg-gray-100" onClick={() => setQty(line, Number(line.quantity) - 1)} aria-label="Less"><Minus size={12} /></button>
-                    <input className="h-8 w-14 rounded border border-gray-300 text-center text-sm outline-none focus:border-sky-400" value={line.quantity} onChange={(e) => setQty(line, e.target.value)} inputMode="numeric" />
-                    <button type="button" className="rounded border border-gray-300 p-1 hover:bg-gray-100" onClick={() => setQty(line, Number(line.quantity) + 1)} aria-label="More"><Plus size={12} /></button>
+                    <button type="button" className="rounded border border-gray-300 p-1 hover:bg-gray-100" onClick={() => setQty(line, Number(line.quantity) - (isWeighedItem(line) ? 0.1 : 1))} aria-label="Less"><Minus size={12} /></button>
+                    <input className="h-8 w-14 rounded border border-gray-300 text-center text-sm outline-none focus:border-sky-400" value={line.quantity} onChange={(e) => setQty(line, e.target.value)} inputMode={isWeighedItem(line) ? "decimal" : "numeric"} />
+                    <button type="button" className="rounded border border-gray-300 p-1 hover:bg-gray-100" onClick={() => setQty(line, Number(line.quantity) + (isWeighedItem(line) ? 0.1 : 1))} aria-label="More"><Plus size={12} /></button>
                   </div>
                 </td>
                 <td className={`${td} text-right`}>{line.mrp != null ? money(line.mrp, 2) : money(line.price, 2)}</td>

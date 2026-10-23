@@ -107,7 +107,7 @@ export const encodeBars = (text) => {
   return { format: "code128", value, ...code128Bars(value) }
 }
 
-const escapeXml = (s) =>
+export const escapeXml = (s) =>
   String(s).replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[ch])
 
 /**
@@ -115,9 +115,12 @@ const escapeXml = (s) =>
  *
  * `module` is the width of the thinnest bar in px. On a screen, use a whole number: a
  * fractional bar blurs when drawn and a camera cannot read it (printing is unaffected). `showText` adds the value
- * underneath, which a label needs so a person can type it when a scan fails.
+ * underneath, which a label needs so a person can type it when a scan fails. `stretch` makes the
+ * drawing fill whatever box it is put in (width and height 100%): only the bars' widths relative
+ * to one another matter to a scanner, so stretching sideways is safe, and a label can then give the
+ * barcode all the width it has.
  */
-export const barcodeSvg = (text, { height = 44, module = 1.4, showText = false } = {}) => {
+export const barcodeSvg = (text, { height = 44, module = 1.4, showText = false, stretch = false } = {}) => {
   const encoded = encodeBars(text)
   if (!encoded) return ""
 
@@ -135,7 +138,8 @@ export const barcodeSvg = (text, { height = 44, module = 1.4, showText = false }
     ? `<text x="${(barsWidth / 2).toFixed(2)}" y="${height + fontSize}" text-anchor="middle" font-family="monospace" font-size="${fontSize}">${escapeXml(encoded.value)}</text>`
     : ""
 
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${totalWidth.toFixed(2)}" height="${totalHeight}" viewBox="${(-quiet).toFixed(2)} 0 ${totalWidth.toFixed(2)} ${totalHeight}" fill="#000">${bars}${label}</svg>`
+  const size = stretch ? `width="100%" height="100%" preserveAspectRatio="none"` : `width="${totalWidth.toFixed(2)}" height="${totalHeight}"`
+  return `<svg xmlns="http://www.w3.org/2000/svg" ${size} viewBox="${(-quiet).toFixed(2)} 0 ${totalWidth.toFixed(2)} ${totalHeight}" fill="#000">${bars}${label}</svg>`
 }
 
 export const LABEL_SIZES = [

@@ -1,7 +1,6 @@
 import { motion, useReducedMotion } from "framer-motion"
 import { Boxes, Timer, Store } from "lucide-react"
 import { useCompanyName } from "@food/hooks/useCompanyName"
-import QuickCommerceArt from "./QuickCommerceArt"
 
 /**
  * Left-hand hero on the admin auth screens.
@@ -22,13 +21,6 @@ export default function AdminAuthHero({ themeColor, logoUrl }) {
           animate: { opacity: 1, y: 0 },
           transition: { duration: 0.45, delay, ease: "easeOut" },
         }
-
-  const float = prefersReducedMotion
-    ? {}
-    : {
-        animate: { y: [0, -10, 0] },
-        transition: { duration: 6, repeat: Infinity, ease: "easeInOut" },
-      }
 
   const stats = [
     { icon: Timer, label: "Avg delivery", value: "12 min" },
@@ -97,12 +89,6 @@ export default function AdminAuthHero({ themeColor, logoUrl }) {
               Sellers, stock, riders and orders — one console for the whole
               marketplace, updating as it happens.
             </p>
-          </motion.div>
-
-          <motion.div {...fadeUp(0.18)} className="relative">
-            <motion.div {...float}>
-              <QuickCommerceArt accent={themeColor} className="h-auto w-full max-w-[330px]" />
-            </motion.div>
           </motion.div>
 
           <motion.div {...fadeUp(0.26)} className="grid max-w-sm grid-cols-3 gap-2.5">

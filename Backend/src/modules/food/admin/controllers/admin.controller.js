@@ -630,6 +630,15 @@ export async function getFoodById(req, res, next) {
     }
 }
 
+export async function getFoodCategoryCounts(req, res, next) {
+    try {
+        const data = await adminService.getFoodCategoryCounts(req.query || {});
+        res.status(200).json({ success: true, message: 'Category counts', data });
+    } catch (error) {
+        next(error);
+    }
+}
+
 export async function getNextItemCode(req, res, next) {
     try {
         const itemCode = await adminService.peekNextItemCode();

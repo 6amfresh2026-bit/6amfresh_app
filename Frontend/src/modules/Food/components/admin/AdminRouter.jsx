@@ -25,6 +25,12 @@ const ProductsList = lazy(() => import("@food/pages/admin/products/ProductsList"
 const ProductForm = lazy(() => import("@food/pages/admin/products/ProductForm"));
 const DeletedProducts = lazy(() => import("@food/pages/admin/products/DeletedProducts"));
 const Stocks = lazy(() => import("@food/pages/admin/stocks/Stocks"));
+const WeighedItems = lazy(() => import("@food/pages/admin/weighed/WeighedItems"));
+const BarcodesLabels = lazy(() => import("@food/pages/admin/barcodes/BarcodesLabels"));
+const AppTimings = lazy(() => import("@food/pages/admin/apptimings/AppTimings"));
+const PosUsers = lazy(() => import("@food/pages/admin/posusers/PosUsers"));
+const BillDesigner = lazy(() => import("@food/pages/admin/bill/BillDesigner"));
+const ProductsPricing = lazy(() => import("@food/pages/admin/pricing/ProductsPricing"));
 const StockVerification = lazy(() => import("@food/pages/admin/stocks/StockVerification"));
 const StockVerificationForm = lazy(() => import("@food/pages/admin/stocks/StockVerificationForm"));
 const Category = lazy(() => import("@food/pages/admin/categories/Category"));
@@ -87,7 +93,6 @@ const OrderReassignmentRequests = lazy(() => import("@food/pages/admin/OrderReas
 const JoinRequest = lazy(() => import("@food/pages/admin/delivery-partners/JoinRequest"));
 const AddDeliveryman = lazy(() => import("@food/pages/admin/delivery-partners/AddDeliveryman"));
 const DeliverymanList = lazy(() => import("@food/pages/admin/delivery-partners/DeliverymanList"));
-const DeliveryLiveTracking = lazy(() => import("@food/pages/admin/delivery-partners/DeliveryLiveTracking"));
 const DeliveryHistory = lazy(() => import("@food/pages/admin/delivery-partners/DeliveryHistory"));
 const DeliverymanReviews = lazy(() => import("@food/pages/admin/delivery-partners/DeliverymanReviews"));
 const DeliverymanBonus = lazy(() => import("@food/pages/admin/delivery-partners/DeliverymanBonus"));
@@ -170,6 +175,17 @@ function FeatureSettingsRouteGuard() {
     return <Navigate to="/admin/store" replace />;
   }
   return <FeatureSettings />;
+}
+
+// The admin console is green. It shares the customer app's saved theme colour, so the green is
+// applied over it here instead of changing that setting (which would recolour the customer app).
+const ADMIN_GREEN = "#1B8A4C";
+function applyAdminGreenTheme() {
+  const root = document.documentElement.style;
+  root.setProperty("--module-theme-color", ADMIN_GREEN);
+  root.setProperty("--module-theme-rgb", "27,138,76");
+  root.setProperty("--color-primary-orange", ADMIN_GREEN);
+  root.setProperty("--ring", ADMIN_GREEN);
 }
 
 function SuperPowersRouteGuard({ children }) {
@@ -255,6 +271,7 @@ export default function AdminRouter() {
       try {
         const settings = await loadBusinessSettings();
         if (!cancelled) applyModulePowerScanning("user", settings);
+        applyAdminGreenTheme();
       } catch {
         // A panel in last month's colours still works; a blank one does not.
       }
@@ -265,6 +282,7 @@ export default function AdminRouter() {
     const handleSettingsUpdate = () => {
       void loadBusinessSettings({ force: true }).then((settings) => {
         if (!cancelled) applyModulePowerScanning("user", settings);
+        applyAdminGreenTheme();
       });
     };
 
@@ -396,6 +414,12 @@ export default function AdminRouter() {
             <Route path="products/:id/edit" element={<ProductForm />} />
             <Route path="category-brand" element={<CategoryBrand />} />
             <Route path="stocks" element={<Stocks />} />
+            <Route path="weighed-items" element={<WeighedItems />} />
+            <Route path="barcodes" element={<BarcodesLabels />} />
+            <Route path="app-timings" element={<AppTimings />} />
+            <Route path="pos-users" element={<PosUsers />} />
+            <Route path="bill-designer" element={<BillDesigner />} />
+            <Route path="products-pricing" element={<ProductsPricing />} />
             <Route path="stock-verification" element={<StockVerification />} />
             <Route path="stock-verification/new" element={<StockVerificationForm />} />
             <Route path="stock-verification/:id" element={<StockVerificationForm />} />
@@ -437,7 +461,7 @@ export default function AdminRouter() {
             <Route path="delivery-partners" element={<DeliverymanList />} />
             <Route path="delivery-partners/add" element={<AddDeliveryman />} />
             <Route path="delivery-partners/history" element={<DeliveryHistory />} />
-            <Route path="delivery-partners/live-tracking" element={<DeliveryLiveTracking />} />
+            <Route path="delivery-partners/live-tracking" element={<Navigate to="/admin/store/delivery-partners" replace />} />
             <Route path="delivery-partners/join-request" element={<JoinRequest />} />
             <Route path="delivery-partners/reviews" element={<DeliverymanReviews />} />
             <Route path="delivery-partners/bonus" element={<DeliverymanBonus />} />

@@ -10,7 +10,13 @@ function toObjectIds(ids = []) {
     .map((id) => new mongoose.Types.ObjectId(id));
 }
 
-function resolveFoodItemPrice(foodDoc, rawItem) {
+/** Below this many kg a weighed item may carry its own (usually dearer) small-quantity rate. */
+export const SMALL_QTY_KG = 0.5;
+
+/** A weight is kept to the gram: 1.2504 kg from a jittery scale is 1.250. */
+const toGrams = (q) => Math.round(Number(q) * 1000) / 1000;
+
+function resolveFoodItemPrice(foodDoc, rawItem, quantity = 1) {
   const variantId = String(rawItem?.variantId || '').trim();
   const variants = Array.isArray(foodDoc?.variants) ? foodDoc.variants : [];
 
@@ -34,7 +40,12 @@ function resolveFoodItemPrice(foodDoc, rawItem) {
     throw new ValidationError(`Please select a size for ${foodDoc.name}`);
   }
 
-  const price = Number(foodDoc.price) || 0;
+  // Loose produce: the per-kg rate, or the small-quantity rate under half a kilo when the shop set one.
+  const small = Number(foodDoc.smallQtyRate);
+  const price =
+    foodDoc.soldByWeight === true && quantity < SMALL_QTY_KG && foodDoc.smallQtyRate != null && Number.isFinite(small) && small >= 0
+      ? small
+      : Number(foodDoc.price) || 0;
   const otherPrice = Number(foodDoc.otherPrice) || 0;
   return {
     price,
@@ -133,13 +144,19 @@ export async function resolveOrderCartItems(restaurantId, rawItems = []) {
 
   for (const rawItem of items) {
     const itemId = String(rawItem?.itemId || rawItem?.id || '').trim();
-    const quantity = Math.max(1, Number(rawItem?.quantity) || 1);
+    const rawQty = Number(rawItem?.quantity);
 
     if (!itemId || !mongoose.Types.ObjectId.isValid(itemId)) {
       throw new ValidationError('One or more cart items are invalid');
     }
 
     const foodDoc = foodById.get(itemId);
+    // Loose produce is sold by weight (1.250 kg); everything else by whole units, as before.
+    const weighed = foodDoc?.soldByWeight === true;
+    const quantity = weighed ? Math.max(0.001, toGrams(rawQty) || 0.001) : Math.max(1, rawQty || 1);
+    if (foodDoc && !weighed && !Number.isInteger(quantity)) {
+      throw new ValidationError(`${foodDoc.name} is sold by the piece, so the quantity must be a whole number`);
+    }
     if (foodDoc) {
       if (foodDoc.isAvailable === false) {
         throw new ValidationError(`${foodDoc.name} is currently unavailable`);
@@ -162,7 +179,7 @@ export async function resolveOrderCartItems(restaurantId, rawItems = []) {
         );
       }
 
-      const pricing = resolveFoodItemPrice(foodDoc, rawItem);
+      const pricing = resolveFoodItemPrice(foodDoc, rawItem, quantity);
       const addons = resolveAttachedAddons(rawItem?.addons);
       const addonsTotal = addons.reduce((sum, a) => sum + a.price, 0);
 

@@ -393,7 +393,7 @@ export default function ProductMasters({ tab: forcedTab, embedded = false }) {
       </div>
 
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-lg">
+        <DialogContent className="max-h-[85vh] overflow-y-auto p-5 sm:max-w-lg sm:p-6">
           <DialogHeader>
             <DialogTitle className="text-sky-600">{editing ? `Edit ${tab.singular}` : `Create ${tab.singular}`}</DialogTitle>
           </DialogHeader>

@@ -7,7 +7,7 @@ import { FoodPosCreditNote } from '../models/posCreditNote.model.js';
 import { FoodPosLoyaltyAccount } from '../models/posLoyaltyAccount.model.js';
 import { LOYALTY, pointsEarnedFor, rupeeValueOf, pointsForRupees } from '../../shared/loyaltyConfig.js';
 import { FoodAdmin } from '../../../../core/admin/admin.model.js';
-import { ValidationError, NotFoundError } from '../../../../core/auth/errors.js';
+import { ValidationError, NotFoundError, ForbiddenError } from '../../../../core/auth/errors.js';
 import { createOrder } from '../../orders/services/order.service.js';
 import { calculateOrderPricing } from '../../orders/services/order-pricing.service.js';
 import { FoodOffer } from '../../admin/models/offer.model.js';
@@ -62,8 +62,11 @@ function normalizeItems(rawItems) {
         const itemId = String(raw?.itemId || raw?.id || '').trim();
         if (!itemId) throw new ValidationError('Every line needs an itemId');
         const quantity = Number(raw?.quantity);
-        if (!Number.isInteger(quantity) || quantity < 1) {
-            throw new ValidationError('Quantity must be a whole number of at least 1');
+        // A whole number, or a weight to the gram for loose produce. Whether a given product may be
+        // fractional is decided where its record is read (order-cart-items.helper).
+        const grams = quantity * 1000;
+        if (!Number.isFinite(quantity) || quantity < 0.001 || Math.abs(grams - Math.round(grams)) > 1e-6) {
+            throw new ValidationError('Quantity must be a whole number, or a weight in kg to the gram');
         }
         const discount = Number(raw?.discount) || 0;
         if (discount < 0) throw new ValidationError('A line discount cannot be negative');
@@ -311,6 +314,37 @@ function deliveryAddressOf(customer) {
  * totals strip shows this rather than a client-side sum so that tax, coupon
  * rules and clamping are never approximated twice.
  */
+/** The cashier behind a request (set by the controller from the session, never from the body). */
+const actorFields = (dto = {}) =>
+    dto._actor?.id ? { posUserId: dto._actor.id, cashierName: dto._actor.name || '' } : {};
+
+/**
+ * The rules an admin set for this cashier (Admin > POS users > Permissions). Only a POS user has an
+ * actor with permissions; the store owner does not, and is never limited here.
+ */
+const actorCan = (dto, key) => !dto?._actor?.permissions || dto._actor.permissions.includes(key);
+
+function assertActorQuoteRules(dto, items, result) {
+    const actor = dto?._actor;
+    if (!actor?.permissions) return;
+    if (dto.couponCode && !actorCan(dto, 'coupons')) {
+        throw new ForbiddenError('Your POS account is not allowed to apply coupons');
+    }
+    const flat = dto.flatDiscount && typeof dto.flatDiscount === 'object' ? dto.flatDiscount : {};
+    const flatValue = Math.max(0, Number(flat.value) || 0);
+    const lineDiscounts = items.reduce((sum, line) => sum + line.discount, 0);
+    if (!(flatValue > 0 || lineDiscounts > 0)) return;
+    if (!actorCan(dto, 'discount')) throw new ForbiddenError('Your POS account is not allowed to give discounts');
+    const cap = Number(actor.limits?.maxDiscountPercent) || 0;
+    if (cap > 0) {
+        const gross = (result.items || []).reduce((sum, l) => sum + l.price * l.quantity, 0);
+        const isPercent = String(flat.type || 'percent') === 'percent';
+        const given = lineDiscounts + (isPercent ? (gross * flatValue) / 100 : flatValue);
+        const pct = gross > 0 ? (given / gross) * 100 : 0;
+        if (pct > cap + 0.005) throw new ForbiddenError(`Your POS account can give at most ${cap}% discount on a bill`);
+    }
+}
+
 export async function quotePosOrder(restaurantId, dto = {}) {
     const restaurant = await loadRestaurant(restaurantId);
     const items = normalizeItems(dto.items);
@@ -333,6 +367,8 @@ export async function quotePosOrder(restaurantId, dto = {}) {
         },
         { skipAvailabilityCheck: true, counterSale }
     );
+
+    assertActorQuoteRules(dto, items, result);
 
     const byId = new Map(items.map((line) => [line.itemId, line]));
     return {
@@ -375,7 +411,18 @@ export async function createPosOrder(restaurantId, dto = {}) {
     const total = round2(quote.pricing?.total);
     if (!(total > 0)) throw new ValidationError('Bill total must be above zero');
 
+    const maxBill = Number(dto._actor?.limits?.maxBillAmount) || 0;
+    if (dto._actor?.permissions && maxBill > 0 && total > maxBill) {
+        throw new ForbiddenError(`Your POS account can bill at most ₹${maxBill} at a time`);
+    }
+
     const { paymentMode, tenders, paymentMethod, dueAmount, changeGiven } = resolveTenders(dto, total);
+    if (dueAmount > 0 && !actorCan(dto, 'pay_later')) {
+        throw new ForbiddenError('Your POS account is not allowed to sell on credit — the bill must be paid in full');
+    }
+    if (tenders.some((t) => t.mode === 'loyalty') && !actorCan(dto, 'loyalty')) {
+        throw new ForbiddenError('Your POS account is not allowed to redeem loyalty points');
+    }
     if (dueAmount > 0 && isWalkInPhone(customer.phone)) {
         throw new ValidationError('Pay later needs a named customer — pick one or enter a phone number');
     }
@@ -413,7 +460,8 @@ export async function createPosOrder(restaurantId, dto = {}) {
                 paymentMode,
                 tenders,
                 dueAmount,
-                changeGiven
+                changeGiven,
+                ...actorFields(dto)
             }
         });
     } catch (err) {
@@ -1208,8 +1256,10 @@ export async function openShift(restaurantId, dto = {}) {
     const shift = await FoodPosShift.create({
         restaurantId,
         shiftCode: await nextShiftCode(restaurantId),
-        cashierName: String(dto.cashierName || '').trim(),
-        openingCash: Math.max(0, Number(dto.openingCash) || 0)
+        // A signed-in POS user is the cashier; the typed name only applies to the owner's till.
+        cashierName: dto._actor?.name || String(dto.cashierName || '').trim(),
+        openingCash: Math.max(0, Number(dto.openingCash) || 0),
+        ...(dto._actor?.id ? { openedByPosUserId: dto._actor.id } : {})
     });
     return { shift: shift.toObject() };
 }
@@ -1263,6 +1313,10 @@ export async function closeShift(restaurantId, dto = {}) {
     shift.difference = difference;
     shift.closeReason = closeReason;
     shift.closeApprovedBy = closeApprovedBy;
+    if (dto._actor?.id) {
+        shift.closedByPosUserId = dto._actor.id;
+        shift.closedByName = dto._actor.name || '';
+    }
     await shift.save();
     return { shift: shift.toObject() };
 }
@@ -1286,6 +1340,12 @@ export async function recordCashMovement(restaurantId, dto = {}) {
         if (amount > available) throw new ValidationError(`Only ₹${available.toFixed(2)} is in the drawer`);
         shift.cashOut = round2((shift.cashOut || 0) + amount);
     }
+    shift.movements.push({
+        type,
+        amount,
+        at: new Date(),
+        ...(dto._actor?.id ? { posUserId: dto._actor.id, byName: dto._actor.name || '' } : {})
+    });
     await shift.save();
 
     const { cashSales, billsCount } = await computeShiftCash(restaurantId, shift.openedAt);
@@ -1409,7 +1469,8 @@ export async function issueCreditNote(restaurantId, dto = {}) {
         customerName: String(dto.customerName || '').trim(),
         sourceOrderId,
         sourceBillNo,
-        issuedBy: String(dto.issuedBy || '').trim()
+        issuedBy: dto._actor?.name || String(dto.issuedBy || '').trim(),
+        ...(dto._actor?.id ? { issuedByPosUserId: dto._actor.id } : {})
     });
     return { creditNote: note.toObject() };
 }

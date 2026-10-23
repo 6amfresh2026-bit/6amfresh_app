@@ -21,6 +21,11 @@ import PosOrderBoard from "@food/components/restaurant/pos/PosOrderBoard"
 import { PosChargesModal } from "@food/components/restaurant/pos/PosSmallModals"
 import { KEY_ACTIONS, lineDiscount, printReceipt } from "@food/components/restaurant/pos/posUtils"
 import PosOpenRegisterModal from "@food/components/restaurant/pos/PosOpenRegisterModal"
+import usePosHeartbeat from "@food/components/restaurant/pos/usePosHeartbeat"
+import usePosAccess from "@food/components/restaurant/pos/usePosAccess"
+import useWeighingScale from "@food/components/restaurant/pos/useWeighingScale"
+import PosScaleModal from "@food/components/restaurant/pos/PosScaleModal"
+import { isWeighedItem } from "@food/components/restaurant/pos/scaleParser"
 import PosCloseRegisterModal from "@food/components/restaurant/pos/PosCloseRegisterModal"
 import PosCashControlModal from "@food/components/restaurant/pos/PosCashControlModal"
 import PosCreditNoteModal from "@food/components/restaurant/pos/PosCreditNoteModal"
@@ -54,6 +59,7 @@ export default function PointOfSale({ onExit } = {}) {
   const [menuItems, setMenuItems] = useState([])
   const [menuLoading, setMenuLoading] = useState(true)
   const [restaurant, setRestaurant] = useState(null)
+  const [design, setDesign] = useState(null)  // saved receipt layout from the Bill designer
 
   // POS register (shift): opened with a float on entry, closed with a drawer
   // count on exit/logout.
@@ -135,10 +141,24 @@ export default function PointOfSale({ onExit } = {}) {
     }
   }, [])
 
+  // Tells the server this store's till is open, which is what the admin's "POS online" shows.
+  usePosHeartbeat(api.posHeartbeat)
+  const { can } = usePosAccess(api.posMe, !isAdmin)
+  const scale = useWeighingScale()
+  // Right-hand tiles that need a permission; without it the tile says so instead of opening.
+  const TILE_PERMISSION = { holds: ["hold_bills", "hold bills"], orders: ["view_bills", "see bill history"], creditNotes: ["credit_notes", "use credit notes"], cashControl: ["cash_movement", "move cash"] }
+  const openTile = (name) => {
+    const need = TILE_PERMISSION[name]
+    if (need && !can(need[0])) { toast.error(`Your POS account is not allowed to ${need[1]}`); return }
+    setModal(name)
+  }
+
   useEffect(() => {
     loadMenu()
     loadLastBill()
     api.getCurrentRestaurant().then((res) => setRestaurant(extractRestaurant(res))).catch(() => {})
+    // The store's saved receipt layout, so every bill prints in the designed style.
+    api.getBillDesign?.().then((res) => setDesign(res?.data?.data?.config || null)).catch(() => {})
     // Is a register already open? If not, we prompt to open one.
     api.posCurrentShift()
       .then((res) => setShift(res?.data?.data?.shift || null))
@@ -307,8 +327,20 @@ export default function PointOfSale({ onExit } = {}) {
       toast.error(`${item.name} is out of stock`)
       return
     }
+    // A weighed product takes the scale's steady reading as its quantity. With no scale connected it
+    // goes on at 1 and the cashier types the weight (or a keyboard-type scale does).
+    if (isWeighedItem(item) && (scale.status === "connected" || scale.status === "demo")) {
+      const kg = scale.weight()
+      if (!kg) {
+        toast.error("Put the item on the scale and wait for a steady reading")
+        return
+      }
+      cart.addItem(item, kg)
+      toast.success(`${item.name}: ${kg.toFixed(3)} kg`)
+      return
+    }
     cart.addItem(item)
-  }, [cart])
+  }, [cart, scale])
 
   const pay = useCallback(async (mode, { print = false, tenders } = {}) => {
     if (!cart.lines.length || busy) return
@@ -330,7 +362,7 @@ export default function PointOfSale({ onExit } = {}) {
       const receipt = res?.data?.data?.receipt
       toast.success(`Bill ${receipt?.billNo || ""} saved · ₹${receipt?.pricing?.total ?? ""}`)
       setLastBill(receipt || null)
-      if ((print || autoPrint) && receipt) printReceipt(receipt)
+      if ((print || autoPrint) && receipt) printReceipt(receipt, { design })
       const customerId = customer?.id
       resetBill()
       setModal(null)
@@ -340,7 +372,7 @@ export default function PointOfSale({ onExit } = {}) {
     } finally {
       setBusy(false)
     }
-  }, [cart.lines.length, busy, customer, billInput, autoPrint, resetBill, loadSummary, loadLoyalty])
+  }, [cart.lines.length, busy, customer, billInput, autoPrint, resetBill, loadSummary, loadLoyalty, design])
 
   const hold = useCallback(async (print) => {
     if (!cart.lines.length || busy) return
@@ -351,7 +383,7 @@ export default function PointOfSale({ onExit } = {}) {
       // customer's hand and the totals strip they just watched agree.
       const res = await api.posHold(billInput())
       const { held, receipt } = res?.data?.data || {}
-      if (print && receipt) printReceipt(receipt, { title: "Hold Bill", held: true })
+      if (print && receipt) printReceipt(receipt, { title: "Hold Bill", held: true, design })
       toast.success(held?.holdNo ? `Bill held as ${held.holdNo}` : "Bill held")
       resetBill()
     } catch (err) {
@@ -359,7 +391,7 @@ export default function PointOfSale({ onExit } = {}) {
     } finally {
       setBusy(false)
     }
-  }, [cart.lines.length, busy, billInput, resetBill])
+  }, [cart.lines.length, busy, billInput, resetBill, design])
 
   const resumeHeld = useCallback((held) => {
     if (!held) return
@@ -378,8 +410,8 @@ export default function PointOfSale({ onExit } = {}) {
 
   const printLast = useCallback(() => {
     if (!lastBill) { toast.error("No bill to print yet"); return }
-    if (!printReceipt(lastBill)) toast.error("The browser blocked the print window — allow pop-ups for this site")
-  }, [lastBill])
+    if (!printReceipt(lastBill, { design })) toast.error("The browser blocked the print window — allow pop-ups for this site")
+  }, [lastBill, design])
 
   const scanInvoice = useCallback(async (ref) => {
     const key = String(ref || "").trim()
@@ -387,12 +419,12 @@ export default function PointOfSale({ onExit } = {}) {
     try {
       const res = await api.posGetBill(key)
       const receipt = res?.data?.data
-      if (receipt) { setLastBill(receipt); printReceipt(receipt) }
+      if (receipt) { setLastBill(receipt); printReceipt(receipt, { design }) }
       setInvoiceRef("")
     } catch (err) {
       toast.error(errMsg(err, "No bill with that number"))
     }
-  }, [])
+  }, [design])
 
   // The F-keys printed on the buttons. Off while a dialog is open so Enter/F-keys
   // inside it do not fire a sale behind it.
@@ -409,7 +441,7 @@ export default function PointOfSale({ onExit } = {}) {
   }, [modal, hold, pay])
 
   const couponApplied = Boolean(couponCode) && Boolean(quote?.pricing?.appliedCoupon)
-  const disabled = cart.lines.length === 0 || busy
+  const disabled = cart.lines.length === 0 || busy || !can("sell")
 
   // Admin can switch POS off for this store — the backend already blocks
   // quote/create, so show a clear notice instead of a broken screen.
@@ -439,6 +471,8 @@ export default function PointOfSale({ onExit } = {}) {
         autoPrint={autoPrint}
         onAutoPrint={setAutoPrint}
         onPrintLast={printLast}
+        onScale={() => setModal("scale")}
+        scaleStatus={scale.status}
         onSync={loadMenu}
         syncing={menuLoading}
         onClearBill={resetBill}
@@ -507,11 +541,11 @@ export default function PointOfSale({ onExit } = {}) {
             onEarnLoyalty={setEarnLoyalty}
           />
 
-          <PosPayButtons disabled={disabled} onPay={pay} onHold={hold} onCoupon={() => setModal("coupon")} hasCustomer={Boolean(customer)} />
+          <PosPayButtons disabled={disabled} onPay={pay} onHold={hold} onCoupon={() => setModal("coupon")} hasCustomer={Boolean(customer)} can={can} />
         </main>
 
         <PosRightRail
-          onOpen={setModal}
+          onOpen={openTile}
           summary={summary}
           customer={customer}
           lastBill={lastBill}
@@ -605,6 +639,8 @@ export default function PointOfSale({ onExit } = {}) {
       ) : null}
 
       {/* Cash control — pay cash in / out of the drawer during the shift. */}
+      {modal === "scale" ? <PosScaleModal scale={scale} onClose={() => setModal(null)} /> : null}
+
       {modal === "cashControl" ? (
         <PosCashControlModal
           summary={cashCtrlSummary}

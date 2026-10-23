@@ -1,10 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from "react"
-import { ChevronDown, Download, Filter, Info, Loader2, Search, X } from "lucide-react"
+import { useNavigate, useSearchParams } from "react-router-dom"
+import { ChevronDown, Download, Filter, Info, Loader2, Search, X, Package, ArrowRight, Plus, Minus, Equal, Upload, Columns3, ArrowLeftRight, SlidersHorizontal, Zap, FileSpreadsheet, FileText, History as HistoryIcon, Pencil } from "lucide-react"
 import { toast } from "sonner"
+import BarcodeScannerModal from "@food/components/restaurant/pos/BarcodeScannerModal"
 
 import { adminAPI } from "@food/api"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@food/components/ui/dialog"
 import { canCurrentAdminAction } from "@food/utils/adminRbac"
+import BulkImportModal from "./BulkImportModal"
 
 /**
  * Items > Stock — a replica of the reference ERP's stock register.
@@ -29,6 +32,10 @@ const COLUMNS = [
   { key: "unitName", label: "Unit", info: "Primary selling unit of the product" },
   { key: "totalAvailableQty", label: "Total Available Qty", numeric: true },
   { key: "testingQty", label: "Testing Qty", numeric: true },
+  { key: "purchasePrice", label: "Purchase cost", numeric: true },
+  { key: "sellingPrice", label: "Selling price", numeric: true },
+  { key: "margin", label: "Margin %", numeric: true },
+  { key: "stockStatus", label: "Status" },
 ]
 
 const TYPE_LABEL = { opening: "Opening", sale: "Sale", sale_return: "Sale Return", adjustment: "Adjustment", verification: "Verification", purchase: "Purchase" }
@@ -52,6 +59,9 @@ const pageStrip = (page, totalPages) => {
 export default function Stocks() {
   const [rows, setRows] = useState([])
   const [totals, setTotals] = useState({ totalAvailableQty: 0, testingQty: 0 })
+  const [summary, setSummary] = useState({ products: 0, drafts: 0, lowStock: 0, outOfStock: 0, stockValue: 0, subscribable: 0 })
+  const [bulkOpen, setBulkOpen] = useState(false)
+  const [scanOpen, setScanOpen] = useState(false)
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(true)
   const [page, setPage] = useState(1)
@@ -78,9 +88,25 @@ export default function Stocks() {
   const [moves, setMoves] = useState([])
   const [movesLoading, setMovesLoading] = useState(false)
 
+  const navigate = useNavigate()
+  const [minDraft, setMinDraft] = useState({})   // inline min-stock edits, keyed by id
+  const [bulkMin, setBulkMin] = useState("")      // "Set for shown" value
+  const [subFilter, setSubFilter] = useState("")  // "", "yes", "no" — client-side
+
   const canEdit = canCurrentAdminAction("edit", "/admin/store/stocks")
   const totalPages = Math.max(1, Math.ceil(total / pageSize))
   const cols = useMemo(() => COLUMNS.filter((c) => visible.has(c.key)), [visible])
+
+  // Inventory-control sidebar links deep-link into this page: ?view=import opens
+  // the bulk importer, ?view=transfers opens the store comparison. Others simply
+  // land here. Runs once per view value.
+  const [searchParams] = useSearchParams()
+  useEffect(() => {
+    const view = searchParams.get("view")
+    if (view === "import") setBulkOpen(true)
+    else if (view === "scan") setScanOpen(true)
+    else if (view === "transfers") setCompare({ picking: new Set(), data: [], loading: false })
+  }, [searchParams])
 
   useEffect(() => {
     const id = window.setTimeout(() => { setDebounced(search.trim()); setPage(1) }, 300)
@@ -120,6 +146,7 @@ export default function Stocks() {
       setRows(d.stocks || [])
       setTotal(Number(d.total) || 0)
       setTotals(d.totals || { totalAvailableQty: 0, testingQty: 0 })
+      setSummary(d.summary || { products: 0, drafts: 0, lowStock: 0, outOfStock: 0, stockValue: 0, subscribable: 0 })
     } catch (error) {
       toast.error(error?.response?.data?.message || "Failed to load stock")
     } finally {
@@ -133,6 +160,20 @@ export default function Stocks() {
     setMenuFor(null)
     setAdjForm({ mode: row.stockQty === null ? "set" : "add", qty: "", reason: REASONS[0], note: "" })
     setAdjust(row)
+  }
+
+  // Scan & update stock: a scanned barcode finds its product and opens the stock dialog for it.
+  const onScanCode = async (code) => {
+    try {
+      const res = await adminAPI.getStocks({ search: code, limit: 5 })
+      const found = (res?.data?.data?.stocks || []).filter((r) => String(r.barcode || "") === String(code) || String(r.itemCode || "") === String(code))
+      if (found.length !== 1) return { ok: false, message: found.length ? `More than one product matches ${code}` : `No product with barcode ${code}` }
+      setScanOpen(false)
+      openAdjust(found[0])
+      return { ok: true, message: `Found ${found[0].name}` }
+    } catch {
+      return { ok: false, message: "Could not look that barcode up" }
+    }
   }
 
   const submitAdjust = async (e) => {
@@ -178,6 +219,46 @@ export default function Stocks() {
     const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = `stock-${new Date().toISOString().slice(0, 10)}.csv`; a.click(); URL.revokeObjectURL(a.href)
   }
 
+  const exportExcel = () => {
+    setExportMenu(false)
+    if (!rows.length) return toast.error("Nothing to export")
+    const esc = (v) => String(v ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;")
+    const head = cols.filter((c) => c.key !== "srNo")
+    const th = head.map((c) => `<th>${esc(c.label)}</th>`).join("")
+    const trs = rows.map((r) => `<tr>${head.map((c) => `<td>${esc(c.key === "totalAvailableQty" && r.stockQty === null ? "" : c.numeric ? num(r[c.key]) : r[c.key] ?? "")}</td>`).join("")}</tr>`).join("")
+    const html = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel"><head><meta charset="utf-8"></head><body><table border="1">${`<tr>${th}</tr>`}${trs}</table></body></html>`
+    const blob = new Blob([html], { type: "application/vnd.ms-excel" })
+    const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = `inventory-${new Date().toISOString().slice(0, 10)}.xls`; a.click(); URL.revokeObjectURL(a.href)
+  }
+
+  const minVal = (row) => (row.id in minDraft ? minDraft[row.id] : (row.lowStockThreshold ?? ""))
+  const saveMinStock = async (row) => {
+    if (!(row.id in minDraft)) return
+    const value = minDraft[row.id]
+    if (String(value) === String(row.lowStockThreshold ?? "")) { setMinDraft((d) => { const n = { ...d }; delete n[row.id]; return n }); return }
+    try {
+      const res = await adminAPI.setStockMeta({ itemId: row.id, minStock: value })
+      const u = res?.data?.data || {}
+      setRows((list) => list.map((it) => it.id === row.id ? { ...it, lowStockThreshold: u.lowStockThreshold } : it))
+      setMinDraft((d) => { const n = { ...d }; delete n[row.id]; return n })
+    } catch (e) { toast.error(e?.response?.data?.message || "Could not save min stock") }
+  }
+  const toggleSub = async (row) => {
+    const next = !row.subscriptionEnabled
+    setRows((list) => list.map((it) => it.id === row.id ? { ...it, subscriptionEnabled: next } : it))
+    try { await adminAPI.setStockMeta({ itemId: row.id, subscriptionEnabled: next }) }
+    catch (e) { toast.error("Could not update subscription"); setRows((list) => list.map((it) => it.id === row.id ? { ...it, subscriptionEnabled: !next } : it)) }
+  }
+  const setForShown = async () => {
+    if (bulkMin === "" || Number(bulkMin) < 0) return toast.error("Enter a min stock first")
+    const v = Number(bulkMin)
+    try {
+      await Promise.all(rows.map((r) => adminAPI.setStockMeta({ itemId: r.id, minStock: v })))
+      setRows((list) => list.map((it) => ({ ...it, lowStockThreshold: v })))
+      toast.success(`Min stock set to ${v} for ${rows.length} shown`)
+    } catch { toast.error("Some products could not be updated") }
+  }
+
   const toggleCompareStore = (id) =>
     setCompare((c) => {
       const picking = new Set(c?.picking || [])
@@ -215,152 +296,162 @@ export default function Stocks() {
     // shelf that was never being counted. The movement table already says "—"
     // for an unknown quantity; say it here too.
     if (c.key === "totalAvailableQty" && row.stockQty === null) return <span className="text-neutral-400" title="Not tracked">—</span>
+    if (c.key === "purchasePrice" || c.key === "sellingPrice") return row[c.key] == null ? <span className="text-neutral-400">—</span> : `₹${Number(row[c.key]).toLocaleString("en-IN")}`
+    if (c.key === "margin") return row.margin == null ? <span className="text-neutral-400">—</span> : <span className={row.margin < 0 ? "font-medium text-red-600" : row.margin < 10 ? "font-medium text-amber-600" : "font-medium text-emerald-600"}>{row.margin}%</span>
+    if (c.key === "stockStatus") return <StatusBadge status={row.status} available={row.isAvailable} />
     if (c.numeric) return num(row[c.key])
     return row[c.key] || ""
   }
 
+  // Subscription filter is client-side over the current page.
+  const shownRows = subFilter ? rows.filter((r) => (subFilter === "yes" ? r.subscriptionEnabled : !r.subscriptionEnabled)) : rows
+
   return (
     <div className="p-4 sm:p-6">
-      <div className="mb-4 flex items-center gap-2 text-lg">
-        <span className="font-semibold text-neutral-900">Stock</span>
-        <span className="text-neutral-300">|</span>
-        <span className="text-neutral-400">⌂</span>
+      <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="text-xl font-bold text-neutral-900">Inventory</h1>
+          <p className="text-sm text-neutral-500">Create and manage products · {new Date().toLocaleDateString("en-IN", { weekday: "long", day: "numeric", month: "long" })}</p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <button type="button" onClick={exportCsv} className="inline-flex h-9 items-center gap-1.5 rounded-full border border-neutral-300 bg-white px-3 text-sm font-medium text-neutral-700 hover:border-emerald-400 hover:text-emerald-700"><FileText className="h-4 w-4" /> CSV</button>
+          <button type="button" onClick={exportExcel} className="inline-flex h-9 items-center gap-1.5 rounded-full border border-neutral-300 bg-white px-3 text-sm font-medium text-neutral-700 hover:border-emerald-400 hover:text-emerald-700"><FileSpreadsheet className="h-4 w-4" /> Excel</button>
+          <button type="button" onClick={() => navigate("/admin/store/products/new")} className="inline-flex h-9 items-center gap-1.5 rounded-full bg-emerald-600 px-4 text-sm font-semibold text-white hover:bg-emerald-700"><Plus className="h-4 w-4" /> New product</button>
+        </div>
       </div>
 
-      <div className="rounded-md border border-neutral-200 bg-white p-4 shadow-sm">
-        <div className="mb-4 flex flex-wrap items-center gap-2">
-          {/* Store-wise: pick a store to manage just its inventory. */}
-          <div className="flex items-center gap-2">
-            <span className="text-sm font-medium text-neutral-600">Store</span>
-            <select
-              value={applied.restaurantId}
-              onChange={(e) => selectStore(e.target.value)}
-              className="h-9 min-w-[12rem] rounded border border-neutral-300 bg-white px-2 text-sm font-medium outline-none focus:border-sky-500"
-            >
-              <option value="">All stores</option>
-              {lookups.restaurants.map((r) => (
-                <option key={r._id || r.id} value={r._id || r.id}>{r.restaurantName || r.name}</option>
-              ))}
-            </select>
-            <button type="button" onClick={() => setCompare({ picking: new Set(), data: [], loading: false })} className="inline-flex h-9 items-center gap-1.5 rounded border border-sky-500 px-3 text-sm font-medium text-sky-600 hover:bg-sky-50">
-              Compare stores
-            </button>
-          </div>
-          <div className="relative">
-            <button type="button" onClick={() => setColsOpen((v) => !v)} className="inline-flex h-9 items-center gap-2 rounded bg-sky-500 px-3 text-sm font-medium text-white hover:bg-sky-600">
-              Columns <ChevronDown className="h-3.5 w-3.5" />
-            </button>
-            {colsOpen && (
-              <div className="absolute z-20 mt-1 w-60 rounded border border-neutral-200 bg-white py-1 text-sm shadow-lg">
-                {COLUMNS.map((c) => (
-                  <label key={c.key} className={`flex items-center gap-2 px-3 py-1.5 ${c.always ? "opacity-60" : "hover:bg-neutral-50"}`}>
-                    <input
-                      type="checkbox"
-                      disabled={c.always}
-                      checked={visible.has(c.key)}
-                      onChange={() => setVisible((s) => { const n = new Set(s); n.has(c.key) ? n.delete(c.key) : n.add(c.key); return n })}
-                      className="h-4 w-4 rounded border-neutral-300 accent-sky-500"
-                    />
-                    {c.label}
-                  </label>
-                ))}
-              </div>
-            )}
-          </div>
+      {/* KPI tiles — summarise the current store view */}
+      <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+        <Kpi label="Products" value={summary.products} sub={`${summary.drafts} draft${summary.drafts === 1 ? "" : "s"}`} />
+        <Kpi label="Low stock" value={summary.lowStock} tone={summary.lowStock > 0 ? "amber" : "default"} />
+        <Kpi label="Out of stock" value={summary.outOfStock} tone={summary.outOfStock > 0 ? "red" : "default"} />
+        <Kpi label="Stock value (at cost)" value={`₹${Number(summary.stockValue || 0).toLocaleString("en-IN")}`} />
+        <Kpi label="Subscribable" value={summary.subscribable} tone="green" />
+      </div>
 
-          <div className="ml-auto flex flex-wrap items-center gap-2">
-            <div className="relative">
-              <button type="button" onClick={() => setExportMenu((v) => !v)} className="inline-flex h-9 items-center gap-1 rounded bg-sky-500 px-3 text-sm font-medium text-white hover:bg-sky-600" aria-label="Export">
-                <Download className="h-4 w-4" /> <ChevronDown className="h-3.5 w-3.5" />
-              </button>
-              {exportMenu && <div className="absolute right-0 z-20 mt-1 w-40 rounded border border-neutral-200 bg-white py-1 text-sm shadow-lg"><button type="button" onClick={exportCsv} className="block w-full px-3 py-1.5 text-left hover:bg-neutral-50">This page (CSV)</button></div>}
-            </div>
-            <select value={pageSize} onChange={(e) => { setPageSize(Number(e.target.value)); setPage(1) }} className="h-9 rounded border border-neutral-300 bg-white px-2 text-sm">
-              {[10, 25, 50, 100].map((n) => <option key={n} value={n}>{n}</option>)}
-            </select>
-            <button type="button" onClick={() => setFilterOpen((v) => !v)} className="inline-flex h-9 items-center gap-2 rounded bg-sky-500 px-3 text-sm font-medium text-white hover:bg-sky-600"><Filter className="h-4 w-4" /> Filter{nFilters ? ` (${nFilters})` : ""}</button>
-            <div className="relative">
-              <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search List..." className="h-9 w-52 rounded border border-neutral-300 bg-white pl-3 pr-8 text-sm outline-none focus:border-sky-500" />
-              <Search className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-400" />
-            </div>
+      {/* Stock view — all stores combined, one shop, or a side-by-side compare */}
+      <div className="mb-4 rounded-xl border border-neutral-200 bg-white p-3 shadow-sm">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="mr-1 text-xs font-semibold uppercase tracking-wide text-neutral-400">Stock view</span>
+          <button type="button" onClick={() => selectStore("")} className={`h-9 rounded-full px-3 text-sm font-medium ${applied.restaurantId === "" ? "bg-emerald-600 text-white" : "border border-neutral-300 text-neutral-700 hover:border-emerald-400 hover:text-emerald-700"}`}>All stores · combined</button>
+          {lookups.restaurants.map((r) => {
+            const id = String(r._id || r.id)
+            return <button key={id} type="button" onClick={() => selectStore(id)} className={`h-9 rounded-full px-3 text-sm font-medium ${applied.restaurantId === id ? "bg-emerald-600 text-white" : "border border-neutral-300 text-neutral-700 hover:border-emerald-400 hover:text-emerald-700"}`}>{r.restaurantName || r.name}</button>
+          })}
+          <button type="button" onClick={() => setCompare({ picking: new Set(), data: [], loading: false })} className="inline-flex h-9 items-center gap-1.5 rounded-full border border-neutral-300 px-3 text-sm font-medium text-neutral-700 hover:border-emerald-400 hover:text-emerald-700"><ArrowLeftRight className="h-4 w-4" /> Compare stores</button>
+        </div>
+        <p className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-700">
+          {applied.restaurantId ? "Showing one store" : "All stores combined"} · stock, value and low / out counts {applied.restaurantId ? "for this store" : "add up every store you can access"}.
+        </p>
+      </div>
+
+      <div className="rounded-xl border border-neutral-200 bg-white p-3 shadow-sm">
+        {/* Toolbar */}
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="relative min-w-[220px] flex-1">
+            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-400" />
+            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Product, brand, SKU" className="h-9 w-full rounded-lg border border-neutral-300 bg-white pl-8 pr-3 text-sm outline-none focus:border-emerald-400 focus:ring-2 focus:ring-emerald-100" />
           </div>
+          <select value={applied.categoryId} onChange={(e) => { setApplied((a) => ({ ...a, categoryId: e.target.value })); setFilters((f) => ({ ...f, categoryId: e.target.value })); setPage(1) }} className="h-9 rounded-lg border border-neutral-300 bg-white px-2 text-sm text-neutral-700 outline-none focus:border-emerald-400">
+            <option value="">All categories</option>
+            {lookups.categories.map((c) => <option key={c._id || c.id} value={c._id || c.id}>{c.name}</option>)}
+          </select>
+          <select value={subFilter} onChange={(e) => setSubFilter(e.target.value)} className="h-9 rounded-lg border border-neutral-300 bg-white px-2 text-sm text-neutral-700 outline-none focus:border-emerald-400">
+            <option value="">Subscription: any</option>
+            <option value="yes">Subscribable</option>
+            <option value="no">Not subscribable</option>
+          </select>
+          <select value={applied.status} onChange={(e) => { setApplied((a) => ({ ...a, status: e.target.value })); setFilters((f) => ({ ...f, status: e.target.value })); setPage(1) }} className="h-9 rounded-lg border border-neutral-300 bg-white px-2 text-sm text-neutral-700 outline-none focus:border-emerald-400">
+            <option value="">Any stock</option>
+            <option value="in_stock">In stock</option>
+            <option value="low">Low stock</option>
+            <option value="out">Out of stock</option>
+            <option value="untracked">Untracked</option>
+          </select>
+          <input type="number" min={0} value={bulkMin} onChange={(e) => setBulkMin(e.target.value)} placeholder="Min stock" className="h-9 w-24 rounded-lg border border-neutral-300 bg-white px-2 text-sm outline-none focus:border-emerald-400" />
+          <button type="button" onClick={setForShown} className="h-9 rounded-lg border border-neutral-300 bg-white px-3 text-sm font-medium text-neutral-700 hover:border-emerald-400 hover:text-emerald-700">Set for shown</button>
+          <button type="button" onClick={() => setBulkOpen(true)} className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-emerald-500 bg-white px-3 text-sm font-medium text-emerald-700 hover:bg-emerald-50"><Upload className="h-4 w-4" /> Bulk import</button>
+          <select value={pageSize} onChange={(e) => { setPageSize(Number(e.target.value)); setPage(1) }} className="h-9 rounded-lg border border-neutral-300 bg-white px-2 text-sm text-neutral-700 outline-none focus:border-emerald-400">
+            {[10, 25, 50, 100].map((n) => <option key={n} value={n}>{n} / page</option>)}
+          </select>
         </div>
 
-        {filterOpen && (
-          <div className="mb-3 rounded-lg border border-neutral-200 bg-neutral-50 p-3">
-            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
-              <select value={filters.restaurantId} onChange={(e) => setFilters((f) => ({ ...f, restaurantId: e.target.value }))} className="w-full rounded border border-neutral-300 bg-white px-2 py-1.5 text-sm"><option value="">All Stores</option>{lookups.restaurants.map((r) => <option key={r._id || r.id} value={r._id || r.id}>{r.restaurantName || r.name}</option>)}</select>
-              <select value={filters.departmentId} onChange={(e) => setFilters((f) => ({ ...f, departmentId: e.target.value }))} className="w-full rounded border border-neutral-300 bg-white px-2 py-1.5 text-sm"><option value="">All Departments</option>{lookups.departments.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}</select>
-              <select value={filters.categoryId} onChange={(e) => setFilters((f) => ({ ...f, categoryId: e.target.value }))} className="w-full rounded border border-neutral-300 bg-white px-2 py-1.5 text-sm"><option value="">All Categories</option>{lookups.categories.map((c) => <option key={c._id || c.id} value={c._id || c.id}>{c.name}</option>)}</select>
-              <select value={filters.brandId} onChange={(e) => setFilters((f) => ({ ...f, brandId: e.target.value }))} className="w-full rounded border border-neutral-300 bg-white px-2 py-1.5 text-sm"><option value="">All Brands</option>{lookups.brands.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}</select>
-              <select value={filters.unitId} onChange={(e) => setFilters((f) => ({ ...f, unitId: e.target.value }))} className="w-full rounded border border-neutral-300 bg-white px-2 py-1.5 text-sm"><option value="">All Units</option>{lookups.units.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}</select>
-              <select value={filters.status} onChange={(e) => setFilters((f) => ({ ...f, status: e.target.value }))} className="w-full rounded border border-neutral-300 bg-white px-2 py-1.5 text-sm"><option value="">Any Status</option><option value="in_stock">In Stock</option><option value="low">Low Stock</option><option value="out">Out Of Stock</option><option value="untracked">Untracked</option></select>
-            </div>
-            <div className="mt-2 flex justify-end gap-2">
-              <button type="button" onClick={clearFilters} className="rounded bg-neutral-200 px-3 py-1.5 text-sm">Clear</button>
-              <button type="button" onClick={applyFilters} className="rounded bg-sky-500 px-3 py-1.5 text-sm text-white">Apply</button>
-            </div>
-          </div>
-        )}
-
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[1100px] border border-neutral-200 text-sm">
-            <thead className="bg-neutral-100 text-left text-neutral-800">
-              <tr>
-                {cols.map((c) => (
-                  <th key={c.key} className={`border-r border-neutral-200 px-3 py-3 font-semibold last:border-r-0 ${c.numeric ? "text-right" : ""}`}>
-                    <span className="inline-flex items-center gap-1">{c.label}{c.info && <Info className="h-3.5 w-3.5 text-sky-500" aria-label={c.info} />}</span>
-                  </th>
-                ))}
-                <th className="px-3 py-3 font-semibold">Actions</th>
+        {/* Table */}
+        <div className="mt-3 overflow-x-auto">
+          <table className="w-full min-w-[1180px] text-sm">
+            <thead>
+              <tr className="border-b border-neutral-200 text-left text-xs uppercase tracking-wide text-neutral-500">
+                <th className="py-3 pr-4 font-medium">Product</th>
+                <th className="py-3 pr-4 font-medium">Category</th>
+                <th className="py-3 pr-4 font-medium">Stock</th>
+                <th className="py-3 pr-4 font-medium">Min stock</th>
+                <th className="py-3 pr-4 font-medium">Purchase cost</th>
+                <th className="py-3 pr-4 font-medium">Selling price</th>
+                <th className="py-3 pr-4 font-medium">Margin %</th>
+                <th className="py-3 pr-4 font-medium">Ordering</th>
+                <th className="py-3 pr-4 font-medium">Subscription</th>
+                <th className="py-3 pr-4 font-medium">Status</th>
+                <th className="py-3 pr-2 text-right font-medium" />
               </tr>
             </thead>
             <tbody>
               {loading ? (
-                <tr><td colSpan={cols.length + 1} className="px-3 py-14 text-center"><Loader2 className="mx-auto h-6 w-6 animate-spin text-neutral-400" /></td></tr>
-              ) : rows.length === 0 ? (
-                <tr><td colSpan={cols.length + 1} className="px-3 py-14 text-center text-neutral-500">No products found.</td></tr>
-              ) : rows.map((row, i) => (
-                <tr key={row.id} className="border-t border-neutral-200">
-                  {cols.map((c) => (
-                    <td key={c.key} className={`border-r border-neutral-200 px-3 py-3 text-neutral-700 last:border-r-0 ${c.numeric ? "text-right" : ""}`}>{cell(row, c, i)}</td>
-                  ))}
-                  <td className="relative px-3 py-3">
-                    <button type="button" onClick={() => setMenuFor(menuFor === row.id ? null : row.id)} className="px-2 text-lg leading-none text-neutral-500 hover:text-neutral-800" aria-label="Actions">···</button>
-                    {menuFor === row.id && (
-                      <div className="absolute right-2 z-10 mt-1 w-36 rounded border border-neutral-200 bg-white py-1 text-sm shadow-lg">
-                        {canEdit && <button type="button" onClick={() => openAdjust(row)} className="block w-full px-3 py-1.5 text-left hover:bg-neutral-50">Adjust Stock</button>}
-                        <button type="button" onClick={() => openHistory(row)} className="block w-full px-3 py-1.5 text-left hover:bg-neutral-50">History</button>
+                <tr><td colSpan={11} className="py-14 text-center"><Loader2 className="mx-auto h-6 w-6 animate-spin text-neutral-300" /></td></tr>
+              ) : shownRows.length === 0 ? (
+                <tr><td colSpan={11} className="py-14 text-center text-neutral-500">No products found.</td></tr>
+              ) : shownRows.map((row) => (
+                <tr key={row.id} className="border-b border-neutral-100 align-middle hover:bg-neutral-50">
+                  <td className="py-3 pr-4">
+                    <div className="flex items-center gap-2.5">
+                      <div className="h-9 w-9 shrink-0 overflow-hidden rounded-lg border border-neutral-200 bg-neutral-100">
+                        {row.image ? <img src={row.image} alt="" className="h-full w-full object-cover" /> : <div className="flex h-full w-full items-center justify-center text-neutral-300"><Package className="h-4 w-4" /></div>}
                       </div>
-                    )}
+                      <div className="min-w-0">
+                        <div className="truncate font-semibold text-neutral-900">{row.name}</div>
+                        <div className="text-xs text-neutral-400">{[row.unitName, row.itemCode].filter(Boolean).join(" · ") || "—"}</div>
+                      </div>
+                    </div>
+                  </td>
+                  <td className="py-3 pr-4">
+                    <div className="text-neutral-700">{row.categoryName || "—"}</div>
+                    {row.subCategoryName && <div className="text-xs text-neutral-400">{row.subCategoryName}</div>}
+                  </td>
+                  <td className="py-3 pr-4 font-semibold text-neutral-900">{row.stockQty === null ? <span className="text-neutral-400">—</span> : Number(row.stockQty)}</td>
+                  <td className="py-3 pr-4">
+                    <input type="number" min={0} value={minVal(row)} onChange={(e) => setMinDraft((d) => ({ ...d, [row.id]: e.target.value }))} onBlur={() => saveMinStock(row)}
+                      className="h-9 w-20 rounded-lg border border-neutral-300 bg-white px-2 text-sm text-neutral-900 outline-none focus:border-emerald-400 focus:ring-2 focus:ring-emerald-100" />
+                  </td>
+                  <td className="py-3 pr-4 text-neutral-700">{row.purchasePrice == null ? <span className="text-neutral-400">—</span> : `₹${Number(row.purchasePrice).toLocaleString("en-IN")}`}</td>
+                  <td className="py-3 pr-4 font-medium text-neutral-800">{row.sellingPrice == null ? <span className="text-neutral-400">—</span> : `₹${Number(row.sellingPrice).toLocaleString("en-IN")}`}</td>
+                  <td className="py-3 pr-4">{row.margin == null ? <span className="text-neutral-400">—</span> : <span className={`font-semibold ${row.margin < 0 ? "text-red-600" : row.margin < 10 ? "text-amber-600" : "text-emerald-600"}`}>{row.margin}%</span>}</td>
+                  <td className="py-3 pr-4">
+                    <span className="inline-flex items-center gap-1 text-xs font-medium text-amber-600"><Zap className="h-3.5 w-3.5" /> Instant</span>
+                    <div className="text-[11px] text-neutral-400">cut-off 22:00</div>
+                  </td>
+                  <td className="py-3 pr-4">
+                    <button type="button" onClick={() => toggleSub(row)} className={`rounded-full px-2.5 py-1 text-xs font-semibold ${row.subscriptionEnabled ? "bg-emerald-100 text-emerald-700" : "bg-neutral-100 text-neutral-500"}`}>{row.subscriptionEnabled ? "Yes" : "No"}</button>
+                  </td>
+                  <td className="py-3 pr-4"><StatusBadge status={row.status} available={row.isAvailable} /></td>
+                  <td className="py-3 pr-2">
+                    <div className="flex items-center justify-end gap-1.5">
+                      <button type="button" onClick={() => openHistory(row)} className="inline-flex items-center gap-1 rounded-full border border-neutral-300 px-2.5 py-1 text-xs font-medium text-neutral-700 hover:border-emerald-400 hover:text-emerald-700"><HistoryIcon className="h-3.5 w-3.5" /> Ledger</button>
+                      {canEdit && <button type="button" onClick={() => openAdjust(row)} className="inline-flex items-center gap-1 rounded-full border border-emerald-500 px-2.5 py-1 text-xs font-medium text-emerald-700 hover:bg-emerald-50"><Plus className="h-3.5 w-3.5" /> Stock</button>}
+                      <button type="button" onClick={() => navigate(`/admin/store/products/${row.id}/edit`)} className="inline-flex items-center gap-1 rounded-full border border-neutral-300 px-2.5 py-1 text-xs font-medium text-neutral-700 hover:border-emerald-400 hover:text-emerald-700"><Pencil className="h-3.5 w-3.5" /> Edit</button>
+                    </div>
                   </td>
                 </tr>
               ))}
             </tbody>
-            {!loading && rows.length > 0 && (
-              <tfoot>
-                <tr className="border-t-2 border-neutral-300 bg-neutral-100 font-semibold text-neutral-800">
-                  {cols.map((c, idx) => (
-                    <td key={c.key} className={`border-r border-neutral-200 px-3 py-3 last:border-r-0 ${c.numeric ? "text-right" : ""}`}>
-                      {c.key === "totalAvailableQty" ? num(totals.totalAvailableQty)
-                        : c.key === "testingQty" ? num(totals.testingQty)
-                        : idx === 1 || (idx === 0 && cols.length === 1) ? "Total" : ""}
-                    </td>
-                  ))}
-                  <td className="px-3 py-3" />
-                </tr>
-              </tfoot>
-            )}
           </table>
         </div>
 
-        <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-sm text-neutral-600">
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-neutral-100 pt-3 text-sm text-neutral-600">
           <span>Showing {rows.length ? (page - 1) * pageSize + 1 : 0} to {(page - 1) * pageSize + rows.length} of {total.toLocaleString("en-IN")} entries</span>
           <div className="flex items-center gap-1">
             <button type="button" disabled={page <= 1} onClick={() => setPage((p) => p - 1)} className="rounded border border-neutral-300 px-2.5 py-1 disabled:opacity-40">‹</button>
             {pageStrip(page, totalPages).map((n, i) =>
               n === "…" ? <span key={`e${i}`} className="px-1 text-neutral-400">…</span> : (
-                <button key={n} type="button" onClick={() => setPage(n)} className={`h-8 min-w-8 rounded px-2 ${n === page ? "bg-sky-500 font-semibold text-white" : "hover:bg-neutral-100"}`}>{n}</button>
+                <button key={n} type="button" onClick={() => setPage(n)} className={`h-8 min-w-8 rounded px-2 ${n === page ? "bg-emerald-600 font-semibold text-white" : "hover:bg-neutral-100"}`}>{n}</button>
               )
             )}
             <button type="button" disabled={page >= totalPages} onClick={() => setPage((p) => p + 1)} className="rounded border border-neutral-300 px-2.5 py-1 disabled:opacity-40">›</button>
@@ -368,29 +459,108 @@ export default function Stocks() {
         </div>
       </div>
 
+      {scanOpen ? <BarcodeScannerModal onScan={onScanCode} onClose={() => setScanOpen(false)} /> : null}
+
       <Dialog open={Boolean(adjust)} onOpenChange={(o) => !o && setAdjust(null)}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader><DialogTitle className="text-sky-600">Adjust Stock</DialogTitle></DialogHeader>
-          {adjust && (
-            <form onSubmit={submitAdjust} className="space-y-3 text-sm">
-              <div className="rounded bg-neutral-50 p-3"><div className="font-medium text-neutral-900">{adjust.name}</div><div className="text-xs text-neutral-500">{adjust.itemCode} · Current: <b>{num(adjust.stockQty)}</b> {adjust.unitShortName}</div></div>
-              <div className="grid grid-cols-3 gap-1 rounded bg-neutral-100 p-1">
-                {[["add", "+ Add"], ["remove", "− Remove"], ["set", "= Set"]].map(([m, l]) => (
-                  <button key={m} type="button" disabled={adjust.stockQty === null && m !== "set"} onClick={() => setAdjForm((f) => ({ ...f, mode: m }))} className={`rounded py-1.5 text-sm font-medium disabled:opacity-40 ${adjForm.mode === m ? "bg-white text-sky-600 shadow" : "text-neutral-600"}`}>{l}</button>
-                ))}
-              </div>
-              {adjust.stockQty === null && <p className="text-xs text-amber-600">This product is untracked — use Set to give it an opening quantity.</p>}
-              <label className="block"><span className="mb-1 block font-medium">Quantity<span className="text-rose-500">*</span></span><input type="number" min={0} step="any" required autoFocus value={adjForm.qty} onChange={(e) => setAdjForm((f) => ({ ...f, qty: e.target.value }))} className="h-10 w-full rounded border border-neutral-300 px-3" /></label>
-              <label className="block"><span className="mb-1 block font-medium">Reason<span className="text-rose-500">*</span></span><select value={adjForm.reason} onChange={(e) => setAdjForm((f) => ({ ...f, reason: e.target.value }))} className="h-10 w-full rounded border border-neutral-300 px-3">{REASONS.map((r) => <option key={r}>{r}</option>)}</select></label>
-              <label className="block"><span className="mb-1 block font-medium">Note</span><input value={adjForm.note} onChange={(e) => setAdjForm((f) => ({ ...f, note: e.target.value }))} className="h-10 w-full rounded border border-neutral-300 px-3" /></label>
-              <div className="flex justify-end gap-2 pt-2"><button type="button" onClick={() => setAdjust(null)} className="rounded bg-neutral-200 px-4 py-2">Cancel</button><button type="submit" disabled={adjusting} className="inline-flex items-center gap-2 rounded bg-sky-500 px-4 py-2 text-white disabled:opacity-60">{adjusting && <Loader2 className="h-4 w-4 animate-spin" />} Save</button></div>
-            </form>
-          )}
+        <DialogContent className="gap-0 overflow-hidden p-0 sm:max-w-md">
+          {adjust && (() => {
+            const q = Number(adjForm.qty) || 0
+            const cur = adjust.stockQty ?? 0
+            const untracked = adjust.stockQty === null
+            const next = adjForm.mode === "add" ? cur + q : adjForm.mode === "remove" ? cur - q : q
+            const clampedNext = Math.max(0, next)
+            const overRemove = adjForm.mode === "remove" && q > cur
+            const delta = clampedNext - cur
+            const MODES = [
+              { m: "add", label: "Add", Icon: Plus, on: "border-primary bg-primary text-white shadow-sm" },
+              { m: "remove", label: "Remove", Icon: Minus, on: "border-rose-500 bg-rose-500 text-white shadow-sm" },
+              { m: "set", label: "Set", Icon: Equal, on: "border-slate-700 bg-slate-700 text-white shadow-sm" },
+            ]
+            const nextTone = overRemove || adjForm.mode === "remove" ? "text-rose-600" : adjForm.mode === "set" ? "text-slate-700" : "text-primary"
+            const bump = (d) => setAdjForm((f) => ({ ...f, qty: String(Math.max(0, (Number(f.qty) || 0) + d)) }))
+            return (
+              <form onSubmit={submitAdjust} className="text-sm">
+                {/* header */}
+                <div className="flex items-center gap-2.5 border-b border-neutral-100 px-5 py-4">
+                  <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600"><Package className="h-5 w-5" /></span>
+                  <div>
+                    <DialogTitle className="text-base font-bold leading-tight text-neutral-900">Adjust stock</DialogTitle>
+                    <p className="text-xs text-neutral-500">Record a manual stock movement</p>
+                  </div>
+                </div>
+
+                <div className="space-y-4 px-5 py-4">
+                  {/* item + current stock */}
+                  <div className="flex items-center justify-between rounded-xl border border-neutral-200 bg-gradient-to-br from-neutral-50 to-white px-4 py-3">
+                    <div className="min-w-0">
+                      <div className="truncate font-semibold text-neutral-900">{adjust.name}</div>
+                      <div className="text-xs text-neutral-500">{adjust.itemCode || "No code"}{adjust.unitName ? ` · ${adjust.unitName}` : ""}</div>
+                    </div>
+                    <div className="shrink-0 pl-3 text-right">
+                      <div className="text-[10px] font-semibold uppercase tracking-wider text-neutral-400">In stock</div>
+                      <div className="text-2xl font-bold leading-none text-neutral-900">{untracked ? "—" : num(cur)}</div>
+                    </div>
+                  </div>
+
+                  {/* mode */}
+                  <div className="grid grid-cols-3 gap-2">
+                    {MODES.map(({ m, label, Icon, on }) => (
+                      <button key={m} type="button" disabled={untracked && m !== "set"}
+                        onClick={() => setAdjForm((f) => ({ ...f, mode: m }))}
+                        className={`flex items-center justify-center gap-1.5 rounded-lg border py-2.5 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-40 ${adjForm.mode === m ? on : "border-neutral-200 bg-white text-neutral-600 hover:border-neutral-300 hover:bg-neutral-50"}`}>
+                        <Icon className="h-4 w-4" /> {label}
+                      </button>
+                    ))}
+                  </div>
+                  {untracked && <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700">This product is untracked — use <b>Set</b> to give it an opening quantity.</p>}
+
+                  {/* quantity with steppers */}
+                  <label className="block">
+                    <span className="mb-1.5 block font-medium text-neutral-700">Quantity<span className="text-rose-500">*</span></span>
+                    <div className="flex items-center gap-2">
+                      <button type="button" onClick={() => bump(-1)} className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border border-neutral-300 text-neutral-600 hover:bg-neutral-50"><Minus className="h-4 w-4" /></button>
+                      <input type="number" min={0} step="any" required autoFocus value={adjForm.qty} onChange={(e) => setAdjForm((f) => ({ ...f, qty: e.target.value }))} placeholder="0" className="h-11 w-full rounded-lg border border-neutral-300 px-3 text-center text-base font-semibold outline-none focus:border-emerald-400 focus:ring-2 focus:ring-emerald-100" />
+                      <button type="button" onClick={() => bump(1)} className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border border-neutral-300 text-neutral-600 hover:bg-neutral-50"><Plus className="h-4 w-4" /></button>
+                    </div>
+                  </label>
+
+                  {/* live preview */}
+                  {q > 0 && !untracked && (
+                    <div className={`flex items-center justify-center gap-3 rounded-xl border py-3 ${overRemove ? "border-rose-200 bg-rose-50" : "border-neutral-200 bg-neutral-50"}`}>
+                      <div className="text-center">
+                        <div className="text-[10px] font-semibold uppercase tracking-wider text-neutral-400">Now</div>
+                        <div className="text-lg font-bold text-neutral-500">{num(cur)}</div>
+                      </div>
+                      <ArrowRight className="h-5 w-5 text-neutral-300" />
+                      <div className="text-center">
+                        <div className="text-[10px] font-semibold uppercase tracking-wider text-neutral-400">After</div>
+                        <div className={`text-lg font-bold ${nextTone}`}>{num(clampedNext)}</div>
+                      </div>
+                      {!overRemove && delta !== 0 && (
+                        <span className={`ml-1 rounded-full px-2 py-0.5 text-xs font-semibold ${delta > 0 ? "bg-emerald-100 text-emerald-700" : "bg-rose-100 text-rose-700"}`}>{delta > 0 ? "+" : ""}{num(delta)}</span>
+                      )}
+                    </div>
+                  )}
+                  {overRemove && <p className="-mt-1 text-xs font-medium text-rose-600">Only {num(cur)} in stock — removing {num(q)} would go below zero.</p>}
+
+                  {/* reason + note */}
+                  <label className="block"><span className="mb-1.5 block font-medium text-neutral-700">Reason<span className="text-rose-500">*</span></span><select value={adjForm.reason} onChange={(e) => setAdjForm((f) => ({ ...f, reason: e.target.value }))} className="h-11 w-full rounded-lg border border-neutral-300 bg-white px-3 outline-none focus:border-emerald-400 focus:ring-2 focus:ring-emerald-100">{REASONS.map((r) => <option key={r}>{r}</option>)}</select></label>
+                  <label className="block"><span className="mb-1.5 block font-medium text-neutral-700">Note</span><input value={adjForm.note} onChange={(e) => setAdjForm((f) => ({ ...f, note: e.target.value }))} placeholder="Optional" className="h-11 w-full rounded-lg border border-neutral-300 px-3 outline-none focus:border-emerald-400 focus:ring-2 focus:ring-emerald-100" /></label>
+                </div>
+
+                {/* footer */}
+                <div className="flex justify-end gap-2 border-t border-neutral-100 bg-neutral-50 px-5 py-3">
+                  <button type="button" onClick={() => setAdjust(null)} className="rounded-lg border border-neutral-300 bg-white px-4 py-2 font-medium text-neutral-700 hover:bg-neutral-50">Cancel</button>
+                  <button type="submit" disabled={adjusting || overRemove || q <= 0} className="inline-flex items-center gap-2 rounded-lg bg-primary px-5 py-2 font-semibold text-white shadow-sm hover:opacity-90 disabled:opacity-50">{adjusting && <Loader2 className="h-4 w-4 animate-spin" />} Save</button>
+                </div>
+              </form>
+            )
+          })()}
         </DialogContent>
       </Dialog>
 
       <Dialog open={Boolean(history)} onOpenChange={(o) => !o && setHistory(null)}>
-        <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-3xl">
+        <DialogContent className="max-h-[85vh] overflow-y-auto p-5 sm:max-w-3xl sm:p-6">
           <DialogHeader><DialogTitle className="text-sky-600">Stock History{history ? ` — ${history.name}` : ""}</DialogTitle></DialogHeader>
           {movesLoading ? <Loader2 className="mx-auto my-10 h-6 w-6 animate-spin text-neutral-400" /> : moves.length === 0 ? (
             <p className="py-8 text-center text-sm text-neutral-500">No movements yet.</p>
@@ -468,6 +638,45 @@ export default function Stocks() {
           </div>
         </div>
       )}
+      {bulkOpen && (
+        <BulkImportModal
+          stores={lookups.restaurants}
+          onClose={() => setBulkOpen(false)}
+          onDone={fetchRows}
+        />
+      )}
     </div>
   )
+}
+
+const KPI_TONE = {
+  default: "text-neutral-900",
+  green: "text-emerald-600",
+  amber: "text-amber-600",
+  red: "text-red-600",
+}
+
+function Kpi({ label, value, sub, tone = "default" }) {
+  return (
+    <div className="rounded-lg border border-neutral-200 bg-white p-3.5 shadow-sm">
+      <div className="text-xs font-medium uppercase tracking-wide text-neutral-500">{label}</div>
+      <div className={`mt-1 text-2xl font-bold ${KPI_TONE[tone] || KPI_TONE.default}`}>{value}</div>
+      {sub ? <div className="mt-0.5 text-xs text-neutral-400">{sub}</div> : null}
+    </div>
+  )
+}
+
+const STATUS_STYLE = {
+  in_stock: "bg-emerald-50 text-emerald-700 ring-emerald-200",
+  low: "bg-amber-50 text-amber-700 ring-amber-200",
+  critical: "bg-orange-50 text-orange-700 ring-orange-200",
+  out: "bg-red-50 text-red-700 ring-red-200",
+  untracked: "bg-neutral-100 text-neutral-500 ring-neutral-200",
+}
+const STATUS_LABEL = { in_stock: "Live", low: "Low", critical: "Critical", out: "Out", untracked: "Untracked" }
+
+function StatusBadge({ status, available }) {
+  const s = status || "untracked"
+  const label = s === "in_stock" && available === false ? "Hidden" : STATUS_LABEL[s] || s
+  return <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ring-1 ring-inset ${STATUS_STYLE[s] || STATUS_STYLE.untracked}`}>{label}</span>
 }

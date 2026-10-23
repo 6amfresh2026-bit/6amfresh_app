@@ -146,6 +146,31 @@ const restaurantSchema = new mongoose.Schema(
       index: true,
     },
     /**
+     * The admin's controls over when this store takes customer-app orders and instant delivery
+     * (Admin > App timings & store status). All of it is optional: a store with none of it set
+     * behaves exactly as before, following its own outlet timings.
+     *
+     * customerMode: "follow" the window below (and the seller's outlet timings), or "open" /
+     *   "closed" to override both. A seller's own pause and a deactivated store still win over "open".
+     * instantMode: "follow" the instant window, "on" always, or "off" never.
+     * requirePosOnline: when true, customers can only order while this store's POS has checked in
+     *   recently (see posLastSeenAt). Off by default so a store without a till is unaffected.
+     */
+    appTimings: {
+      customerMode: { type: String, enum: ['follow', 'open', 'closed'], default: 'follow' },
+      openTime: { type: String, trim: true }, // "HH:mm"
+      closeTime: { type: String, trim: true }, // "HH:mm"
+      instantMode: { type: String, enum: ['follow', 'on', 'off'], default: 'follow' },
+      instantFrom: { type: String, trim: true }, // "HH:mm"
+      instantTo: { type: String, trim: true }, // "HH:mm"
+      closedMessage: { type: String, trim: true, default: '', maxlength: 280 },
+      requirePosOnline: { type: Boolean, default: false },
+      updatedAt: { type: Date },
+      updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'FoodAdmin' },
+    },
+    /** When this store's point of sale last checked in. Stamped by the till's heartbeat. */
+    posLastSeenAt: { type: Date, default: null },
+    /**
      * Confirm this seller's orders the moment they are placed, and start
      * hunting a rider immediately, instead of waiting for someone to tap
      * Accept.

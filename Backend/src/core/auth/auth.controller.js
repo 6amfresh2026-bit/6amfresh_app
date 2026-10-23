@@ -29,6 +29,7 @@ import { validateAdminForgotPasswordRequestDto } from "../../dtos/auth/adminForg
 import { validateAdminForgotPasswordResetDto } from "../../dtos/auth/adminForgotPasswordReset.dto.js";
 import { sendResponse } from "../../utils/response.js";
 import { recordLogin } from "./loginAudit.service.js";
+import { posUserLogin } from "../pos/posUser.service.js";
 
 export const requestUserOtpController = async (req, res, next) => {
   try {
@@ -69,6 +70,18 @@ export const adminLoginController = async (req, res, next) => {
     const result = await adminLogin(email, password);
     void recordLogin({ userId: result?.user?._id, role: "ADMIN", name: result?.user?.name, identifier: result?.user?.email, req });
     return sendResponse(res, 200, "Admin login successful", result);
+  } catch (error) {
+    next(error);
+  }
+};
+
+/** POST /auth/pos/login - a cashier signs in to the till with the username and password the admin gave them. */
+export const posLoginController = async (req, res, next) => {
+  try {
+    const { username, password } = req.body || {};
+    const result = await posUserLogin(username, password);
+    void recordLogin({ userId: result?.posUser?.id, role: "POS", name: result?.posUser?.name, identifier: result?.posUser?.username, req });
+    return sendResponse(res, 200, "POS login successful", result);
   } catch (error) {
     next(error);
   }

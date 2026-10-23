@@ -9,6 +9,7 @@ const AUTH = {
   USER_REQUEST_OTP: "/food/auth/user/request-otp",
   USER_VERIFY_OTP: "/food/auth/user/verify-otp",
   ADMIN_LOGIN: "/food/auth/admin/login",
+  POS_LOGIN: "/food/auth/pos/login",
   RESTAURANT_REQUEST_OTP: "/food/auth/restaurant/request-otp",
   RESTAURANT_VERIFY_OTP: "/food/auth/restaurant/verify-otp",
   DELIVERY_REQUEST_OTP: "/food/auth/delivery/request-otp",
@@ -168,6 +169,15 @@ export function getMe(module = "user") {
 /**
  * Restaurant OTP auth (backend: same phone format as user, 4-digit OTP e.g. 1234).
  */
+/** POS cashier sign-in with the username and password the admin issued. */
+export function posLogin(username, password) {
+  const name = typeof username === "string" ? username.trim() : "";
+  if (!name || !password) {
+    return Promise.reject(new Error("Username and password are required"));
+  }
+  return apiClient.post(AUTH.POS_LOGIN, { username: name, password: String(password) });
+}
+
 export function requestRestaurantOtp(phone) {
   const normalized = normalizePhone(phone);
   if (normalized.length < 8) {

@@ -13,12 +13,16 @@ import { FoodAdmin } from '../src/core/admin/admin.model.js';
 import { FoodUser } from '../src/core/users/user.model.js';
 import { FoodRestaurant } from '../src/modules/food/restaurant/models/restaurant.model.js';
 import { FoodDeliveryPartner } from '../src/modules/food/delivery/models/deliveryPartner.model.js';
+import { FoodPosUser } from '../src/core/pos/posUser.model.js';
+import bcrypt from 'bcryptjs';
 import { FoodZone } from '../src/modules/food/admin/models/zone.model.js';
 import { FoodItem } from '../src/modules/food/admin/models/food.model.js';
 
 export const ACCOUNTS = {
   admin: { email: 'admin@6am.com', password: 'password123' },
   seller: { phone: '9999900001' },
+  // A till login for the seller store above (what admin > POS users creates); signs in at /pos/login.
+  posUser: { username: 'demo.cashier', password: 'cashier123' },
   rider: { phone: '9800000001' },
   customer: { phone: '7777777777' },
   otp: '1234',
@@ -70,6 +74,13 @@ const store = await upsert(FoodRestaurant, { ownerPhone: ACCOUNTS.seller.phone }
   storeType: 'grocery',
   zoneId: zone._id,
   location: { type: 'Point', coordinates: [78.4867, 17.385], formattedAddress: 'E2E Store, Hyderabad', city: 'Hyderabad' },
+});
+
+await upsert(FoodPosUser, { username: ACCOUNTS.posUser.username }, {
+  restaurantId: store._id,
+  name: 'E2E Cashier',
+  username: ACCOUNTS.posUser.username,
+  password: await bcrypt.hash(ACCOUNTS.posUser.password, 10),
 });
 
 await upsert(FoodItem, { restaurantId: store._id, name: 'E2E Milk' }, {

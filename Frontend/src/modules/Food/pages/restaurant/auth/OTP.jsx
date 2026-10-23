@@ -13,10 +13,11 @@ import { useCompanyName } from "@food/hooks/useCompanyName"
 import { loadBusinessSettings, getModuleLogoUrl } from "@food/utils/businessSettings"
 import RestaurantPartnerHero from "@food/components/restaurant/auth/RestaurantPartnerHero"
 import quickSpicyLogo from "@food/assets/6am-fresh-icon.png"
+import { SELLER_FLOW } from "@food/utils/sellerAuthFlow"
 
 const THEME = "#2563EB"
 
-export default function RestaurantOTP() {
+export default function RestaurantOTP({ flow = SELLER_FLOW }) {
   const companyName = useCompanyName()
   const navigate = useNavigate()
   const prefersReducedMotion = useReducedMotion()
@@ -67,7 +68,7 @@ export default function RestaurantOTP() {
         )
       }
     } else {
-      navigate("/seller/login")
+      navigate(flow.loginPath)
       return
     }
 
@@ -84,7 +85,7 @@ export default function RestaurantOTP() {
     }, 1000)
 
     return () => clearInterval(timer)
-  }, [navigate])
+  }, [navigate, flow.loginPath])
 
   useEffect(() => {
     const focusFirstInput = () => inputRefs.current[0]?.focus()
@@ -207,7 +208,7 @@ export default function RestaurantOTP() {
         sessionStorage.removeItem("restaurantAuthData")
         sessionStorage.removeItem("restaurantLoginPhone")
         registerWebPushForCurrentModule("/seller", { force: true }).catch(() => {})
-        navigate("/seller", { replace: true })
+        navigate(flow.homePath, { replace: true })
       }
     } catch (err) {
       const message =
@@ -276,7 +277,7 @@ export default function RestaurantOTP() {
         <div className="relative shrink-0 overflow-hidden px-6 py-5 lg:hidden" style={{ backgroundColor: "#141018" }}>
           <button
             type="button"
-            onClick={() => navigate("/seller/login")}
+            onClick={() => navigate(flow.loginPath)}
             className="absolute left-5 top-5 flex h-9 w-9 items-center justify-center rounded-lg bg-white/10 text-white"
           >
             <ArrowLeft className="h-4 w-4" />
@@ -298,7 +299,7 @@ export default function RestaurantOTP() {
         <div className="hidden shrink-0 px-8 pt-6 lg:block">
           <button
             type="button"
-            onClick={() => navigate("/seller/login")}
+            onClick={() => navigate(flow.loginPath)}
             className="flex h-10 w-10 cursor-pointer items-center justify-center rounded-xl border border-gray-200 bg-white text-gray-600 shadow-sm transition-colors hover:bg-gray-50"
           >
             <ArrowLeft className="h-4 w-4" />

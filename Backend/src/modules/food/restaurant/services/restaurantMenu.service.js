@@ -69,6 +69,8 @@ const buildMenuFromFoods = async (foods = []) => {
             // to tell apart from zero so it does not render "0 left" on
             // everything that predates inventory.
             stockQty: food.stockQty ?? null,
+            soldByWeight: food.soldByWeight === true,
+            smallQtyRate: food.smallQtyRate ?? null,
             // Was written and stored but never returned, so the seller app had
             // no threshold to read and flagged every product at a hardcoded 10
             // regardless of what the seller had set.

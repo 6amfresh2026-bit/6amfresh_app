@@ -32,9 +32,26 @@ import {
 /** Every handler here acts as the signed-in seller, on their own shop only. */
 const shopOf = (req) => req.user.userId;
 
+/**
+ * The body with who is at the till. A POS user (cashier login) is taken from the session; whatever
+ * a client sends as _actor is thrown away, so a bill can never be pinned on someone else.
+ */
+const withActor = (req) => {
+    const { _actor, ...body } = req.body || {};
+    return req.user?.posUserId ? {
+            ...body,
+            _actor: {
+                id: req.user.posUserId,
+                name: req.user.posUserName || '',
+                permissions: req.user.posPermissions || [],
+                limits: req.user.posLimits || {}
+            }
+        } : body;
+};
+
 export const quotePosOrderController = async (req, res, next) => {
     try {
-        return sendResponse(res, 200, 'Quote ready', await quotePosOrder(shopOf(req), req.body || {}));
+        return sendResponse(res, 200, 'Quote ready', await quotePosOrder(shopOf(req), withActor(req)));
     } catch (err) {
         next(err);
     }
@@ -54,7 +71,7 @@ export const createPosOrderController = async (req, res, next) => {
         if (!Array.isArray(items) || !items.length) {
             throw new ValidationError('At least one item is required');
         }
-        return sendResponse(res, 201, 'POS order created successfully', await createPosOrder(shopOf(req), req.body || {}));
+        return sendResponse(res, 201, 'POS order created successfully', await createPosOrder(shopOf(req), withActor(req)));
     } catch (err) {
         next(err);
     }
@@ -174,7 +191,7 @@ export const getCurrentShiftController = async (req, res, next) => {
 
 export const openShiftController = async (req, res, next) => {
     try {
-        return sendResponse(res, 201, 'Register opened', await openShift(shopOf(req), req.body || {}));
+        return sendResponse(res, 201, 'Register opened', await openShift(shopOf(req), withActor(req)));
     } catch (err) {
         next(err);
     }
@@ -190,7 +207,7 @@ export const getShiftSummaryController = async (req, res, next) => {
 
 export const closeShiftController = async (req, res, next) => {
     try {
-        return sendResponse(res, 200, 'Register closed', await closeShift(shopOf(req), req.body || {}));
+        return sendResponse(res, 200, 'Register closed', await closeShift(shopOf(req), withActor(req)));
     } catch (err) {
         next(err);
     }
@@ -198,7 +215,7 @@ export const closeShiftController = async (req, res, next) => {
 
 export const recordCashMovementController = async (req, res, next) => {
     try {
-        return sendResponse(res, 200, 'Cash movement recorded', await recordCashMovement(shopOf(req), req.body || {}));
+        return sendResponse(res, 200, 'Cash movement recorded', await recordCashMovement(shopOf(req), withActor(req)));
     } catch (err) {
         next(err);
     }
@@ -206,7 +223,7 @@ export const recordCashMovementController = async (req, res, next) => {
 
 export const issueCreditNoteController = async (req, res, next) => {
     try {
-        return sendResponse(res, 201, 'Credit note issued', await issueCreditNote(shopOf(req), req.body || {}));
+        return sendResponse(res, 201, 'Credit note issued', await issueCreditNote(shopOf(req), withActor(req)));
     } catch (err) {
         next(err);
     }

@@ -1,6 +1,8 @@
 import { verifyAccessToken } from './token.util.js';
 import { sendError } from '../../utils/response.js';
 import { FoodUser } from '../users/user.model.js';
+import { FoodPosUser } from '../pos/posUser.model.js';
+import { resolveLimits, resolvePermissions } from '../pos/posPermissions.js';
 import { FoodRestaurant } from '../../modules/food/restaurant/models/restaurant.model.js';
 import { FoodDeliveryPartner } from '../../modules/food/delivery/models/deliveryPartner.model.js';
 
@@ -24,6 +26,46 @@ const SESSION_SCOPED_MODELS = {
     DELIVERY_PARTNER: FoodDeliveryPartner
 };
 
+/**
+ * What a cashier's session (a token carrying posUserId) may call: the till and the three reads it
+ * is built on. The session is the store's, so without this it would reach everything the owner can
+ * (withdrawals, profile edits, payouts).
+ */
+const POS_SESSION_ALLOWED = [
+    { method: null, re: /^\/api\/v1\/food\/restaurant\/pos(\/|$)/ },
+    { method: 'GET', re: /^\/api\/v1\/food\/restaurant\/(menu|current|orders)\/?$/ },
+    { method: 'GET', re: /^\/api\/v1(\/food)?\/auth\/me\/?$/ },
+];
+
+export const isPosSessionAllowed = (method, originalUrl) => {
+    const path = String(originalUrl || '').split('?')[0];
+    const verb = String(method || 'GET').toUpperCase();
+    return POS_SESSION_ALLOWED.some((r) => (!r.method || r.method === verb) && r.re.test(path));
+};
+
+const authenticatePosSession = (req, res, next, decoded) => {
+    if (decoded.role !== 'RESTAURANT') return sendError(res, 401, 'Invalid or expired token');
+    if (!isPosSessionAllowed(req.method, req.originalUrl)) {
+        return sendError(res, 403, 'This POS account can only use the point of sale');
+    }
+    FoodPosUser.findById(decoded.posUserId)
+        .select('isActive tokenVersion restaurantId name permissions limits')
+        .lean()
+        .then((u) => {
+            if (!u || String(u.restaurantId) !== String(decoded.userId)) return sendError(res, 401, 'Account not found');
+            if (u.isActive === false) return sendError(res, 401, 'This POS account is inactive');
+            if (Number(decoded.posTokenVersion) !== (Number(u.tokenVersion) || 0)) {
+                return sendError(res, 401, 'You have been signed out. Please sign in again.');
+            }
+            req.user.posUserId = String(u._id);
+            req.user.posUserName = u.name || '';
+            req.user.posPermissions = resolvePermissions(u.permissions);
+            req.user.posLimits = resolveLimits(u.limits);
+            return next();
+        })
+        .catch(() => sendError(res, 401, 'Authentication failed'));
+};
+
 export const authMiddleware = (req, res, next) => {
     const authHeader = req.headers.authorization || '';
     const token = authHeader.startsWith('Bearer ') ? authHeader.substring(7) : null;
@@ -44,6 +86,8 @@ export const authMiddleware = (req, res, next) => {
         role: decoded.role,
         adminType: decoded.adminType
     };
+
+    if (decoded.posUserId) return authenticatePosSession(req, res, next, decoded);
 
     const model = SESSION_SCOPED_MODELS[decoded.role];
     if (!model) return next();
@@ -92,11 +136,14 @@ export const optionalAuth = (req, res, next) => {
 
     try {
         const decoded = verifyAccessToken(token);
-        req.user = {
-            userId: decoded.userId,
-            role: decoded.role,
-            adminType: decoded.adminType
-        };
+        // A cashier's session is confined to the POS; it is not a store sign-in here.
+        if (!decoded.posUserId) {
+            req.user = {
+                userId: decoded.userId,
+                role: decoded.role,
+                adminType: decoded.adminType
+            };
+        }
         next();
     } catch (error) {
         // Silently ignore invalid tokens in optional auth

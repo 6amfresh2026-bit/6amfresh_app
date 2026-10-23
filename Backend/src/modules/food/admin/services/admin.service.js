@@ -4361,6 +4361,19 @@ export async function rejectRestaurantAddon(addonId, reason) {
 }
 
 // ----- Foods (separate collection) -----
+/**
+ * How many live products sit in each category, for the Add product screen's category tiles.
+ * One aggregation, optionally for one store: { [categoryId]: count } by main category.
+ */
+export async function getFoodCategoryCounts(query = {}) {
+    const match = { isDeleted: { $ne: true }, categoryId: { $ne: null } };
+    if (query.restaurantId && mongoose.Types.ObjectId.isValid(query.restaurantId)) {
+        match.restaurantId = new mongoose.Types.ObjectId(query.restaurantId);
+    }
+    const rows = await FoodItem.aggregate([{ $match: match }, { $group: { _id: '$categoryId', count: { $sum: 1 } } }]);
+    return { counts: Object.fromEntries(rows.map((r) => [String(r._id), r.count])) };
+}
+
 export async function getFoods(query) {
     const limit = Math.min(Math.max(parseInt(query.limit, 10) || 100, 1), 1000);
     const page = Math.max(parseInt(query.page, 10) || 1, 1);
@@ -4509,6 +4522,8 @@ function serializeAdminFoodRow(f, restaurantMap, brandMap, unitMap = new Map()) 
         onlinePrice: f.onlinePrice ?? null,
         minimumQuantity: f.minimumQuantity ?? null,
         stockQty: f.stockQty ?? null,
+        soldByWeight: f.soldByWeight === true,
+        smallQtyRate: f.smallQtyRate ?? null,
         lowStockThreshold: f.lowStockThreshold ?? null,
         criticalStockThreshold: f.criticalStockThreshold ?? null,
         outOfStockThreshold: f.outOfStockThreshold ?? null,

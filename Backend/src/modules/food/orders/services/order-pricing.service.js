@@ -14,6 +14,7 @@ import {
 import { fetchDrivingRoute } from '../utils/googleMaps.js';
 import { attachOutletTimingsToRestaurants } from '../../restaurant/services/outletTimings.service.js';
 import { getRestaurantAvailabilityStatus } from '../../restaurant/helpers/restaurantAvailability.helper.js';
+import { closedNoticeFor } from '../../restaurant/helpers/appStatus.helper.js';
 import { resolveOrderCartItems } from '../helpers/order-cart-items.helper.js';
 import { AVG_SPEED_KMPH, PACKING_MINUTES, PER_DROP_MINUTES } from './order.helpers.js';
 import { getStoreDispatchPressure } from './dispatch-pressure.service.js';
@@ -64,7 +65,9 @@ export async function loadRestaurantForOrdering(restaurantId) {
       // deliveryRadiusKm is the same trap and was caught the same way: the
       // serviceability check reads it, and a radius that is not selected reads
       // as no radius, so every address is inside it.
-      'status restaurantName zoneId deliveryRadiusKm location isAcceptingOrders autoAcceptOrders outsideHoursOverride openingTime closingTime openDays deliveryTimings isActive',
+      // appTimings and posLastSeenAt are the admin's app-timing controls and the till's last check-in:
+      // the availability check reads both, and a field left out of this list reads as unset.
+      'status restaurantName zoneId deliveryRadiusKm location isAcceptingOrders autoAcceptOrders outsideHoursOverride openingTime closingTime openDays deliveryTimings isActive appTimings posLastSeenAt',
     )
     .lean();
 
@@ -86,6 +89,11 @@ export function assertRestaurantOpenForOrdering(restaurant, at = new Date()) {
 
   if (availability.reason === 'not-accepting-orders') {
     throw new ValidationError('Store is currently offline. Please try again later.');
+  }
+
+  // Closed by the admin's app timings: say what the admin wrote for customers, if anything.
+  if (['app-forced-closed', 'app-outside-hours', 'pos-offline'].includes(availability.reason)) {
+    throw new ValidationError(closedNoticeFor(availability.appStatus));
   }
 
   throw new ValidationError('Store is currently closed. Please try again later.');
@@ -428,7 +436,11 @@ export async function calculateOrderPricing(userId, dto, options = {}) {
     options.restaurant || (await loadRestaurantForOrdering(dto.restaurantId));
 
   if (!options.skipAvailabilityCheck) {
-    assertRestaurantOpenForOrdering(restaurant, at);
+    const availability = assertRestaurantOpenForOrdering(restaurant, at);
+    // Instant (quick) delivery has its own switch and window in the admin's app timings.
+    if (dto.deliveryMode === 'quick' && availability.instantLive === false) {
+      throw new ValidationError('Instant delivery is not available from this store right now. Please choose standard delivery.');
+    }
   }
 
   const deliveryAddress = normalizeDeliveryAddress(

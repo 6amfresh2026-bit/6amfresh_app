@@ -526,9 +526,9 @@ export default function SubscriptionsManagement() {
       />
 
       <Dialog open={Boolean(detail)} onOpenChange={(open) => !open && setDetail(null)}>
-        <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-2xl">
-          <DialogHeader>
-            <DialogTitle>Subscription details</DialogTitle>
+        <DialogContent className="max-h-[85vh] overflow-y-auto p-5 sm:max-w-2xl sm:p-6">
+          <DialogHeader className="pr-8">
+            <DialogTitle className="text-lg font-bold text-neutral-900">Subscription details</DialogTitle>
           </DialogHeader>
 
           {detailLoading || !detail?.subscription ? (

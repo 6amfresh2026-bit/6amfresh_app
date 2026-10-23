@@ -1,6 +1,11 @@
 import { sendResponse } from '../../../../utils/response.js';
 import * as service from '../services/stockAdmin.service.js';
 import * as batches from '../../orders/services/stockBatch.service.js';
+import * as bulkImport from '../services/stockImport.service.js';
+import * as weighed from '../services/weighedItems.service.js';
+import * as barcodes from '../services/barcodes.service.js';
+import * as billDesign from '../services/billDesign.service.js';
+import * as productPricing from '../services/productPricing.service.js';
 
 /** Thin wrappers over stockAdmin.service — Stocks list and Stock Verification. */
 const handler = (fn, message, status = 200) => async (req, res, next) => {
@@ -19,6 +24,31 @@ export const getStockComparisonController = handler(
     'Store comparison fetched'
 );
 export const adjustStockController = handler((req) => service.adjustStock(req.body || {}, req.user), 'Stock adjusted');
+export const setStockMetaController = handler((req) => service.setStockMeta(req.body || {}), 'Updated');
+
+// ─── Bulk import ───
+export const bulkImportCheckController = handler((req) => bulkImport.bulkImportCheck(req.body || {}), 'Import checked');
+export const bulkImportCommitController = handler((req) => bulkImport.bulkImportCommit(req.body || {}, req.user), 'Import complete');
+
+// ─── Weighed items & rates ───
+export const listWeighedController = handler((req) => weighed.listWeighed(req.query || {}), 'Weighed items fetched');
+export const publishWeighedRatesController = handler((req) => weighed.publishRates(req.body || {}), 'Rates published');
+export const addWeighedItemController = handler((req) => weighed.addWeighedItem(req.body || {}), 'Weighed item added', 201);
+
+// ─── Barcodes & labels ───
+export const listBarcodesController = handler((req) => barcodes.listBarcodes(req.query || {}), 'Barcodes fetched');
+export const saveBarcodesController = handler((req) => barcodes.saveBarcodes(req.body || {}), 'Barcodes saved');
+export const updateBarcodeController = handler((req) => barcodes.updateBarcode(req.body || {}), 'Barcode updated');
+
+// ─── Bill designer ───
+export const getBillDesignController = handler((req) => billDesign.getDesign(req.query || {}), 'Bill design fetched');
+export const saveBillDesignController = handler((req) => billDesign.saveDesign(req.body || {}), 'Bill design saved');
+
+// ─── Products & pricing ───
+export const listProductPricingController = handler((req) => productPricing.listProductPricing(req.query || {}), 'Pricing fetched');
+export const savePricingController = handler((req) => productPricing.savePricing(req.body || {}), 'Pricing saved');
+export const pricingLookupsController = handler(() => productPricing.pricingLookups(), 'Lookups fetched');
+export const addSizeController = handler((req) => productPricing.addSize(req.body || {}), 'Size added', 201);
 export const listMovementsController = handler((req) => service.listMovements(req.query || {}), 'Stock movements fetched');
 export const listItemMovementsController = handler(
     (req) => service.listMovements({ ...(req.query || {}), itemId: req.params.itemId }),

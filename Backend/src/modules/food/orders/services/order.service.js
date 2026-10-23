@@ -971,6 +971,9 @@ export async function createOrder(userId, dto) {
               dueAmount: pos.paymentMode === "pay_later" ? normalizedPricing.total : posDue,
               changeGiven: Math.max(0, Number(pos.changeGiven) || 0),
               billNo: "",
+              ...(pos.posUserId && mongoose.isValidObjectId(pos.posUserId)
+                ? { posUserId: pos.posUserId, cashierName: String(pos.cashierName || "") }
+                : {}),
             },
             // Handed over at the till: the same stamp the rider flow writes
             // when a delivery completes, so "delivered when" reads the same

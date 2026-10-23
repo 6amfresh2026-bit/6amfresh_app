@@ -107,7 +107,7 @@ export default function RestaurantReport() {
     }
     const headers = [
       { key: "sl", label: "SL" },
-      { key: "restaurantName", label: "Restaurant Name" },
+      { key: "restaurantName", label: "Seller Name" },
       { key: "totalFood", label: "Total Food" },
       { key: "totalOrder", label: "Total Order" },
       { key: "totalOrderAmount", label: "Total Order Amount" },
@@ -119,7 +119,7 @@ export default function RestaurantReport() {
     switch (format) {
       case "csv": exportReportsToCSV(filteredRestaurants, headers, "restaurant_report"); break
       case "excel": exportReportsToExcel(filteredRestaurants, headers, "restaurant_report"); break
-      case "pdf": exportReportsToPDF(filteredRestaurants, headers, "restaurant_report", "Restaurant Report"); break
+      case "pdf": exportReportsToPDF(filteredRestaurants, headers, "restaurant_report", "Seller Report"); break
       case "json": exportReportsToJSON(filteredRestaurants, "restaurant_report"); break
     }
   }
@@ -167,7 +167,7 @@ export default function RestaurantReport() {
             <div className="w-10 h-10 rounded-lg bg-slate-700 flex items-center justify-center">
               <Briefcase className="w-5 h-5 text-white" />
             </div>
-            <h1 className="text-2xl font-bold text-slate-900">Restaurant Report</h1>
+            <h1 className="text-2xl font-bold text-slate-900">Seller Report</h1>
           </div>
         </div>
 
@@ -311,7 +311,7 @@ export default function RestaurantReport() {
         {/* Restaurant Report Table Section */}
         <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
-            <h2 className="text-xl font-bold text-slate-900">Restaurant Report Table {totalRestaurants}</h2>
+            <h2 className="text-xl font-bold text-slate-900">Seller Report Table {totalRestaurants}</h2>
 
             <div className="flex items-center gap-3">
               <div className="relative flex-1 sm:flex-initial min-w-[250px]">
@@ -376,7 +376,7 @@ export default function RestaurantReport() {
                   </th>
                   <th className="px-6 py-4 text-left text-[10px] font-bold text-slate-700 uppercase tracking-wider">
                     <div className="flex items-center gap-1">
-                      <span>Restaurant Name</span>
+                      <span>Seller Name</span>
                       <ArrowUpDown className="w-3 h-3 text-slate-400" />
                     </div>
                   </th>

@@ -49,6 +49,8 @@ const PATH_PREFIX_TO_SECTION = [
   { prefix: "/admin/store/units", section: "food_management" },
   { prefix: "/admin/store/departments", section: "food_management" },
   { prefix: "/admin/store/zone-setup", section: "restaurant_management" },
+  { prefix: "/admin/store/app-timings", section: "restaurant_management" },
+  { prefix: "/admin/store/pos-users", section: "restaurant_management" },
   { prefix: "/admin/store/sellers", section: "restaurant_management" },
   { prefix: "/admin/store/restaurants", section: "restaurant_management" },
   { prefix: "/admin/store/orders", section: "order_management" },

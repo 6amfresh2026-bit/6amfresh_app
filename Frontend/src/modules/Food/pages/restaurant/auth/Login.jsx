@@ -9,11 +9,12 @@ import { useCompanyName } from "@food/hooks/useCompanyName"
 import { loadBusinessSettings, getModuleLogoUrl } from "@food/utils/businessSettings"
 import RestaurantPartnerHero from "@food/components/restaurant/auth/RestaurantPartnerHero"
 import quickSpicyLogo from "@food/assets/6am-fresh-icon.png"
+import { SELLER_FLOW } from "@food/utils/sellerAuthFlow"
 
 const DEFAULT_COUNTRY_CODE = "+91"
 const THEME = "#2563EB"
 
-export default function RestaurantLogin() {
+export default function RestaurantLogin({ flow = SELLER_FLOW }) {
   const companyName = useCompanyName()
   const navigate = useNavigate()
   const prefersReducedMotion = useReducedMotion()
@@ -106,7 +107,7 @@ export default function RestaurantLogin() {
           module: "restaurant",
         })
       )
-      navigate("/seller/otp")
+      navigate(flow.otpPath)
     } catch (apiErr) {
       setError(apiErr?.response?.data?.message || "Failed to send OTP")
     } finally {
@@ -144,7 +145,7 @@ export default function RestaurantLogin() {
               <Shield className="h-3.5 w-3.5" style={{ color: THEME }} aria-hidden="true" />
             </div>
             <div>
-              <p className="text-[10px] font-medium text-white/50">Partner Portal</p>
+              <p className="text-[10px] font-medium text-white/50">{flow.portalLabel}</p>
               <p className="text-sm font-semibold text-white">{companyName}</p>
             </div>
           </div>
@@ -169,7 +170,7 @@ export default function RestaurantLogin() {
                   />
                 </div>
               </div>
-              <h2 className="text-2xl font-bold tracking-tight text-gray-900">Partner sign in</h2>
+              <h2 className="text-2xl font-bold tracking-tight text-gray-900">{flow.title}</h2>
               <p className="mt-1 text-sm text-gray-500">
                 Enter your registered mobile number to receive a secure OTP
               </p>

@@ -36,6 +36,7 @@ const posCreditNoteSchema = new mongoose.Schema(
         balance: { type: Number, required: true, min: 0 },
 
         reason: { type: String, default: '', trim: true },
+        issuedByPosUserId: { type: mongoose.Schema.Types.ObjectId, ref: 'FoodPosUser', default: undefined },
         // The sale the return came off, when there is one.
         sourceOrderId: { type: mongoose.Schema.Types.ObjectId, ref: 'FoodOrder', default: null },
         sourceBillNo: { type: String, default: '', trim: true },

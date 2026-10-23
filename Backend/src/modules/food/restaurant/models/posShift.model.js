@@ -20,6 +20,27 @@ const posShiftSchema = new mongoose.Schema(
         cashOut: { type: Number, default: 0, min: 0 },
         refunds: { type: Number, default: 0, min: 0 },
 
+        // Which POS user (cashier login) opened and closed this register; absent when the owner did.
+        openedByPosUserId: { type: mongoose.Schema.Types.ObjectId, ref: 'FoodPosUser', default: undefined, index: true },
+        closedByPosUserId: { type: mongoose.Schema.Types.ObjectId, ref: 'FoodPosUser', default: undefined },
+        closedByName: { type: String, default: '', trim: true },
+        // Every pay-in / pay-out, so the totals above can be traced to a person and a time.
+        movements: {
+            type: [
+                new mongoose.Schema(
+                    {
+                        type: { type: String, enum: ['in', 'out'] },
+                        amount: { type: Number, min: 0 },
+                        at: { type: Date, default: Date.now },
+                        posUserId: { type: mongoose.Schema.Types.ObjectId, default: undefined },
+                        byName: { type: String, default: '', trim: true }
+                    },
+                    { _id: false }
+                )
+            ],
+            default: []
+        },
+
         status: { type: String, enum: ['open', 'closed'], default: 'open', index: true },
         openedAt: { type: Date, default: Date.now },
         closedAt: { type: Date, default: null },

@@ -21,6 +21,7 @@ import { getCachedFeeSettings, loadCorePublicAppConfig } from "@food/services/pu
 import { useCompanyName } from "@food/hooks/useCompanyName"
 import { getRestaurantAvailabilityStatus } from "@food/utils/restaurantAvailability"
 import useAppBackNavigation from "@food/hooks/useAppBackNavigation"
+import useStoreAppStatus from "@food/hooks/useStoreAppStatus"
 import {
   calculateDistanceKm,
   normalizeLocationForPricing,
@@ -535,7 +536,8 @@ export default function Cart() {
     return getRestaurantAvailabilityStatus(restaurantData, targetDate)
   }, [restaurantData, availabilityTick, scheduledOrderAt])
 
-  const canPlaceOrder = Boolean(restaurantData) && cartRestaurantAvailability.isOpen === true
+  // The store's own hours, worked out here. The admin's app timings are added below, from the server.
+  const clientCanPlaceOrder = Boolean(restaurantData) && cartRestaurantAvailability.isOpen === true
 
 
   const availableTimeSlots = useMemo(() => {
@@ -797,6 +799,18 @@ export default function Cart() {
   const restaurantId = cart.length > 0
     ? (restaurantData?._id || restaurantData?.restaurantId || cart[0]?.restaurantId || null)
     : null
+
+  // What the server says about this store right now: the admin's app timings, the till being
+  // online, instant delivery. Compared with `=== false` so an answer that has not arrived yet
+  // never blocks anyone; checkout checks it again on the server regardless.
+  const storeAppStatus = useStoreAppStatus(restaurantId)
+  const canPlaceOrder = clientCanPlaceOrder && storeAppStatus?.open !== false
+  const instantUnavailable = storeAppStatus?.instantLive === false
+
+  // Instant delivery switched off (or outside its window) while it is selected: fall back to standard.
+  useEffect(() => {
+    if (instantUnavailable) setDeliveryMode((mode) => (mode === "quick" ? "basic" : mode))
+  }, [instantUnavailable])
 
   // Stable restaurant ID for addons fetch (memoized to prevent dependency array issues)
   // Prefer restaurantData IDs (more reliable) over slug from cart
@@ -2641,7 +2655,9 @@ export default function Cart() {
         <div className="bg-amber-50 dark:bg-amber-900/20 border-b border-amber-200 dark:border-amber-800 px-4 md:px-6 py-2.5">
           <div className="max-w-7xl mx-auto">
             <p className="text-sm font-medium text-amber-900 dark:text-amber-100">
-              {restaurantName} is currently offline. You can keep items in your cart, but checkout will open once the restaurant is back online.
+              {storeAppStatus?.open === false && storeAppStatus.message
+                ? `${storeAppStatus.message} You can keep items in your cart; checkout opens when the store is back.`
+                : `${restaurantName} is currently offline. You can keep items in your cart, but checkout will open once the restaurant is back online.`}
             </p>
           </div>
         </div>
@@ -2971,8 +2987,10 @@ export default function Cart() {
                   <div className="px-4 pb-4">
                     <button
                       type="button"
-                      onClick={() => setDeliveryMode("quick")}
-                      className="w-full flex items-start gap-3 text-left pb-3 border-b border-gray-100 dark:border-gray-800"
+                      onClick={() => { if (!instantUnavailable) setDeliveryMode("quick") }}
+                      disabled={instantUnavailable}
+                      aria-disabled={instantUnavailable}
+                      className={`w-full flex items-start gap-3 text-left pb-3 border-b border-gray-100 dark:border-gray-800 ${instantUnavailable ? "opacity-50 cursor-not-allowed" : ""}`}
                     >
                       <div className={`mt-0.5 h-5 w-5 rounded-full border-2 flex items-center justify-center shrink-0 ${
                         deliveryMode === "quick" ? "border-[#FA0272]" : "border-gray-300 dark:border-gray-600"
@@ -2989,7 +3007,7 @@ export default function Cart() {
                           </p>
                         </div>
                         <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
-                          In a hurry? Get food up to 15 mins faster
+                          {instantUnavailable ? "Not available from this store right now" : "In a hurry? Get food up to 15 mins faster"}
                         </p>
                       </div>
                     </button>

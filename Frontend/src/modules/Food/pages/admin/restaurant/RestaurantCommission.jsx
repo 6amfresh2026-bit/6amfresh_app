@@ -637,7 +637,7 @@ export default function RestaurantCommission() {
 
       {/* Delete Confirmation Dialog */}
       <Dialog open={isDeleteOpen} onOpenChange={setIsDeleteOpen}>
-        <DialogContent className="max-w-md bg-white">
+        <DialogContent className="max-w-md bg-white p-5 sm:p-6">
           <DialogHeader>
             <DialogTitle>Delete Restaurant Commission</DialogTitle>
           </DialogHeader>
