@@ -390,3 +390,182 @@ describe('subscribing to a delivery slot', () => {
         );
     });
 });
+
+describe('admin starts a subscription for a number that has never used the app', () => {
+    const newCustomer = ({ address, ...rest } = {}) => ({
+        name: 'Meena Joshi',
+        phone: '98765 43210',
+        address: {
+            flatNumber: '4A',
+            street: '5th Cross, Indiranagar',
+            city: 'Bengaluru',
+            state: 'Karnataka',
+            zipCode: '560038',
+            lat: 12.9784,
+            lng: 77.6408,
+            ...(address || {})
+        },
+        ...rest
+    });
+
+    const newBody = (item, over = {}) => ({
+        restaurantId: String(item.restaurantId),
+        itemId: String(item._id),
+        quantity: 1,
+        frequency: 'daily',
+        deliveryTime: '06:00',
+        startDate: today(),
+        paymentMethod: 'cash',
+        newCustomer: newCustomer(),
+        ...over
+    });
+
+    it('creates the account and its address, and the subscription belongs to them', async () => {
+        const shop = await makeShop();
+        const milk = await makeProduct(shop._id);
+
+        const { subscription } = await admin.createSubscriptionForCustomer(newBody(milk));
+
+        const user = await FoodUser.findOne({ phone: '9876543210' }).lean();
+        assert.ok(user, 'the number is stored as 10 digits, the way sign-in looks it up');
+        assert.equal(user.name, 'Meena Joshi');
+        assert.equal(user.addresses.length, 1);
+        assert.equal(user.addresses[0].isDefault, true);
+        assert.deepEqual(user.addresses[0].location.coordinates, [77.6408, 12.9784]);
+
+        const saved = await FoodProductSubscription.findById(subscription.id).lean();
+        assert.equal(String(saved.userId), String(user._id));
+        assert.equal(String(saved.addressId), String(user.addresses[0]._id));
+    });
+
+    it('uses the existing account when the number is already registered, and does not duplicate the address', async () => {
+        const shop = await makeShop();
+        const milk = await makeProduct(shop._id);
+        const customer = await makeCustomer({ phone: '9876543210', name: 'Meena Joshi' });
+
+        await admin.createSubscriptionForCustomer(newBody(milk));
+        await admin.createSubscriptionForCustomer(newBody(milk, { quantity: 2 }));
+
+        const users = await FoodUser.find({ phone: '9876543210' }).lean();
+        assert.equal(users.length, 1);
+        assert.equal(String(users[0]._id), String(customer._id));
+        // the pre-existing Home address plus the one typed here, saved once not twice
+        assert.equal(users[0].addresses.length, 2);
+    });
+
+    it('refuses a number that is not ten digits', async () => {
+        const shop = await makeShop();
+        const milk = await makeProduct(shop._id);
+        await expectError(
+            () => admin.createSubscriptionForCustomer(newBody(milk, { newCustomer: newCustomer({ phone: '12345' }) })),
+            '10-digit',
+            assert
+        );
+        assert.equal(await FoodUser.countDocuments({}), 0);
+    });
+
+    it('refuses an address with no map position instead of saving one that cannot be delivered to', async () => {
+        const shop = await makeShop();
+        const milk = await makeProduct(shop._id);
+        await expectError(
+            () => admin.createSubscriptionForCustomer(
+                newBody(milk, { newCustomer: newCustomer({ address: { lat: undefined, lng: undefined } }) })
+            ),
+            'map',
+            assert
+        );
+        assert.equal(await FoodUser.countDocuments({}), 0);
+    });
+
+    it('asks for a name when the number is new', async () => {
+        const shop = await makeShop();
+        const milk = await makeProduct(shop._id);
+        await expectError(
+            () => admin.createSubscriptionForCustomer(newBody(milk, { newCustomer: newCustomer({ name: '  ' }) })),
+            'name',
+            assert
+        );
+    });
+
+    it('does not leave an account behind when the subscription itself is invalid', async () => {
+        const shop = await makeShop();
+        const milk = await makeProduct(shop._id);
+        await expectError(
+            () => admin.createSubscriptionForCustomer(newBody(milk, { deliveryTime: undefined })),
+            'delivery slot',
+            assert
+        );
+        assert.equal(await FoodUser.countDocuments({}), 0);
+    });
+
+    it('refuses a deactivated account on that number', async () => {
+        const shop = await makeShop();
+        const milk = await makeProduct(shop._id);
+        await makeCustomer({ phone: '9876543210', isActive: false });
+        await expectError(
+            () => admin.createSubscriptionForCustomer(newBody(milk)),
+            'deactivated',
+            assert
+        );
+    });
+});
+
+describe('admin switches a subscription off and on', () => {
+    const start = async () => {
+        const shop = await makeShop();
+        const milk = await makeProduct(shop._id);
+        const customer = await makeCustomer();
+        const { subscription } = await admin.createSubscriptionForCustomer(body(customer, milk));
+        return { subscription, customer };
+    };
+    const scheduledAfterToday = (id) => {
+        const t = new Date();
+        const startOfToday = new Date(t.getFullYear(), t.getMonth(), t.getDate());
+        return FoodSubscriptionOccurrence.countDocuments({
+            subscriptionId: id,
+            status: 'scheduled',
+            scheduledDate: { $gt: startOfToday }
+        });
+    };
+
+    it('pausing cancels the upcoming deliveries', async () => {
+        const { subscription } = await start();
+        assert.ok((await scheduledAfterToday(subscription.id)) > 0);
+
+        const out = await admin.setSubscriptionStatus(subscription.id, 'paused');
+        assert.equal(out.subscription.status, 'paused');
+        assert.equal(await scheduledAfterToday(subscription.id), 0);
+    });
+
+    it('switching back on refills the days the pause emptied, from tomorrow', async () => {
+        const { subscription } = await start();
+        const before = await scheduledAfterToday(subscription.id);
+        await admin.setSubscriptionStatus(subscription.id, 'paused');
+
+        const out = await admin.setSubscriptionStatus(subscription.id, 'active');
+        assert.equal(out.subscription.status, 'active');
+        assert.equal(await scheduledAfterToday(subscription.id), before, 'the fortnight is back, not a gap');
+
+        const t = new Date();
+        const startOfToday = new Date(t.getFullYear(), t.getMonth(), t.getDate());
+        const earliest = await FoodSubscriptionOccurrence.findOne({ subscriptionId: subscription.id, status: 'scheduled' })
+            .sort({ scheduledDate: 1 }).lean();
+        assert.ok(new Date(earliest.scheduledDate) > startOfToday, 'nothing is scheduled for a day that has already begun');
+    });
+
+    it('cancelling ends it for good', async () => {
+        const { subscription } = await start();
+        await admin.setSubscriptionStatus(subscription.id, 'cancelled');
+        await expectError(() => admin.setSubscriptionStatus(subscription.id, 'active'), 'cancelled', assert);
+    });
+
+    it('refuses a status it does not know, and a change to the state it is already in', async () => {
+        const { subscription } = await start();
+        await expectError(() => admin.setSubscriptionStatus(subscription.id, 'banana'), 'status must be', assert);
+        await expectError(() => admin.setSubscriptionStatus(subscription.id, 'active'), 'already active', assert);
+    });
+
+    it('reports a subscription that does not exist', async () => {
+        await expectError(() => admin.setSubscriptionStatus(String(someId()), 'paused'), 'not found', assert);
+    });
+});

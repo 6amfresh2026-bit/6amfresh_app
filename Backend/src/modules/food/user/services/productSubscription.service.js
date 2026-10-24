@@ -226,6 +226,7 @@ export async function updateSubscription(userId, subscriptionId, dto) {
     const subscription = await FoodProductSubscription.findOne({ _id: id, userId });
     if (!subscription) throw new NotFoundError('Subscription not found');
 
+    const wasPaused = subscription.status === 'paused';
     if (dto.status !== undefined) subscription.status = dto.status;
     if (dto.quantity !== undefined) subscription.quantity = dto.quantity;
     if (dto.deliveryTime !== undefined) subscription.deliveryTime = dto.deliveryTime;
@@ -234,7 +235,29 @@ export async function updateSubscription(userId, subscriptionId, dto) {
         subscription.addressId = dto.addressId;
     }
 
+    // Switching back on starts from tomorrow. Pausing cancelled the upcoming
+    // deliveries, and the generator only ever extends forward from the last day it
+    // wrote, so without this the gap it left would stay empty until the horizon
+    // caught up -- a customer who resumed would get nothing for two weeks. The
+    // pause-cancelled rows are cleared so their days can be written again; today is
+    // left alone, because a delivery for a morning that has already begun must not
+    // turn into an immediate order.
+    if (wasPaused && dto.status === 'active') {
+        const today = startOfDay(new Date());
+        await FoodSubscriptionOccurrence.deleteMany({
+            subscriptionId: id,
+            status: 'cancelled',
+            cancelReason: 'Subscription paused',
+            scheduledDate: { $gt: today },
+        });
+        subscription.occurrencesGeneratedUntil = today;
+    }
+
     await subscription.save();
+
+    if (wasPaused && dto.status === 'active') {
+        await generateOccurrencesForSubscription(subscription, addDays(new Date(), DEFAULT_HORIZON_DAYS));
+    }
 
     if (dto.status === 'cancelled' || dto.status === 'paused') {
         await FoodSubscriptionOccurrence.updateMany(

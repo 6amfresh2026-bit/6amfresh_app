@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { Loader2, Search, Check, AlertCircle, X } from "lucide-react"
+import { Loader2, Search, Check, AlertCircle, X, UserPlus, MapPin } from "lucide-react"
 import { toast } from "sonner"
 
 import { adminAPI } from "@food/api"
+import { loadGooglePlaces, addressFromPlace, geocodeAddress } from "@food/utils/googlePlaces"
 import {
   Dialog,
   DialogContent,
@@ -71,6 +72,18 @@ const Hint = ({ children }) => (
   </p>
 )
 
+const emptyNewCustomer = {
+  name: "",
+  phone: "",
+  flatNumber: "",
+  street: "",
+  city: "",
+  state: "",
+  zipCode: "",
+  lat: null,
+  lng: null,
+}
+
 const emptyForm = {
   restaurantId: "",
   itemId: "",
@@ -89,6 +102,10 @@ const emptyForm = {
 
 export default function AddSubscriptionDialog({ open, onOpenChange, onCreated }) {
   const [customer, setCustomer] = useState(null)
+  // A number that has never used the app: the account is made along with the
+  // subscription, from these fields, instead of picking an existing customer.
+  const [isNew, setIsNew] = useState(false)
+  const [newCust, setNewCust] = useState(emptyNewCustomer)
   const [form, setForm] = useState(emptyForm)
   const [submitting, setSubmitting] = useState(false)
 
@@ -103,6 +120,8 @@ export default function AddSubscriptionDialog({ open, onOpenChange, onCreated })
 
   const reset = useCallback(() => {
     setCustomer(null)
+    setIsNew(false)
+    setNewCust(emptyNewCustomer)
     setForm(emptyForm)
     setAddresses([])
     setProducts([])
@@ -170,25 +189,77 @@ export default function AddSubscriptionDialog({ open, onOpenChange, onCreated })
 
   const usableAddresses = addresses.filter((a) => a.hasLocation)
 
+  const newCustProblem = useMemo(() => {
+    if (digitsOnly(newCust.phone).length !== 10) return "Enter a 10-digit mobile number"
+    if (!newCust.name.trim()) return "Enter the customer's name"
+    if (!newCust.street.trim() || !newCust.city.trim() || !newCust.state.trim()) {
+      return "The address needs a street, city and state"
+    }
+    // A position typed by hand has to be a real one. An empty position is fine here:
+    // it is looked up from the address when the subscription is started.
+    const { lat, lng } = newCust
+    if ((lat == null) !== (lng == null)) return "Enter both latitude and longitude, or neither"
+    if (lat != null && (Math.abs(lat) > 90 || Math.abs(lng) > 180)) return "Latitude or longitude is out of range"
+    return null
+  }, [newCust])
+
   const problem = useMemo(() => {
-    if (!customer) return "Pick a customer"
-    if (!addressesLoading && addresses.length === 0) return "This customer has no saved address"
-    if (!addressesLoading && usableAddresses.length === 0) return "None of this customer's addresses has a map location"
+    if (isNew) {
+      if (newCustProblem) return newCustProblem
+    } else {
+      if (!customer) return "Pick a customer"
+      if (!addressesLoading && addresses.length === 0) return "This customer has no saved address"
+      if (!addressesLoading && usableAddresses.length === 0) return "None of this customer's addresses has a map location"
+    }
     if (!form.restaurantId) return "Pick a store"
     if (!productsLoading && form.restaurantId && products.length === 0) return "This store has no subscribable products"
     if (!form.itemId) return "Pick a product"
-    if (!form.addressId) return "Pick a delivery address"
+    if (!isNew && !form.addressId) return "Pick a delivery address"
     if (form.frequency === "weekly" && form.daysOfWeek.length === 0) return "Pick at least one weekday"
     if (!(Number(form.quantity) >= 1)) return "Quantity must be at least 1"
     return null
-  }, [customer, addresses, addressesLoading, usableAddresses.length, form, products.length, productsLoading])
+  }, [isNew, newCustProblem, customer, addresses, addressesLoading, usableAddresses.length, form, products.length, productsLoading])
 
   const submit = async () => {
     if (problem) return
     setSubmitting(true)
     try {
+      let pin = { lat: newCust.lat, lng: newCust.lng }
+      if (isNew && (pin.lat == null || pin.lng == null)) {
+        // Typed rather than picked: place it on the map now, because an address
+        // with no position cannot be delivered to.
+        const full = [newCust.flatNumber, newCust.street, newCust.city, newCust.state, newCust.zipCode]
+          .map((part) => part.trim())
+          .filter(Boolean)
+          .join(", ")
+        const found = await geocodeAddress(full)
+        if (!found) {
+          toast.error(
+            "Could not find this address on the map. Pick one of the suggestions in the address search, or enter its latitude and longitude.",
+          )
+          return
+        }
+        pin = found
+        setNewCust((c) => ({ ...c, ...found }))
+      }
       const payload = {
-        customerId: customer.id,
+        ...(isNew
+          ? {
+              newCustomer: {
+                name: newCust.name.trim(),
+                phone: digitsOnly(newCust.phone),
+                address: {
+                  flatNumber: newCust.flatNumber.trim(),
+                  street: newCust.street.trim(),
+                  city: newCust.city.trim(),
+                  state: newCust.state.trim(),
+                  zipCode: newCust.zipCode.trim(),
+                  lat: pin.lat,
+                  lng: pin.lng,
+                },
+              },
+            }
+          : { customerId: customer.id, addressId: form.addressId }),
         restaurantId: form.restaurantId,
         itemId: form.itemId,
         quantity: Number(form.quantity),
@@ -197,14 +268,13 @@ export default function AddSubscriptionDialog({ open, onOpenChange, onCreated })
           ? { deliverySlotId: form.deliverySlotId }
           : { deliveryTime: form.deliveryTime }),
         startDate: form.startDate,
-        addressId: form.addressId,
         paymentMethod: form.paymentMethod,
         ...(form.frequency === "weekly" ? { daysOfWeek: form.daysOfWeek } : {}),
         ...(form.frequency === "monthly" ? { dayOfMonth: Number(form.dayOfMonth) } : {}),
       }
       const res = await adminAPI.createProductSubscription(payload)
       const created = res?.data?.data?.subscription
-      toast.success(`Subscription started for ${created?.customer?.name || customer.name}`)
+      toast.success(`Subscription started for ${created?.customer?.name || (isNew ? newCust.name : customer.name)}`)
       reset()
       onOpenChange(false)
       onCreated?.(created)
@@ -243,9 +313,32 @@ export default function AddSubscriptionDialog({ open, onOpenChange, onCreated })
         <div className="grid flex-1 gap-x-6 gap-y-5 overflow-y-auto px-5 py-4 lg:grid-cols-2">
           {/* Left — who it goes to */}
           <div className="space-y-4">
-            <CustomerPicker customer={customer} onPick={setCustomer} />
+            {isNew ? (
+              <NewCustomerFields
+                value={newCust}
+                onChange={(patch) => setNewCust((c) => ({ ...c, ...patch }))}
+                onBack={() => {
+                  setIsNew(false)
+                  setNewCust(emptyNewCustomer)
+                }}
+              />
+            ) : (
+              <CustomerPicker
+                customer={customer}
+                onPick={setCustomer}
+                onAddNew={(term) => {
+                  const digits = digitsOnly(term)
+                  setNewCust({
+                    ...emptyNewCustomer,
+                    phone: digits.length >= 8 ? digits.slice(-10) : "",
+                    name: digits ? "" : term.trim(),
+                  })
+                  setIsNew(true)
+                }}
+              />
+            )}
 
-            {customer && (
+            {!isNew && customer && (
               <div>
                 <span className={labelCls}>Deliver to</span>
                 {addressesLoading ? (
@@ -508,7 +601,7 @@ export default function AddSubscriptionDialog({ open, onOpenChange, onCreated })
  * Finds the customer by name or phone — the two things whoever answers the
  * phone has in hand.
  */
-function CustomerPicker({ customer, onPick }) {
+function CustomerPicker({ customer, onPick, onAddNew }) {
   const [term, setTerm] = useState("")
   const [results, setResults] = useState([])
   const [loading, setLoading] = useState(false)
@@ -602,6 +695,166 @@ function CustomerPicker({ customer, onPick }) {
       {term.trim().length >= 2 && !loading && results.length === 0 && (
         <p className="mt-2 text-xs text-neutral-500">No customer matches "{term.trim()}"</p>
       )}
+      {/* The phone-in customer who has never used the app: make the account here. */}
+      <button
+        type="button"
+        onClick={() => onAddNew(term)}
+        className="mt-2 inline-flex items-center gap-1.5 text-sm font-medium text-pink-600 hover:text-pink-700"
+      >
+        <UserPlus className="h-4 w-4" />
+        {term.trim().length >= 2 && !loading && results.length === 0
+          ? "Add as a new customer"
+          : "New number? Add a new customer"}
+      </button>
+    </div>
+  )
+}
+
+const digitsOnly = (value) => String(value || "").replace(/\D/g, "")
+
+/**
+ * Name, number and delivery address for a customer who has no account yet.
+ *
+ * The address comes from a Google Places search rather than free text, because an
+ * order cannot be delivered to an address with no map position and a typed one has
+ * none. The street, city, state and pin are filled from the pick and stay editable.
+ */
+function NewCustomerFields({ value, onChange, onBack }) {
+  const inputRef = useRef(null)
+  const [mapsError, setMapsError] = useState("")
+
+  useEffect(() => {
+    let autocomplete
+    let cancelled = false
+    loadGooglePlaces()
+      .then((places) => {
+        if (cancelled || !inputRef.current) return
+        autocomplete = new places.Autocomplete(inputRef.current, {
+          componentRestrictions: { country: "in" },
+          fields: ["formatted_address", "geometry", "address_components", "name"],
+        })
+        autocomplete.addListener("place_changed", () => {
+          const parsed = addressFromPlace(autocomplete.getPlace())
+          if (parsed) onChange(parsed)
+        })
+      })
+      .catch((err) => setMapsError(err?.message || "Address search is unavailable"))
+    return () => {
+      cancelled = true
+      if (autocomplete && window.google?.maps?.event) window.google.maps.event.clearInstanceListeners(autocomplete)
+    }
+    // onChange is a fresh closure each render; the search box only needs wiring once.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  const pinned = value.lat != null && value.lng != null
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center justify-between">
+        <span className={labelCls + " mb-0"}>New customer</span>
+        <button type="button" onClick={onBack} className="text-xs font-medium text-neutral-500 hover:text-neutral-800">
+          Search existing instead
+        </button>
+      </div>
+
+      <div className="grid gap-3 sm:grid-cols-2">
+        <div>
+          <span className={labelCls}>Mobile number</span>
+          <input
+            inputMode="numeric"
+            maxLength={14}
+            className={fieldCls}
+            placeholder="10-digit number"
+            value={value.phone}
+            onChange={(e) => onChange({ phone: e.target.value })}
+          />
+        </div>
+        <div>
+          <span className={labelCls}>Name</span>
+          <input
+            className={fieldCls}
+            placeholder="Customer name"
+            value={value.name}
+            onChange={(e) => onChange({ name: e.target.value })}
+          />
+        </div>
+      </div>
+
+      <div>
+        <span className={labelCls}>Delivery address</span>
+        <div className="relative">
+          <MapPin className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-400" />
+          <input
+            ref={inputRef}
+            className={`${fieldCls} pl-9`}
+            placeholder="Search the address, society or landmark"
+            autoComplete="off"
+          />
+        </div>
+        {mapsError && <Hint>{mapsError}. The address cannot be pinned without it.</Hint>}
+        {pinned ? (
+          <p className="mt-1.5 flex items-center gap-1.5 text-xs text-emerald-700">
+            <Check className="h-3.5 w-3.5" /> Pinned on the map ({value.lat.toFixed(5)}, {value.lng.toFixed(5)})
+          </p>
+        ) : (
+          <p className="mt-1.5 text-xs text-neutral-500">
+            Pick a suggestion to pin it. If you type the address below instead, it is looked up on the map when you
+            start the subscription.
+          </p>
+        )}
+      </div>
+
+      <div className="grid gap-3 sm:grid-cols-2">
+        <div>
+          <span className={labelCls}>Flat / house no.</span>
+          <input className={fieldCls} value={value.flatNumber} onChange={(e) => onChange({ flatNumber: e.target.value })} />
+        </div>
+        <div>
+          <span className={labelCls}>Pin code</span>
+          <input className={fieldCls} value={value.zipCode} onChange={(e) => onChange({ zipCode: e.target.value })} />
+        </div>
+      </div>
+      <div>
+        <span className={labelCls}>Street / area</span>
+        <input className={fieldCls} value={value.street} onChange={(e) => onChange({ street: e.target.value })} />
+      </div>
+      <div className="grid gap-3 sm:grid-cols-2">
+        <div>
+          <span className={labelCls}>City</span>
+          <input className={fieldCls} value={value.city} onChange={(e) => onChange({ city: e.target.value })} />
+        </div>
+        <div>
+          <span className={labelCls}>State</span>
+          <input className={fieldCls} value={value.state} onChange={(e) => onChange({ state: e.target.value })} />
+        </div>
+      </div>
+      <div className="grid gap-3 sm:grid-cols-2">
+        <div>
+          <span className={labelCls}>Latitude (optional)</span>
+          <input
+            type="number"
+            step="any"
+            className={fieldCls}
+            value={value.lat ?? ""}
+            onChange={(e) => onChange({ lat: e.target.value === "" ? null : Number(e.target.value) })}
+          />
+        </div>
+        <div>
+          <span className={labelCls}>Longitude (optional)</span>
+          <input
+            type="number"
+            step="any"
+            className={fieldCls}
+            value={value.lng ?? ""}
+            onChange={(e) => onChange({ lng: e.target.value === "" ? null : Number(e.target.value) })}
+          />
+        </div>
+      </div>
+      <p className="text-xs text-neutral-500">
+        An account is made for this number. When they sign in to the app with it, the subscription and address are
+        already there.
+      </p>
     </div>
   )
 }

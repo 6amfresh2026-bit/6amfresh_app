@@ -2,6 +2,7 @@ import { FoodRestaurant } from '../../restaurant/models/restaurant.model.js';
 import { FoodItem } from '../../admin/models/food.model.js';
 import { FoodCategory } from '../../admin/models/category.model.js';
 import mongoose from 'mongoose';
+import { keepOpenStores, openStoreIdSet, OPEN_CHECK_FIELDS } from '../../restaurant/services/openStores.service.js';
 
 const RESTAURANT_SEARCH_SELECT = [
     'restaurantName',
@@ -165,7 +166,10 @@ export const searchUnified = async (query = {}, options = {}) => {
             return acc;
         }, new Map());
 
-        const remainingIds = Array.from(matchedFoodsByRestaurant.keys()).filter((id) => !restaurantDetailsMap.has(id));
+        const openFoodStoreIds = await openStoreIdSet(Array.from(matchedFoodsByRestaurant.keys()));
+        const remainingIds = Array.from(matchedFoodsByRestaurant.keys()).filter(
+            (id) => !restaurantDetailsMap.has(id) && openFoodStoreIds.has(id),
+        );
         if (remainingIds.length > 0) {
             const rsForFoods = await FoodRestaurant.find({
                 ...restaurantFilter,
@@ -278,9 +282,11 @@ export const searchProducts = async (query = {}) => {
         sellerFilter.zoneId = new mongoose.Types.ObjectId(zoneId);
     }
 
-    const sellers = await FoodRestaurant.find(sellerFilter)
-        .select('restaurantName profileImage rating isAcceptingOrders estimatedDeliveryTime estimatedDeliveryTimeMinutes zoneId')
-        .lean();
+    const sellers = await keepOpenStores(
+        await FoodRestaurant.find(sellerFilter)
+            .select(`restaurantName profileImage rating isAcceptingOrders estimatedDeliveryTime estimatedDeliveryTimeMinutes zoneId ${OPEN_CHECK_FIELDS}`)
+            .lean(),
+    );
 
     if (sellers.length === 0) {
         return { products: [], total: 0, page: pageNumber, limit: limitNumber };

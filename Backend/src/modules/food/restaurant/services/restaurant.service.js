@@ -10,6 +10,7 @@ import { FoodRestaurantMenu } from '../models/restaurantMenu.model.js';
 import { FoodItem } from '../../admin/models/food.model.js';
 import { FoodOrder } from '../../orders/models/order.model.js';
 import { FoodRestaurantOutletTimings } from '../models/outletTimings.model.js';
+import { openStoreIdSet } from './openStores.service.js';
 import { attachOutletTimingsToRestaurants } from './outletTimings.service.js';
 import { getRestaurantOperationalStatus } from '../helpers/restaurantAvailability.helper.js';
 import {
@@ -2238,9 +2239,10 @@ export const listApprovedRestaurants = async (query = {}) => {
         const total = totalDocs?.[0]?.count || 0;
         const restaurants = pageDocs || [];
         const restaurantIds = restaurants.map(r => r._id);
+        const openRecommendIds = [...(await openStoreIdSet(restaurantIds))];
         const recommendedItemsRaw = restaurantIds.length
             ? await FoodItem.find({
-                restaurantId: { $in: restaurantIds },
+                restaurantId: { $in: openRecommendIds },
                 isRecommended: true,
                 approvalStatus: 'approved'
             })
@@ -2320,9 +2322,10 @@ export const listApprovedRestaurants = async (query = {}) => {
     }));
 
     const restaurantIds = restaurants.map(r => r._id);
+    const openRecommendIds = [...(await openStoreIdSet(restaurantIds))];
     const recommendedItemsRaw = restaurantIds.length
         ? await FoodItem.find({
-            restaurantId: { $in: restaurantIds },
+            restaurantId: { $in: openRecommendIds },
             isRecommended: true,
             approvalStatus: 'approved'
         })

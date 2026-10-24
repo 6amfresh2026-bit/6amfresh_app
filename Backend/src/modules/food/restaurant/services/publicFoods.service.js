@@ -3,6 +3,7 @@ import { FoodItem } from '../../admin/models/food.model.js';
 import { FoodRestaurant } from '../models/restaurant.model.js';
 import { getFoodDisplayOtherPrice, getFoodDisplayPrice, serializeFoodVariants } from '../../admin/services/foodVariant.service.js';
 import { restoreExpiredFoodAvailability } from './foodAvailability.service.js';
+import { keepOpenStores } from './openStores.service.js';
 
 const escapeRegex = (value) => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
@@ -30,17 +31,20 @@ export async function listPublicFoods(query = {}) {
     }
 
     const restaurants = await FoodRestaurant.find(restaurantFilter)
-        .select('_id restaurantName slug zoneId storeType profileImage rating totalRatings ratingCount estimatedDeliveryTime estimatedDeliveryTimeMinutes location coverImages menuImages isActive isAcceptingOrders outletTimings openDays deliveryTimings openingTime closingTime')
+        .select('_id restaurantName slug zoneId storeType profileImage rating totalRatings ratingCount estimatedDeliveryTime estimatedDeliveryTimeMinutes location coverImages menuImages isActive isAcceptingOrders outletTimings openDays deliveryTimings openingTime closingTime appTimings posLastSeenAt')
         .lean();
 
-    if (!restaurants.length) {
+    // A closed store's shelves are not browsable: the cart would only be refused at checkout.
+    const openRestaurants = await keepOpenStores(restaurants);
+
+    if (!openRestaurants.length) {
         return { foods: [], total: 0 };
     }
 
     const restaurantMap = new Map(
-        restaurants.map((restaurant) => [String(restaurant._id), restaurant])
+        openRestaurants.map((restaurant) => [String(restaurant._id), restaurant])
     );
-    const restaurantIds = restaurants.map((restaurant) => restaurant._id);
+    const restaurantIds = openRestaurants.map((restaurant) => restaurant._id);
 
     await restoreExpiredFoodAvailability({ restaurantId: { $in: restaurantIds } });
 

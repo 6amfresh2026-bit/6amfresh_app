@@ -161,8 +161,10 @@ router.get('/restaurants', cacheResponse(300, 'restaurants'), listApprovedRestau
 router.get('/restaurants/:id', cacheResponse(600, 'restaurant_detail'), getApprovedRestaurantController);
 // Whether customers can order from this store right now. Never cached: see appStatus.service.js.
 router.get('/restaurants/:id/app-status', getStoreAppStatusController);
-router.get('/restaurants/:id/menu', cacheResponse(600, 'restaurant_menu'), getPublicRestaurantMenuController);
-router.get('/public/foods', cacheResponse(300, 'public_foods'), listPublicFoodsController);
+// Short caches: whether a store's products are shown depends on the clock (its opening hours and the
+// admin's app timings), so a long cache would keep a closed store's shelves on screen after it shut.
+router.get('/restaurants/:id/menu', cacheResponse(60, 'restaurant_menu'), getPublicRestaurantMenuController);
+router.get('/public/foods', cacheResponse(30, 'public_foods'), listPublicFoodsController);
 router.get('/restaurants/:id/outlet-timings', cacheResponse(600, 'restaurant_timings'), getOutletTimingsByRestaurantIdController);
 router.get('/offers', optionalAuth, listPublicOffersController);
 // Which delivery windows a customer can book. Public: whether the shop can
@@ -192,6 +194,11 @@ router.patch('/profile', authMiddleware, requireRestaurant, async (req, res, nex
 router.patch('/availability', authMiddleware, requireRestaurant, async (req, res, next) => {
     await invalidateCache('restaurants:*');
     await invalidateCache('restaurant_detail:*');
+    // The seller's pause switch also decides whether the store's products are listed.
+    await invalidateCache('restaurant_menu:*');
+    await invalidateCache('public_foods:*');
+    await invalidateCache('search_products:*');
+    await invalidateCache('search_unified:*');
     next();
 }, updateRestaurantAcceptingOrdersController);
 router.patch('/dining-settings', authMiddleware, requireRestaurant, async (req, res, next) => {

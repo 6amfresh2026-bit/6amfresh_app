@@ -877,6 +877,9 @@ export const adminAPI = {
   /** Starts a subscription for a customer who phoned instead of using the app. */
   createProductSubscription: (body = {}) =>
     apiClient.post("/food/admin/product-subscriptions", body, { contextModule: "admin" }),
+  /** Switches a subscription off ("paused"), back on ("active"), or ends it ("cancelled"). */
+  setProductSubscriptionStatus: (id, status) =>
+    apiClient.patch(`/food/admin/product-subscriptions/${id}/status`, { status }, { contextModule: "admin" }),
   /** The saved addresses a subscription can be delivered to. */
   getCustomerAddresses: (customerId) =>
     apiClient.get(`/food/admin/customers/${String(customerId)}/addresses`, { contextModule: "admin" }),

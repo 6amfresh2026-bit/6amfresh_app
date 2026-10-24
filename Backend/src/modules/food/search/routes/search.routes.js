@@ -8,7 +8,7 @@ const router = express.Router();
  * Unified Search Endpoint
  * GET /api/v1/food/search/unified
  */
-router.get('/unified', cacheResponse(120, 'search_unified', { browserTtlSeconds: 30 }), searchController);
+router.get('/unified', cacheResponse(30, 'search_unified', { browserTtlSeconds: 10 }), searchController);
 
 /**
  * Product Search Endpoint — returns a product grid rather than a seller list.

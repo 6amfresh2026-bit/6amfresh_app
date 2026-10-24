@@ -31,6 +31,16 @@ export async function createSubscriptionController(req, res, next) {
     }
 }
 
+/** PATCH /food/admin/product-subscriptions/:id/status — switch one off, on, or end it */
+export async function setSubscriptionStatusController(req, res, next) {
+    try {
+        const data = await service.setSubscriptionStatus(req.params.id, req.body?.status);
+        return sendResponse(res, 200, 'Subscription updated', data);
+    } catch (err) {
+        next(err);
+    }
+}
+
 /** GET /food/admin/subscription-deliveries — one day's board, defaults to today */
 export async function listDeliveriesController(req, res, next) {
     try {

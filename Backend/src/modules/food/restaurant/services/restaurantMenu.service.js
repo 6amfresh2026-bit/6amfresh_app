@@ -5,6 +5,7 @@ import { FoodItem } from '../../admin/models/food.model.js';
 import { FoodCategory } from '../../admin/models/category.model.js';
 import { getFoodDisplayOtherPrice, getFoodDisplayPrice, serializeFoodVariants } from '../../admin/services/foodVariant.service.js';
 import { restoreExpiredFoodAvailability } from './foodAvailability.service.js';
+import { storeOpenNotice } from './openStores.service.js';
 
 const buildMenuFromFoods = async (foods = []) => {
     const categoryIds = Array.from(
@@ -163,12 +164,20 @@ export async function getPublicApprovedRestaurantMenu(restaurantIdOrSlug) {
     if (!restaurant?._id) {
         return null;
     }
+
+    // A closed store shows no products. The page still loads, with the reason and the sentence to
+    // display, so the app can say "closed" rather than leave a customer looking at an empty shelf.
+    const store = await storeOpenNotice(restaurant._id);
+    if (!store.open) {
+        return { sections: [], categories: [], store };
+    }
+
     await restoreExpiredFoodAvailability({ restaurantId: restaurant._id });
     const foods = await FoodItem.find({ restaurantId: restaurant._id, approvalStatus: 'approved' })
         .sort({ createdAt: -1 })
         .limit(2000)
         .lean();
-    return buildMenuFromFoods(foods);
+    return { ...(await buildMenuFromFoods(foods)), store };
 }
 
 export async function syncMenuItemApprovalStatus(restaurantId, itemId, status, rejectionReason = '') {

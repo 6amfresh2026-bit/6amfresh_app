@@ -27,9 +27,10 @@ import AddSubscriptionDialog from "@food/components/admin/AddSubscriptionDialog"
  *    This is the morning view, so it is the one that opens first.
  *  - Subscriptions: the standing arrangements behind those deliveries.
  *
- * The one write is starting a subscription for a customer who phoned instead
- * of using the app. Editing an existing one stays with the customer: it is
- * their arrangement, and they can pause or cancel it themselves.
+ * Two writes: starting a subscription for a customer who phoned instead of using
+ * the app, and switching one off (or back on) when the customer asks the shop to.
+ * Everything else about an existing one stays with the customer: it is their
+ * arrangement, and they can pause or cancel it themselves.
  */
 
 const TABS = [
@@ -62,6 +63,45 @@ const SUBSCRIPTION_STATUS = {
   active: { label: "Active", className: "bg-emerald-50 text-emerald-700 ring-emerald-200" },
   paused: { label: "Paused", className: "bg-amber-50 text-amber-700 ring-amber-200" },
   cancelled: { label: "Cancelled", className: "bg-neutral-100 text-neutral-600 ring-neutral-200" },
+}
+
+/**
+ * On/off switch for a subscription. Off is "paused": the upcoming deliveries are
+ * cancelled and switching it back on rebuilds them from tomorrow. A cancelled
+ * subscription has no switch because it cannot be restarted.
+ */
+const SubscriptionSwitch = ({ status, busy, onToggle }) => {
+  if (status === "cancelled") return <span className="text-xs text-neutral-400">Ended</span>
+  const on = status === "active"
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={on}
+      aria-label={on ? "Switch subscription off" : "Switch subscription on"}
+      disabled={busy}
+      onClick={(e) => {
+        e.stopPropagation()
+        onToggle()
+      }}
+      className="inline-flex items-center gap-2 disabled:opacity-50"
+    >
+      <span
+        className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition ${
+          on ? "bg-emerald-500" : "bg-neutral-300"
+        }`}
+      >
+        <span
+          className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition ${
+            on ? "translate-x-5" : "translate-x-0.5"
+          }`}
+        />
+      </span>
+      <span className="w-7 text-left text-xs font-medium text-neutral-600">
+        {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : on ? "On" : "Off"}
+      </span>
+    </button>
+  )
 }
 
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
@@ -231,6 +271,31 @@ export default function SubscriptionsManagement() {
       setDetail(null)
     } finally {
       setDetailLoading(false)
+    }
+  }
+
+  const [switchingId, setSwitchingId] = useState(null)
+
+  const toggleSubscription = async (row) => {
+    const turningOff = row.status === "active"
+    const who = row.customer?.name || "this customer"
+    const question = turningOff
+      ? `Switch off ${row.itemName} for ${who}? Their upcoming deliveries will be cancelled.`
+      : `Switch ${row.itemName} back on for ${who}? Deliveries restart from tomorrow.`
+    if (!window.confirm(question)) return
+
+    setSwitchingId(row.id)
+    try {
+      await adminAPI.setProductSubscriptionStatus(row.id, turningOff ? "paused" : "active")
+      toast.success(turningOff ? "Subscription switched off" : "Subscription switched on")
+      // The list row, the open detail and the day's board all show this status.
+      await fetchSubscriptions()
+      setDetail((d) => (d?.subscription?.id === row.id ? { ...d, subscription: { ...d.subscription, status: turningOff ? "paused" : "active" } } : d))
+      if (tab === "deliveries") fetchDeliveries()
+    } catch (error) {
+      toast.error(error?.response?.data?.message || "Could not update the subscription")
+    } finally {
+      setSwitchingId(null)
     }
   }
 
@@ -459,13 +524,14 @@ export default function SubscriptionsManagement() {
                     <th className="px-4 py-3 font-medium">Time</th>
                     <th className="px-4 py-3 font-medium">Started</th>
                     <th className="px-4 py-3 font-medium">Status</th>
+                    <th className="px-4 py-3 font-medium">Switch</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-neutral-100">
                   {subsLoading ? (
-                    <LoadingRow colSpan={7} />
+                    <LoadingRow colSpan={8} />
                   ) : subs.length === 0 ? (
-                    <EmptyRow colSpan={7}>No subscriptions found.</EmptyRow>
+                    <EmptyRow colSpan={8}>No subscriptions found.</EmptyRow>
                   ) : (
                     subs.map((row) => (
                       <tr key={row.id} onClick={() => openDetail(row.id)} className="cursor-pointer hover:bg-neutral-50">
@@ -479,6 +545,13 @@ export default function SubscriptionsManagement() {
                         <td className="whitespace-nowrap px-4 py-3 text-neutral-600">{describeDeliveryTime(row)}</td>
                         <td className="whitespace-nowrap px-4 py-3 text-neutral-600">{formatDate(row.startDate)}</td>
                         <td className="px-4 py-3"><StatusPill map={SUBSCRIPTION_STATUS} value={row.status} /></td>
+                        <td className="px-4 py-3">
+                          <SubscriptionSwitch
+                            status={row.status}
+                            busy={switchingId === row.id}
+                            onToggle={() => toggleSubscription(row)}
+                          />
+                        </td>
                       </tr>
                     ))
                   )}
@@ -557,7 +630,14 @@ export default function SubscriptionsManagement() {
                 </div>
                 <div>
                   <p className="text-xs text-neutral-500">Status</p>
-                  <StatusPill map={SUBSCRIPTION_STATUS} value={detail.subscription.status} />
+                  <div className="flex items-center gap-3">
+                    <StatusPill map={SUBSCRIPTION_STATUS} value={detail.subscription.status} />
+                    <SubscriptionSwitch
+                      status={detail.subscription.status}
+                      busy={switchingId === detail.subscription.id}
+                      onToggle={() => toggleSubscription(detail.subscription)}
+                    />
+                  </div>
                   <p className="mt-1 text-xs text-neutral-500">
                     Payment: {detail.subscription.paymentMethod} · Since {formatDate(detail.subscription.startDate)}
                   </p>

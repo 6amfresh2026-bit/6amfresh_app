@@ -46,6 +46,11 @@ const router = express.Router();
 const invalidatePublicStoreCaches = async (_req, _res, next) => {
     await invalidateCache('restaurant_detail:*');
     await invalidateCache('restaurants:*');
+    // Closing a store hides its products, so the product lists must drop their copies too.
+    await invalidateCache('restaurant_menu:*');
+    await invalidateCache('public_foods:*');
+    await invalidateCache('search_products:*');
+    await invalidateCache('search_unified:*');
     next();
 };
 
@@ -473,6 +478,7 @@ router.get('/subscription-deliveries', productSubscriptionAdmin.listDeliveriesCo
 router.get('/product-subscriptions', productSubscriptionAdmin.listSubscriptionsController);
 router.post('/product-subscriptions', productSubscriptionAdmin.createSubscriptionController);
 router.get('/product-subscriptions/:id', productSubscriptionAdmin.getSubscriptionDetailController);
+router.patch('/product-subscriptions/:id/status', productSubscriptionAdmin.setSubscriptionStatusController);
 router.get('/reports/wallet-dashboard', adminController.getWalletDashboardController);
 // ─── Admin POS — the full seller till, for any store the admin picks ───
 // quote & sale

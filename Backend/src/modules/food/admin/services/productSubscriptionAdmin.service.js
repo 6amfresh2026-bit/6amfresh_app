@@ -6,7 +6,7 @@ import { FoodRestaurant } from '../../restaurant/models/restaurant.model.js';
 import { FoodItem } from '../models/food.model.js';
 import { FoodUser } from '../../../../core/users/user.model.js';
 import { FoodOrder } from '../../orders/models/order.model.js';
-import { createSubscription } from '../../user/services/productSubscription.service.js';
+import { createSubscription, updateSubscription } from '../../user/services/productSubscription.service.js';
 import { validateCreateSubscriptionDto } from '../../user/validators/productSubscription.validator.js';
 import { NotFoundError, ValidationError } from '../../../../core/auth/errors.js';
 
@@ -314,6 +314,115 @@ export async function listDeliveries(query = {}) {
 }
 
 /**
+ * Switches a subscription off (paused), back on (active), or ends it (cancelled).
+ *
+ * Goes through the same updateSubscription the customer's own pause/resume uses,
+ * so the upcoming deliveries are cancelled and rebuilt the same way whoever pressed
+ * the button. A cancelled subscription stays cancelled: it was ended on purpose,
+ * and a new one is started instead.
+ */
+export async function setSubscriptionStatus(id, status) {
+    const subscriptionId = toObjectId(id, 'subscription id');
+    if (!['active', 'paused', 'cancelled'].includes(status)) {
+        throw new ValidationError('status must be active, paused or cancelled');
+    }
+
+    const current = await FoodProductSubscription.findById(subscriptionId).select('userId status').lean();
+    if (!current) throw new NotFoundError('Subscription not found');
+    if (current.status === 'cancelled') {
+        throw new ValidationError('A cancelled subscription cannot be switched back on. Start a new one instead.');
+    }
+    if (current.status === status) {
+        throw new ValidationError(`This subscription is already ${status}`);
+    }
+
+    const { subscription } = await updateSubscription(current.userId, subscriptionId, { status });
+    const maps = await buildNameMaps([subscription]);
+    return { subscription: serializeSubscription(subscription, maps) };
+}
+
+const digitsOnly = (value) => String(value ?? '').replace(/\D/g, '');
+
+/**
+ * The customer behind a phone number the shop was given, and the address to deliver to.
+ *
+ * A customer who rings in for the first time has never opened the app, so there is
+ * no account to pick. The account is made here, keyed by the 10-digit number exactly
+ * as the app's own sign-in keys it: when they later log in with that number they land
+ * on this same account, with the subscription and the address already on it.
+ *
+ * An address needs a map position — without one an order cannot be written at all —
+ * so a typed address with no coordinates is refused rather than saved and left to
+ * fail at delivery time. An existing account is reused, and an address already on it
+ * (same street and pin) is reused too, so retrying a failed form does not stack up
+ * copies.
+ */
+async function findOrCreateCustomerWithAddress(input = {}) {
+    const phone = digitsOnly(input.phone);
+    if (phone.length !== 10) throw new ValidationError('Enter a 10-digit mobile number');
+
+    const name = String(input.name ?? '').trim().slice(0, 80);
+
+    const address = input.address || {};
+    const street = String(address.street ?? '').trim();
+    const city = String(address.city ?? '').trim();
+    const state = String(address.state ?? '').trim();
+    if (!street || !city || !state) throw new ValidationError('Address needs a street, city and state');
+
+    const lat = Number(address.lat);
+    const lng = Number(address.lng);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng) || Math.abs(lat) > 90 || Math.abs(lng) > 180) {
+        throw new ValidationError('Pick the address on the map so the delivery has a location');
+    }
+
+    let user = await FoodUser.findOne({ phone });
+    if (!user) {
+        if (!name) throw new ValidationError('Customer name is required for a new number');
+        try {
+            user = await FoodUser.create({ phone, name, isVerified: false });
+        } catch (err) {
+            // Two admins adding the same number at once: the unique index picks one
+            // winner and the other simply uses it.
+            if (err?.code !== 11000) throw err;
+            user = await FoodUser.findOne({ phone });
+        }
+    } else if (!user.name && name) {
+        user.name = name;
+    }
+    if (!user) throw new NotFoundError('Customer not found');
+    if (user.isActive === false) {
+        throw new ValidationError('This customer account is deactivated — reactivate it before starting a subscription');
+    }
+
+    const zipCode = String(address.zipCode ?? '').trim();
+    const sameSpot = (a) =>
+        String(a.street || '').trim().toLowerCase() === street.toLowerCase() &&
+        String(a.zipCode || '').trim() === zipCode &&
+        Array.isArray(a.location?.coordinates) &&
+        Math.abs(a.location.coordinates[1] - lat) < 1e-5 &&
+        Math.abs(a.location.coordinates[0] - lng) < 1e-5;
+
+    let saved = (user.addresses || []).find(sameSpot);
+    if (!saved) {
+        user.addresses.push({
+            label: ['Home', 'Office', 'Other'].includes(address.label) ? address.label : 'Home',
+            flatNumber: String(address.flatNumber ?? '').trim(),
+            street,
+            city,
+            state,
+            zipCode,
+            phone,
+            location: { type: 'Point', coordinates: [lng, lat] },
+            isDefault: (user.addresses || []).length === 0,
+        });
+    }
+    await user.save();
+    if (!saved) saved = user.addresses[user.addresses.length - 1];
+
+    return { userId: user._id, addressId: String(saved._id) };
+}
+
+/**
  * Starts a subscription on a customer's behalf.
  *
  * The customer who rings the shop to say "one litre every morning" gets the
@@ -324,8 +433,20 @@ export async function listDeliveries(query = {}) {
  * and the check that it names a real customer, since nothing upstream has
  * proved it the way a token would.
  */
-export async function createSubscriptionForCustomer(body = {}) {
-    const userId = toObjectId(body.customerId, 'customerId');
+export async function createSubscriptionForCustomer(rawBody = {}) {
+    let body = rawBody;
+    let userId;
+
+    if (rawBody.newCustomer && !rawBody.customerId) {
+        // Refuse a bad subscription before a customer is written for it, so a typo in
+        // the form does not leave a half-made account behind.
+        validateCreateSubscriptionDto({ ...rawBody, addressId: 'pending' });
+        const resolved = await findOrCreateCustomerWithAddress(rawBody.newCustomer);
+        userId = resolved.userId;
+        body = { ...rawBody, addressId: resolved.addressId };
+    } else {
+        userId = toObjectId(body.customerId, 'customerId');
+    }
 
     const customer = await FoodUser.findById(userId).select('_id role isActive').lean();
     if (!customer) throw new NotFoundError('Customer not found');
