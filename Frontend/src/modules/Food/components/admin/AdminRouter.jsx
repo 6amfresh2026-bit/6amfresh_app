@@ -177,17 +177,6 @@ function FeatureSettingsRouteGuard() {
   return <FeatureSettings />;
 }
 
-// The admin console is green. It shares the customer app's saved theme colour, so the green is
-// applied over it here instead of changing that setting (which would recolour the customer app).
-const ADMIN_GREEN = "#1B8A4C";
-function applyAdminGreenTheme() {
-  const root = document.documentElement.style;
-  root.setProperty("--module-theme-color", ADMIN_GREEN);
-  root.setProperty("--module-theme-rgb", "27,138,76");
-  root.setProperty("--color-primary-orange", ADMIN_GREEN);
-  root.setProperty("--ring", ADMIN_GREEN);
-}
-
 function SuperPowersRouteGuard({ children }) {
   const adminUser = getCurrentUser("admin");
   if (!canAccessSuperPowers(adminUser)) {
@@ -271,7 +260,6 @@ export default function AdminRouter() {
       try {
         const settings = await loadBusinessSettings();
         if (!cancelled) applyModulePowerScanning("user", settings);
-        applyAdminGreenTheme();
       } catch {
         // A panel in last month's colours still works; a blank one does not.
       }
@@ -282,7 +270,6 @@ export default function AdminRouter() {
     const handleSettingsUpdate = () => {
       void loadBusinessSettings({ force: true }).then((settings) => {
         if (!cancelled) applyModulePowerScanning("user", settings);
-        applyAdminGreenTheme();
       });
     };
 

@@ -474,9 +474,19 @@ export const getModulePowerScanning = (moduleName = "user", settingsOverride = n
   return { themeColor, fontFamily };
 };
 
+/**
+ * The admin console is green. It reads the customer app's saved theme (the "user" module), so the green is
+ * applied here, at the one place every theme goes through, rather than by changing that saved setting
+ * (which would recolour the customer app too).
+ */
+export const ADMIN_THEME_COLOR = "#1B8A4C";
+const adminPanelIsOpen = () => typeof document !== "undefined" && document.documentElement.classList.contains("admin-theme");
+
 export const applyModulePowerScanning = (moduleName = "user", settingsOverride = null) => {
   if (typeof document === "undefined") return;
-  const { themeColor, fontFamily } = getModulePowerScanning(moduleName, settingsOverride);
+  const saved = getModulePowerScanning(moduleName, settingsOverride);
+  const themeColor = adminPanelIsOpen() ? ADMIN_THEME_COLOR : saved.themeColor;
+  const { fontFamily } = saved;
   const fontStack = FONT_STACKS[fontFamily] || FONT_STACKS["Poppins"];
   const rgbTuple = hexToRgbTuple(themeColor);
 
