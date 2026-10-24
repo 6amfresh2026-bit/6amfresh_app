@@ -463,6 +463,14 @@ export const applyModuleBranding = (moduleName = "user", settingsOverride = null
   updateTitle(settings.companyName);
 };
 
+/**
+ * The admin console is green. It reads the customer app's saved theme (the "user" module), so the green is
+ * applied here, where every theme is read (the login page reads it directly too), rather than by changing that saved setting
+ * (which would recolour the customer app too).
+ */
+export const ADMIN_THEME_COLOR = "#1B8A4C";
+const adminPanelIsOpen = () => typeof document !== "undefined" && document.documentElement.classList.contains("admin-theme");
+
 export const getModulePowerScanning = (moduleName = "user", settingsOverride = null) => {
   const settings = settingsOverride || cachedSettings || {};
   const moduleKey = String(moduleName || "user").trim().toLowerCase();
@@ -471,22 +479,12 @@ export const getModulePowerScanning = (moduleName = "user", settingsOverride = n
   const rawColor = String(moduleConfig?.themeColor || "").trim();
   const themeColor = /^#[0-9A-Fa-f]{6}$/.test(rawColor) ? rawColor : DEFAULT_MODULE_POWER_SCANNING[moduleKey]?.themeColor || DEFAULT_MODULE_POWER_SCANNING.user.themeColor;
   const fontFamily = String(moduleConfig?.fontFamily || "").trim() || (DEFAULT_MODULE_POWER_SCANNING[moduleKey]?.fontFamily || DEFAULT_MODULE_POWER_SCANNING.user.fontFamily);
-  return { themeColor, fontFamily };
+  return { themeColor: adminPanelIsOpen() ? ADMIN_THEME_COLOR : themeColor, fontFamily };
 };
-
-/**
- * The admin console is green. It reads the customer app's saved theme (the "user" module), so the green is
- * applied here, at the one place every theme goes through, rather than by changing that saved setting
- * (which would recolour the customer app too).
- */
-export const ADMIN_THEME_COLOR = "#1B8A4C";
-const adminPanelIsOpen = () => typeof document !== "undefined" && document.documentElement.classList.contains("admin-theme");
 
 export const applyModulePowerScanning = (moduleName = "user", settingsOverride = null) => {
   if (typeof document === "undefined") return;
-  const saved = getModulePowerScanning(moduleName, settingsOverride);
-  const themeColor = adminPanelIsOpen() ? ADMIN_THEME_COLOR : saved.themeColor;
-  const { fontFamily } = saved;
+  const { themeColor, fontFamily } = getModulePowerScanning(moduleName, settingsOverride);
   const fontStack = FONT_STACKS[fontFamily] || FONT_STACKS["Poppins"];
   const rgbTuple = hexToRgbTuple(themeColor);
 
